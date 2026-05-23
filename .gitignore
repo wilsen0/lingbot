@@ -42,6 +42,10 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
 logs/
 .env
 .env.local
