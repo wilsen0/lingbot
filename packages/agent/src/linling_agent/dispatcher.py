@@ -25,15 +25,16 @@ from linling_core.events import Action, Event
 from linling_core.pipeline import ledger_scope_keys
 from linling_core.segments import TextSegment
 
+from linling_agent.context import ContextBudget, ContextManager, SummaryStore
 from linling_agent.llm import Message
 from linling_agent.runtime import AgentResult, AgentRuntime
 
 if TYPE_CHECKING:
     from linling_core.pipeline import Session
+    from linling_dsl.ledger import LedgerStore
 
     from linling_agent.history import HistoryStore
     from linling_agent.ledger import LedgerRenderer
-    from linling_dsl.ledger import LedgerStore
 
 logger = structlog.get_logger(__name__)
 
@@ -61,6 +62,7 @@ class AgentChatDispatcher:
         history_store: HistoryStore | None = None,
         ledger_store: LedgerStore | None = None,
         ledger_renderer: LedgerRenderer | None = None,
+        context_budget: ContextBudget | None = None,
     ) -> None:
         self._agent = agent
         self._empty_reply = empty_reply
@@ -71,6 +73,17 @@ class AgentChatDispatcher:
         # exactly (Requirement 1.11 / 1.12 / 11.5).
         self._ledger_store = ledger_store
         self._ledger_renderer = ledger_renderer
+        self._context = (
+            ContextManager(
+                provider=agent.provider,
+                model=agent.model,
+                temperature=agent.agent_def.temperature,
+                budget=context_budget,
+                store=history_store if isinstance(history_store, SummaryStore) else None,
+            )
+            if context_budget is not None
+            else None
+        )
 
     @property
     def agent(self) -> AgentRuntime:
@@ -82,6 +95,10 @@ class AgentChatDispatcher:
         bypass the history rehydration this dispatcher owns.
         """
         return self._agent
+
+    @property
+    def context_max_tokens(self) -> int | None:
+        return self._context.max_tokens if self._context is not None else None
 
     async def dispatch(self, event: Event, session: Session) -> AgentResult | None:
         """Run one chat turn end-to-end and return the raw :class:`AgentResult`.
@@ -117,8 +134,8 @@ class AgentChatDispatcher:
         The router takes care of this for IM adapters; transport
         layers (WebUI) acquire it themselves.
         """
-        user_input = event.text
-        if not user_input:
+        raw_user_input = event.text
+        if not raw_user_input:
             return None
 
         # Clear any stale cancel flag from a prior turn. The event is a
@@ -139,13 +156,57 @@ class AgentChatDispatcher:
         # HistoryStore. ``None`` means "nothing visible to inject"
         # (Requirement 1.12) and the LLM gets the legacy history-only
         # input.
-        injected: list[Message] = list(history)
+        extra_messages: list[Message] = []
+        prefix_messages: list[Message] = []
         ledger_msg = self._render_ledger(session, event)
         if ledger_msg is not None:
-            injected.append(ledger_msg)
+            extra_messages.append(ledger_msg)
+        batch_system = str(event.raw.get("_linling_prompt_system") or "")
+        if batch_system:
+            prefix_messages.append(Message(role="system", content=batch_system))
+        reserve_tokens = self._agent.agent_def.guardrails.max_tokens
+        user_input = raw_user_input
+        if self._context is not None:
+            user_input = self._context.fit_current_input(
+                raw_user_input,
+                prefix_messages=prefix_messages,
+                extra_messages=extra_messages,
+                system_text=self._agent.agent_def.system,
+                reserve_tokens=reserve_tokens,
+            )
+        if not user_input:
+            logger.warning(
+                "chat_dispatcher.input_over_budget",
+                scope_id=event.scope.id,
+                sender_id=event.sender.id,
+            )
+            return AgentResult(content=self._empty_reply)
+        replacement_history: list[Message] | None = None
+        skip_history = bool(event.raw.get("_linling_skip_history"))
+        if self._context is not None:
+            injected, replacement_history = await self._context.prepare(
+                scope_id=event.scope.id,
+                sender_id=event.sender.id,
+                history=history,
+                prefix_messages=prefix_messages,
+                extra_messages=extra_messages,
+                system_text=self._agent.agent_def.system,
+                current_input_text=user_input,
+                reserve_tokens=reserve_tokens,
+                allow_compaction=not skip_history and not bool(event.raw.get("_linling_group_batch")),
+            )
+            injected = [*prefix_messages, *injected, *extra_messages]
+        else:
+            injected = list(history)
+            injected = [*prefix_messages, *injected, *extra_messages]
 
         agent_task = asyncio.create_task(
-            self._agent.invoke(user_input, event=event, history=injected),
+            self._agent.invoke(
+                user_input,
+                event=event,
+                history=injected,
+                context_max_tokens=self._context.max_tokens if self._context is not None else None,
+            ),
             name="agent_invoke",
         )
         cancel_task = asyncio.create_task(session.cancel_event.wait(), name="agent_cancel_wait")
@@ -181,6 +242,13 @@ class AgentChatDispatcher:
             await cancel_task
         result = agent_task.result()
 
+        if skip_history:
+            return result
+
+        if replacement_history is not None:
+            session.history.clear()
+            session.history.extend(replacement_history)
+
         # Persist both turns; the deque's maxlen bounds memory.
         session.history.append(Message(role="user", content=user_input))
         session.history.append(Message(role="assistant", content=result.content))
@@ -193,6 +261,79 @@ class AgentChatDispatcher:
             await self._persist(session, event)
 
         return result
+
+    async def record_history(
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        user_input: str,
+        assistant_output: str,
+    ) -> None:
+        """Append a synthetic turn without invoking the agent.
+
+        Used by group batching: the LLM sees a structured decision
+        prompt, but history should retain the selected human messages
+        and the actual outbound text, not the internal JSON plan.
+        """
+        if not user_input and not assistant_output:
+            return
+        session.history.append(Message(role="user", content=user_input))
+        session.history.append(Message(role="assistant", content=assistant_output))
+        if self._history_store is not None:
+            await self._persist_key(session, scope_id, sender_id)
+
+    async def prepare_context_history(
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        prefix_messages: list[Message] | None = None,
+        extra_messages: list[Message] | None = None,
+        system_text: str = "",
+        current_input_text: str = "",
+        reserve_tokens: int = 0,
+        allow_compaction: bool = True,
+        commit_replacement: bool = False,
+    ) -> list[Message]:
+        """Return LLM-visible history for custom dispatcher loops.
+
+        ``commit_replacement`` lets wrappers that own a complete LLM
+        loop, such as group batching, persist summary compaction even
+        when they do not call :meth:`dispatch` for the current turn.
+        """
+        history = list(session.history)
+        if self._context is None:
+            return history
+        visible, replacement_history = await self._context.prepare(
+            scope_id=scope_id,
+            sender_id=sender_id,
+            history=history,
+            prefix_messages=prefix_messages,
+            extra_messages=extra_messages,
+            system_text=system_text,
+            current_input_text=current_input_text,
+            reserve_tokens=reserve_tokens,
+            allow_compaction=allow_compaction,
+        )
+        if commit_replacement and replacement_history is not None:
+            session.history.clear()
+            session.history.extend(replacement_history)
+            if self._history_store is not None:
+                await self._persist_key(session, scope_id, sender_id)
+        return visible
+
+    async def ensure_history(self, session: Session, event: Event) -> None:
+        """Hydrate ``session.history`` for callers that own a custom LLM loop."""
+        await self._maybe_rehydrate(session, event)
+
+    async def ensure_history_key(self, session: Session, scope_id: str, sender_id: str) -> None:
+        """Hydrate chat history for an explicit conversation key."""
+        if self._history_store is None or getattr(session, _HYDRATED_FLAG, False):
+            return
+        await self._rehydrate_history_key(session, scope_id, sender_id)
 
     async def run(self, event: Event, session: Session) -> list[Action]:
         result = await self.dispatch(event, session)
@@ -238,9 +379,17 @@ class AgentChatDispatcher:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _rehydrate_history(self, session: Session, event: Event) -> None:
+        await self._rehydrate_history_key(session, event.scope.id, event.sender.id)
+
+    async def _rehydrate_history_key(
+        self,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+    ) -> None:
         assert self._history_store is not None
         try:
-            restored = await self._history_store.load(event.scope.id, event.sender.id)
+            restored = await self._history_store.load(scope_id, sender_id)
         except Exception:
             logger.exception("chat_dispatcher.history_load_failed")
             restored = []
@@ -304,9 +453,12 @@ class AgentChatDispatcher:
         return renderer.render(session.dsl_events)
 
     async def _persist(self, session: Session, event: Event) -> None:
+        await self._persist_key(session, event.scope.id, event.sender.id)
+
+    async def _persist_key(self, session: Session, scope_id: str, sender_id: str) -> None:
         assert self._history_store is not None
         try:
-            await self._history_store.save(event.scope.id, event.sender.id, list(session.history))
+            await self._history_store.save(scope_id, sender_id, list(session.history))
         except Exception:
             logger.exception("chat_dispatcher.history_save_failed")
 

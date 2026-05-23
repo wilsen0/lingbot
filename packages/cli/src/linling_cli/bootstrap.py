@@ -254,6 +254,7 @@ class RunningBot:
         self.adapters.append(adapter)
         new_sink = build_sink(self.adapters)
         self.router.set_sink(new_sink)
+        _set_chat_action_sink(self.chat_dispatcher, build_sink(self.adapters, raise_on_error=True))
         self._refresh_dispatcher_extras(sink=new_sink)
 
     async def reload_rules(self) -> ReloadReport:
@@ -590,6 +591,14 @@ class RunningBot:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._adapter_tasks.clear()
+        chat_dispatcher = self.chat_dispatcher
+        if chat_dispatcher is not None:
+            stopper = getattr(chat_dispatcher, "stop", None)
+            if stopper is not None:
+                with contextlib.suppress(Exception):
+                    res = stopper()
+                    if asyncio.iscoroutine(res):
+                        await res
         # Close LLM providers so their httpx connection pools get
         # released. Each AgentRuntime owns one provider; iterate the
         # dict but close each underlying provider at most once.
@@ -716,7 +725,7 @@ async def bootstrap_bot(
         ledger_writer=ledger_writer,
     )
     chats, agents = _build_chat_dispatcher(
-        config, kv, metrics, base,
+        config, kv, metrics, base, conversations,
         ledger_store=ledger_store,
         ledger_renderer=ledger_renderer,
     )
@@ -743,6 +752,7 @@ async def bootstrap_bot(
         adapters.extend(extra_adapters)
 
     sink = build_sink(adapters)
+    _set_chat_action_sink(chats, build_sink(adapters, raise_on_error=True))
     # Initial action_sink wiring — :class:`RunningBot._refresh_dispatcher_extras`
     # will be called once the bot is constructed to fill in the rest
     # (``adapter``, ``primary_platform``, ``handler_lookup``).
@@ -957,6 +967,7 @@ def _build_chat_dispatcher(
     kv: SqliteKVStore,
     metrics: MetricsSink,
     base: Path,
+    conversations: ConversationStore,
     *,
     ledger_store: Any = None,
     ledger_renderer: Any = None,
@@ -982,7 +993,12 @@ def _build_chat_dispatcher(
     # and we don't want configuration errors (missing API key) to break
     # the simple "command-only" bootstrap.
     from linling_agent.agent_def import AgentDef  # noqa: PLC0415
+    from linling_agent.context import ContextBudget  # noqa: PLC0415
     from linling_agent.dispatcher import AgentChatDispatcher  # noqa: PLC0415
+    from linling_agent.group_batch import (  # noqa: PLC0415
+        GroupBatchChatDispatcher,
+        GroupBatchConfig,
+    )
     from linling_agent.history import KVHistoryStore  # noqa: PLC0415
     from linling_agent.runtime import AgentRuntime  # noqa: PLC0415
 
@@ -1008,7 +1024,39 @@ def _build_chat_dispatcher(
         history_store=history,
         ledger_store=ledger_store,
         ledger_renderer=ledger_renderer,
+        context_budget=ContextBudget(
+            max_tokens=config.conversation.context_max_tokens,
+            summary_trigger_tokens=config.conversation.summary_trigger_tokens,
+            summary_keep_recent_turns=config.conversation.summary_keep_recent_turns,
+            summary_max_tokens=config.conversation.summary_max_tokens,
+        ),
     )
+    if config.agent.group_batch_enabled:
+        names = tuple(
+            name
+            for name in (
+                *config.agent.group_batch_bot_names,
+                config.name,
+                agent_def.name,
+            )
+            if name
+        )
+        dispatcher = GroupBatchChatDispatcher(
+            inner=dispatcher,
+            config=GroupBatchConfig(
+                enabled=True,
+                window_s=config.agent.group_batch_window_s,
+                max_messages=config.agent.group_batch_max_messages,
+                max_chars=config.agent.group_batch_max_chars,
+                max_replies=config.agent.group_batch_max_replies,
+                max_reply_chars=config.agent.group_batch_max_reply_chars,
+                require_attention=config.agent.group_batch_require_attention,
+                max_hold_s=config.agent.group_batch_max_hold_s,
+                bot_names=names,
+            ),
+            conversations=conversations,
+            bot_id=config.bot_id,
+        )
 
     # Scope allowlist for chat-mode (LLM fallback only). DSL handlers
     # always run regardless — this gate sits *after* the classifier
@@ -1022,6 +1070,16 @@ def _build_chat_dispatcher(
             fallback_text=config.agent.fallback_reply,
         )
     return dispatcher, {agent_def.name: agent}
+
+
+def _set_chat_action_sink(dispatcher: Any, sink: ActionSink) -> None:
+    setter = getattr(dispatcher, "set_action_sink", None)
+    if setter is None:
+        return
+    try:
+        setter(sink)
+    except Exception:
+        logger.exception("bootstrap.set_chat_action_sink_failed")
 
 
 class _ScopeGatedChatDispatcher:
@@ -1086,6 +1144,20 @@ class _ScopeGatedChatDispatcher:
         if event.scope.kind == "dm":
             return True
         return event.scope.id in self._allowed
+
+    def set_action_sink(self, sink: ActionSink) -> None:
+        setter = getattr(self._inner, "set_action_sink", None)
+        if setter is None:
+            return
+        setter(sink)
+
+    async def stop(self) -> None:
+        stopper = getattr(self._inner, "stop", None)
+        if stopper is None:
+            return
+        res = stopper()
+        if asyncio.iscoroutine(res):
+            await res
 
     def _denied_actions(self, event: Event) -> list[Action]:
         if not self._fallback_text:
@@ -1238,7 +1310,11 @@ def _build_adapters(config: BotConfig, bus: EventBus) -> list[AdapterHandle]:
     return adapters
 
 
-def build_sink(adapters: list[AdapterHandle]) -> Callable[[Action], Awaitable[None]]:
+def build_sink(
+    adapters: list[AdapterHandle],
+    *,
+    raise_on_error: bool = False,
+) -> Callable[[Action], Awaitable[None]]:
     """Return an :class:`ActionSink` that dispatches by platform.
 
     The sink picks the right adapter by matching ``action.target.platform``
@@ -1250,6 +1326,8 @@ def build_sink(adapters: list[AdapterHandle]) -> Callable[[Action], Awaitable[No
 
         async def _noop(action: Action) -> None:
             logger.warning("bootstrap.sink_no_adapters", action_kind=action.kind)
+            if raise_on_error:
+                raise RuntimeError("no adapters configured")
 
         return _noop
 
@@ -1262,7 +1340,7 @@ def build_sink(adapters: list[AdapterHandle]) -> Callable[[Action], Awaitable[No
         adapter = adapters[0]
 
         async def _single(action: Action) -> None:
-            await _invoke_send(adapter, action)
+            await _invoke_send(adapter, action, raise_on_error=raise_on_error)
 
         return _single
 
@@ -1275,8 +1353,10 @@ def build_sink(adapters: list[AdapterHandle]) -> Callable[[Action], Awaitable[No
                 platform=plat,
                 available=list(by_platform),
             )
+            if raise_on_error:
+                raise RuntimeError(f"no adapter for platform: {plat}")
             return
-        await _invoke_send(target_adapter, action)
+        await _invoke_send(target_adapter, action, raise_on_error=raise_on_error)
 
     return _multi
 
@@ -1296,11 +1376,18 @@ def _infer_platform(adapter: AdapterHandle) -> str:
     return "unknown"
 
 
-async def _invoke_send(adapter: AdapterHandle, action: Action) -> None:
+async def _invoke_send(
+    adapter: AdapterHandle,
+    action: Action,
+    *,
+    raise_on_error: bool = False,
+) -> None:
     """Call ``adapter.send``, accommodating both sync and async variants."""
     send = getattr(adapter, "send", None)
     if send is None:
         logger.warning("bootstrap.sink_adapter_has_no_send", adapter=type(adapter).__name__)
+        if raise_on_error:
+            raise RuntimeError(f"adapter has no send: {type(adapter).__name__}")
         return
     try:
         result = send(action)
@@ -1312,3 +1399,5 @@ async def _invoke_send(adapter: AdapterHandle, action: Action) -> None:
             adapter=type(adapter).__name__,
             action_kind=action.kind,
         )
+        if raise_on_error:
+            raise

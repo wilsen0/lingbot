@@ -17,7 +17,9 @@ from linling_agent.llm import (
     ToolCall,
     ToolSchema,
 )
-from linling_agent.runtime import AgentRuntime
+from linling_agent.runtime import _MAX_TOOL_RESULT_CHARS, AgentRuntime
+from linling_core.events import Event, Scope, User
+from linling_core.segments import TextSegment
 from linling_core.tools import ToolCtx, ToolRegistry
 from linling_core.tools import registry as global_registry
 
@@ -406,6 +408,61 @@ class TestRuntimeToolCalls:
         assert result.content == "The tool failed, sorry."
         assert result.tool_calls_made == 1
 
+    async def test_tool_result_is_truncated_before_next_llm_call(self, kv):
+        """Large tool outputs are capped before being replayed to the LLM."""
+        reg = ToolRegistry()
+        from linling_core.tools import ToolDef
+
+        async def big_tool(ctx: ToolCtx):
+            _ = ctx
+            return "x" * (_MAX_TOOL_RESULT_CHARS + 500)
+
+        reg.register(
+            ToolDef(
+                name="big_tool",
+                dsl_name="大工具",
+                description="Returns a large result",
+                schema={},
+                safe=True,
+                fn=big_tool,
+            )
+        )
+
+        agent_def = AgentDef.from_dict({"name": "big-agent", "tools": ["big_tool"]})
+        captured: list[list[Message]] = []
+
+        class CapturingProvider(MockProvider):
+            async def chat(
+                self,
+                messages: list[Message],
+                *,
+                tools: list[ToolSchema] | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                captured.append(list(messages))
+                return await super().chat(
+                    messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        provider = CapturingProvider(
+            [
+                make_tool_call_response("big_tool", {}, call_id="c1"),
+                make_text_response("Done"),
+            ]
+        )
+        runtime = AgentRuntime(agent_def, provider, reg, kv)
+
+        await runtime.invoke("Use big tool")
+
+        tool_messages = [m for m in captured[-1] if m.role == "tool"]
+        assert len(tool_messages) == 1
+        assert len(tool_messages[0].content) < _MAX_TOOL_RESULT_CHARS + 500
+        assert "tool result truncated" in tool_messages[0].content
+
 
 class TestRuntimeGuardrails:
     async def test_max_tool_calls_exceeded(self, kv, tool_registry):
@@ -506,6 +563,36 @@ class TestRuntimeMessages:
         assert msgs[3].role == "user"
         assert msgs[3].content == "New question"
 
+    async def test_context_max_tokens_controls_runtime_prompt_clip(self, kv, tool_registry):
+        """Dispatcher-provided context caps should override the legacy 8x completion heuristic."""
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "ctx",
+                "system": "System.",
+                "guardrails": {"max_tokens": 100},
+            }
+        )
+
+        captured_messages: list[list[Message]] = []
+
+        class CapturingProvider:
+            @property
+            def name(self):
+                return "capturing"
+
+            async def chat(self, messages, **kwargs):
+                captured_messages.append(list(messages))
+                return make_text_response("OK")
+
+            async def chat_stream(self, messages, **kwargs):
+                raise NotImplementedError
+
+        history = [Message(role="user", content="x" * 1_500)]
+        runtime = AgentRuntime(agent_def, CapturingProvider(), tool_registry, kv)
+        await runtime.invoke("New question", history=history, context_max_tokens=2_000)
+
+        assert "x" * 500 in "".join(m.content for m in captured_messages[0])
+
 
 class TestRuntimeToolSchemas:
     async def test_tool_schemas_built_from_registry(self, kv, tool_registry):
@@ -570,6 +657,43 @@ class TestRuntimeToolSchemas:
         await runtime.invoke("Test")
 
         assert captured_tools[0] is None
+
+    async def test_event_flag_can_disable_tools(self, kv, tool_registry):
+        """Internal decision prompts can force a no-tools LLM call."""
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "schema-test",
+                "tools": ["read_kv"],
+            }
+        )
+
+        captured_tools: list[list[ToolSchema] | None] = []
+
+        class CapturingProvider:
+            @property
+            def name(self):
+                return "capturing"
+
+            async def chat(self, messages, *, tools=None, **kwargs):
+                captured_tools.append(tools)
+                return make_text_response("OK")
+
+            async def chat_stream(self, messages, **kwargs):
+                raise NotImplementedError
+
+        event = Event(
+            id="e1",
+            platform="test",
+            bot_id="bot1",
+            scope=Scope(kind="group", id="g1", platform="test"),
+            sender=User(id="u1", platform="test"),
+            segments=[TextSegment(text="Test")],
+            raw={"_linling_disable_tools": True},
+        )
+        runtime = AgentRuntime(agent_def, CapturingProvider(), tool_registry, kv)
+        await runtime.invoke("Test", event=event)
+
+        assert captured_tools == [None]
 
 
 class TestRuntimeTokenAccumulation:

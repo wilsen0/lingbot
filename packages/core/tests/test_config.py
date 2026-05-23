@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import pytest
 from linling_core.config import BotConfig
 
 
@@ -111,6 +112,34 @@ bot_id: partial
         cfg = BotConfig.from_yaml_str(yaml_str)
         assert cfg.bot_id == "partial"
         assert cfg.name == "linling"  # default
+
+    def test_context_and_group_batch_defaults(self) -> None:
+        cfg = BotConfig.from_yaml_str("")
+        assert cfg.conversation.context_max_tokens == 65_536
+        assert cfg.conversation.summary_trigger_tokens == 60_000
+        assert cfg.conversation.summary_keep_recent_turns == 8
+        assert cfg.conversation.summary_max_tokens == 2_000
+        assert cfg.agent.group_batch_enabled is False
+        assert cfg.agent.group_batch_require_attention is True
+        assert cfg.agent.group_batch_max_hold_s == 30.0
+
+    def test_invalid_context_budget_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="summary_max_tokens"):
+            BotConfig.from_yaml_str(
+                """\
+conversation:
+  summary_max_tokens: 0
+"""
+            )
+
+    def test_invalid_group_batch_budget_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="group_batch_max_messages"):
+            BotConfig.from_yaml_str(
+                """\
+agent:
+  group_batch_max_messages: 0
+"""
+            )
 
 
 class TestAdminUsersParsing:

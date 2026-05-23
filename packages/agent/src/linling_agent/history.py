@@ -42,6 +42,7 @@ logger = structlog.get_logger(__name__)
 
 _HISTORY_SCOPE_PREFIX = "__history__"
 _MESSAGES_KEY = "messages"
+_SUMMARY_KEY = "summary"
 
 
 @runtime_checkable
@@ -128,6 +129,31 @@ class KVHistoryStore:
             _HISTORY_SCOPE_PREFIX + "/" + scope_id,
             sender_id or "_group",
             _MESSAGES_KEY,
+        )
+        await self.clear_summary(scope_id, sender_id)
+
+    async def load_summary(self, scope_id: str, sender_id: str) -> str:
+        raw = await self._kv.read(
+            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
+            sender_id or "_group",
+            _SUMMARY_KEY,
+            default="",
+        )
+        return raw if isinstance(raw, str) else ""
+
+    async def save_summary(self, scope_id: str, sender_id: str, summary: str) -> None:
+        await self._kv.write(
+            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
+            sender_id or "_group",
+            _SUMMARY_KEY,
+            summary,
+        )
+
+    async def clear_summary(self, scope_id: str, sender_id: str) -> None:
+        await self._kv.delete(
+            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
+            sender_id or "_group",
+            _SUMMARY_KEY,
         )
 
 

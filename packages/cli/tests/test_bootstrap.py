@@ -14,12 +14,16 @@ These prove:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
+from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig
+from linling_agent.runtime import AgentResult
 from linling_cli.bootstrap import RunningBot, bootstrap_bot
 from linling_core.config import BotConfig
 from linling_core.events import Action, Event, Scope, User
+from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import TextSegment
 
 # ---------------------------------------------------------------------------
@@ -33,15 +37,48 @@ class _RecordingAdapter:
     def __init__(self, *, platform: str = "test") -> None:
         self.platform = platform
         self.sent: list[Action] = []
+        self.sent_event = asyncio.Event()
 
     async def run(self) -> None:  # pragma: no cover — tests drive events directly
         return None
 
     async def send(self, action: Action) -> None:
         self.sent.append(action)
+        self.sent_event.set()
 
     async def stop(self) -> None:
         return None
+
+
+class _FailingAdapter(_RecordingAdapter):
+    async def send(self, action: Action) -> None:
+        _ = action
+        raise RuntimeError("send failed")
+
+
+class _BatchInner:
+    def __init__(self) -> None:
+        self.recorded = False
+
+    async def dispatch(self, event: Event, session: Session) -> AgentResult:
+        _ = event, session
+        return AgentResult(content='{"actions":[{"type":"send_group","text":"batch ok"}]}')
+
+    async def run(self, event: Event, session: Session) -> list[Action]:
+        _ = event, session
+        return []
+
+    async def record_history(
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        user_input: str,
+        assistant_output: str,
+    ) -> None:
+        _ = session, scope_id, sender_id, user_input, assistant_output
+        self.recorded = True
 
 
 def _event(text: str, *, platform: str = "test", sender: str = "u1", group: str = "g1") -> Event:
@@ -238,3 +275,63 @@ storage:
     assert bot.kv._conn is not None  # type: ignore[attr-defined]
     await bot.stop()
     assert bot.kv._conn is None  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_attach_adapter_rewires_group_batch_action_sink(tmp_path: Path):
+    yaml = """\
+bot_id: bot1
+storage:
+  kv: ":memory:"
+"""
+    bot = await _boot(tmp_path, yaml)
+    rec = _RecordingAdapter(platform="test")
+    conversations = ConversationStore(rate_per_second=100, burst=100)
+    batch = GroupBatchChatDispatcher(
+        inner=_BatchInner(),
+        config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
+        conversations=conversations,
+        bot_id="bot1",
+    )
+    bot.chat_dispatcher = batch
+    try:
+        bot.attach_adapter(rec)
+        session = await conversations.get_or_create(ConversationKey("bot1", "g1", "u1"))
+
+        await batch.run(_event("hi"), session)
+        await asyncio.wait_for(rec.sent_event.wait(), timeout=0.5)
+
+        assert rec.sent
+        assert rec.sent[0].segments[0].text == "batch ok"
+    finally:
+        await bot.stop()
+
+
+@pytest.mark.asyncio
+async def test_group_batch_does_not_record_history_when_strict_sink_fails(tmp_path: Path):
+    yaml = """\
+bot_id: bot1
+storage:
+  kv: ":memory:"
+"""
+    failing = _FailingAdapter(platform="test")
+    bot = await _boot(tmp_path, yaml, extra_adapters=[failing])
+    conversations = ConversationStore(rate_per_second=100, burst=100)
+    inner = _BatchInner()
+    batch = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
+        conversations=conversations,
+        bot_id="bot1",
+    )
+    bot.chat_dispatcher = batch
+    bot.attach_adapter(failing)
+    try:
+        session = await conversations.get_or_create(ConversationKey("bot1", "g1", "u1"))
+
+        await batch.run(_event("hi"), session)
+        await asyncio.sleep(0.1)
+
+        assert inner.recorded is False
+    finally:
+        await bot.stop()

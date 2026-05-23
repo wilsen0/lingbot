@@ -24,7 +24,10 @@ from linling_core.storage.kv import KVStore
 from linling_core.tools import ToolCtx, ToolRegistry
 
 from linling_agent.agent_def import AgentDef
+from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import LLMProvider, LLMResponse, Message, ToolSchema
+
+_MAX_TOOL_RESULT_CHARS = 8_000
 
 
 @dataclass
@@ -80,6 +83,11 @@ class AgentRuntime:
         """The LLM model identifier (e.g. ``gpt-4o-mini``)."""
         return self._agent_def.model
 
+    @property
+    def provider(self) -> LLMProvider:
+        """The provider used for LLM calls. Read-only view."""
+        return self._provider
+
     def _build_tool_schemas(self) -> list[ToolSchema]:
         """Convert allowed tools from the agent def into ToolSchema list."""
         schemas: list[ToolSchema] = []
@@ -121,8 +129,10 @@ class AgentRuntime:
         *,
         event: Event | None = None,
         history: list[Message] | None = None,
+        context_max_tokens: int | None = None,
     ) -> AgentResult:
         """Run the agent's ReAct loop until it produces a text response or hits limits."""
+        disable_tools = bool(event is not None and event.raw.get("_linling_disable_tools"))
         # Build initial messages
         messages: list[Message] = []
         if self._agent_def.system:
@@ -132,7 +142,7 @@ class AgentRuntime:
         messages.append(Message(role="user", content=user_input))
 
         # Build tool schemas
-        tool_schemas = self._build_tool_schemas()
+        tool_schemas = [] if disable_tools else self._build_tool_schemas()
         tools_arg = tool_schemas if tool_schemas else None
 
         tool_calls_made = 0
@@ -151,6 +161,10 @@ class AgentRuntime:
                 )
 
             remaining = max(0.1, guardrails.timeout_s - elapsed)
+            messages = fit_messages_to_budget(
+                messages,
+                _provider_prompt_budget(context_max_tokens=context_max_tokens),
+            )
 
             # Call LLM — timed and counted so dashboards can show
             # token / latency / error rate per provider/model.
@@ -252,6 +266,7 @@ class AgentRuntime:
                         result_str = str(result) if result is not None else ""
                     except Exception as exc:
                         result_str = f"Error executing tool '{tc.name}': {exc}"
+                result_str = _cap_tool_result(result_str)
 
                 messages.append(
                     Message(
@@ -261,3 +276,19 @@ class AgentRuntime:
                         tool_call_id=tc.id,
                     )
                 )
+
+
+def _cap_tool_result(text: str, max_chars: int = _MAX_TOOL_RESULT_CHARS) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]}\n[tool result truncated: {omitted} chars omitted]"
+
+
+def _provider_prompt_budget(
+    *,
+    context_max_tokens: int | None,
+) -> int:
+    if context_max_tokens is not None and context_max_tokens > 0:
+        return context_max_tokens
+    return 64_000

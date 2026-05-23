@@ -24,7 +24,7 @@ rules:
 agent:
   default_agent: ./agents/susu.yaml
   # 不匹配 DSL 又落不到 LLM 白名单时的兜底回复。留空则静默。
-  fallback_reply: "红娘今日不语，待我先去问问。"
+  fallback_reply: ""
   # LLM 兜底白名单(只影响群聊;私聊 DM 永远开放,因为是一对一对话):
   # - 不写或注释掉 = 群聊也全员开放(老行为)
   # - [] = 所有群聊都关掉 LLM,DSL 与 DM 仍然能用(联调期推荐)
@@ -32,6 +32,25 @@ agent:
   # WebUI 默认走 dm 通路 (%群号%==0),所以白名单不影响 web 端聊天。
   allowed_scopes:
     - "2986537370"
+  # 群聊 LLM 采用窗口聚合：DSL 仍实时响应，只有兜底聊天会攒一小段时间
+  # 后交给 LLM 选择性回复，避免每条群消息都触发一次模型。
+  group_batch_enabled: true
+  group_batch_window_s: 8
+  group_batch_max_messages: 20
+  group_batch_max_chars: 6000
+  group_batch_max_replies: 3
+  group_batch_require_attention: true
+  group_batch_max_hold_s: 30
+  group_batch_bot_names:
+    - 苏苏
+    - 涂山苏苏
+
+conversation:
+  # 64k 上下文预算；接近上限时自动把旧 turn 折叠成 summary。
+  context_max_tokens: 65536
+  summary_trigger_tokens: 60000
+  summary_keep_recent_turns: 8
+  summary_max_tokens: 2000
 
 metrics:
   enabled: true

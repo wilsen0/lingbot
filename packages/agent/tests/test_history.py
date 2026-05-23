@@ -7,9 +7,15 @@ import json
 
 import pytest
 from linling_agent.agent_def import AgentDef
+from linling_agent.context import (
+    ContextBudget,
+    estimate_messages_tokens,
+    estimate_tokens,
+    fit_messages_to_budget,
+)
 from linling_agent.dispatcher import AgentChatDispatcher
 from linling_agent.history import KVHistoryStore
-from linling_agent.llm import LLMResponse, Message, TokenUsage
+from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
 from linling_agent.runtime import AgentRuntime
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore
@@ -35,6 +41,32 @@ class _EchoProvider:
         return LLMResponse(
             message=Message(role="assistant", content=f"[turn {hist_user}] {user}"),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+
+    async def chat_stream(self, messages, **kwargs):
+        raise NotImplementedError
+
+
+class _RecordingProvider:
+    def __init__(self) -> None:
+        self.calls: list[list[Message]] = []
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    async def chat(self, messages, *, tools=None, temperature=0.7, max_tokens=None):
+        self.calls.append(list(messages))
+        # Summary calls are plain one-message prompts from ContextManager.
+        if len(messages) == 1 and messages[0].content.startswith("Summarize"):
+            return LLMResponse(
+                message=Message(role="assistant", content="compressed old facts"),
+                usage=TokenUsage(total_tokens=3),
+            )
+        user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        return LLMResponse(
+            message=Message(role="assistant", content=f"reply:{user[:20]}"),
+            usage=TokenUsage(total_tokens=3),
         )
 
     async def chat_stream(self, messages, **kwargs):
@@ -127,9 +159,61 @@ async def test_scope_wide_memory_when_sender_empty(history, kv):
 
 async def test_clear(history):
     await history.save("s1", "u1", [Message(role="user", content="hi")])
+    await history.save_summary("s1", "u1", "old summary")
     assert await history.load("s1", "u1") != []
+    assert await history.load_summary("s1", "u1") == "old summary"
     await history.clear("s1", "u1")
     assert await history.load("s1", "u1") == []
+    assert await history.load_summary("s1", "u1") == ""
+
+
+async def test_summary_roundtrip(history):
+    await history.save_summary("s1", "u1", "facts so far")
+    assert await history.load_summary("s1", "u1") == "facts so far"
+    await history.clear_summary("s1", "u1")
+    assert await history.load_summary("s1", "u1") == ""
+
+
+def test_token_estimator_is_byte_conservative() -> None:
+    assert estimate_tokens("abc") == 3
+    assert estimate_tokens("苏") == len("苏".encode())
+    assert estimate_tokens("😀") == len("😀".encode())
+
+
+def test_fit_messages_preserves_tool_blocks() -> None:
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="old"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="lookup", arguments='{"q":"x"}')],
+        ),
+        Message(role="tool", content="y" * 200, name="lookup", tool_call_id="c1"),
+        Message(role="assistant", content="final"),
+    ]
+
+    fitted = fit_messages_to_budget(messages, 120)
+
+    assert fitted[0].role == "system"
+    assistant_tool = next(m for m in fitted if m.role == "assistant" and m.tool_calls)
+    tool = next(m for m in fitted if m.role == "tool")
+    assert assistant_tool.tool_calls
+    assert tool.tool_call_id == assistant_tool.tool_calls[0].id
+    assert len(tool.content) < 200
+    assert estimate_messages_tokens(fitted) <= 120
+
+
+def test_fit_messages_drops_orphan_tool_messages() -> None:
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="tool", content="orphan", name="lookup", tool_call_id="c1"),
+        Message(role="assistant", content="final"),
+    ]
+
+    fitted = fit_messages_to_budget(messages, 80)
+
+    assert [m.role for m in fitted] == ["system", "assistant"]
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +272,137 @@ async def test_dispatcher_rehydrates_from_store_on_fresh_session(dispatcher, his
     # this turn, there should be 2 user messages (hence ``[turn 2]``).
     loaded = await history.load("s1", "u1")
     assert loaded[-1].content.startswith("[turn 2]")
+
+
+async def test_dispatcher_summarizes_when_history_exceeds_budget(kv, history):
+    provider = _RecordingProvider()
+    agent_def = AgentDef(name="ctx", model="mock", system="")
+    agent = AgentRuntime(
+        agent_def=agent_def,
+        provider=provider,
+        tool_registry=registry,
+        kv=kv,
+        bot_id="bot1",
+    )
+    dispatcher = AgentChatDispatcher(
+        agent=agent,
+        history_store=history,
+        context_budget=ContextBudget(
+            max_tokens=200,
+            summary_trigger_tokens=80,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+    )
+    store = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+    session = await store.get_or_create(ConversationKey("bot1", "s1", "u1"))
+    for i in range(6):
+        session.history.append(Message(role="user", content=f"old user {i} " + "很长" * 20))
+        session.history.append(Message(role="assistant", content=f"old assistant {i}"))
+
+    await dispatcher.run(_event("now"), session)
+
+    assert await history.load_summary("s1", "u1") == "compressed old facts"
+    # One call for summary, one call for the actual reply.
+    assert len(provider.calls) == 2
+    actual_prompt = provider.calls[-1]
+    assert any("<conversation_summary>" in m.content for m in actual_prompt)
+    assert not any("old user 0" in m.content for m in actual_prompt)
+
+
+async def test_dispatcher_clips_current_input_to_context_budget(kv, history):
+    provider = _RecordingProvider()
+    agent_def = AgentDef(name="ctx", model="mock", system="system prompt")
+    agent = AgentRuntime(
+        agent_def=agent_def,
+        provider=provider,
+        tool_registry=registry,
+        kv=kv,
+        bot_id="bot1",
+    )
+    dispatcher = AgentChatDispatcher(
+        agent=agent,
+        history_store=history,
+        context_budget=ContextBudget(
+            max_tokens=120,
+            summary_trigger_tokens=1_000,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+    )
+    store = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+    session = await store.get_or_create(ConversationKey("bot1", "s1", "u1"))
+    long_input = "x" * 1_000
+
+    await dispatcher.run(_event(long_input), session)
+
+    actual_prompt = provider.calls[-1]
+    user_messages = [m.content for m in actual_prompt if m.role == "user"]
+    assert user_messages
+    assert len(user_messages[-1]) < len(long_input)
+    assert "x" * len(user_messages[-1]) == user_messages[-1]
+
+
+async def test_disabled_context_budget_does_not_clip_current_input(kv, history):
+    provider = _RecordingProvider()
+    agent_def = AgentDef(name="ctx", model="mock", system="")
+    agent = AgentRuntime(
+        agent_def=agent_def,
+        provider=provider,
+        tool_registry=registry,
+        kv=kv,
+        bot_id="bot1",
+    )
+    dispatcher = AgentChatDispatcher(
+        agent=agent,
+        history_store=history,
+        context_budget=ContextBudget(
+            max_tokens=0,
+            summary_trigger_tokens=0,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+    )
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "s1", "u1"))
+    long_input = "x" * 1_000
+
+    await dispatcher.run(_event(long_input), session)
+
+    actual_prompt = provider.calls[-1]
+    user_messages = [m.content for m in actual_prompt if m.role == "user"]
+    assert user_messages[-1] == long_input
+
+
+async def test_context_budget_clips_even_when_summary_disabled(kv, history):
+    provider = _RecordingProvider()
+    agent_def = AgentDef(name="ctx", model="mock", system="")
+    agent = AgentRuntime(
+        agent_def=agent_def,
+        provider=provider,
+        tool_registry=registry,
+        kv=kv,
+        bot_id="bot1",
+    )
+    dispatcher = AgentChatDispatcher(
+        agent=agent,
+        history_store=history,
+        context_budget=ContextBudget(
+            max_tokens=120,
+            summary_trigger_tokens=0,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+    )
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "s1", "u1"))
+    long_input = "x" * 1_000
+
+    await dispatcher.run(_event(long_input), session)
+
+    actual_prompt = provider.calls[-1]
+    user_messages = [m.content for m in actual_prompt if m.role == "user"]
+    assert len(user_messages[-1]) < len(long_input)
 
 
 async def test_clear_history_drops_store_rows(dispatcher, history):

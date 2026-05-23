@@ -27,6 +27,8 @@ class _RecordingInner:
         self.runs: list[Event] = []
         self.history_clears: list[tuple[str, str]] = []
         self.ledger_clears: list[tuple[str, str]] = []
+        self.sinks: list[Any] = []
+        self.stopped = False
 
     async def run(self, event: Event, session: Session) -> list[Action]:
         self.runs.append(event)
@@ -43,6 +45,12 @@ class _RecordingInner:
 
     async def clear_ledger(self, scope_id: str, file_id: str) -> None:
         self.ledger_clears.append((scope_id, file_id))
+
+    def set_action_sink(self, sink: Any) -> None:
+        self.sinks.append(sink)
+
+    async def stop(self) -> None:
+        self.stopped = True
 
 
 def _gate(inner: Any, *, allowed: frozenset[str] = frozenset({"g1"})) -> _ScopeGatedChatDispatcher:
@@ -110,6 +118,25 @@ async def test_gate_clear_ledger_silent_when_inner_missing() -> None:
 
     gate = _gate(_Bare())
     await gate.clear_ledger("g1", "_group")
+
+
+async def test_gate_forwards_action_sink_to_inner() -> None:
+    inner = _RecordingInner()
+    gate = _gate(inner)
+    sink = object()
+
+    gate.set_action_sink(sink)
+
+    assert inner.sinks == [sink]
+
+
+async def test_gate_forwards_stop_to_inner() -> None:
+    inner = _RecordingInner()
+    gate = _gate(inner)
+
+    await gate.stop()
+
+    assert inner.stopped is True
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Pattern for ${VAR} or ${VAR:-default} expansion.
@@ -194,6 +194,10 @@ class ConversationConfig(BaseModel):
     history_turns: int = 16
     rate_per_second: float = 1.0
     burst: float = 5.0
+    context_max_tokens: int = 65_536
+    summary_trigger_tokens: int = 60_000
+    summary_keep_recent_turns: int = 8
+    summary_max_tokens: int = 2_000
     # DSL Action Ledger knobs. Pinned to the spec's defaults; bootstrap
     # constructs ``KVDslLedgerStore`` / ``LedgerWriter`` /
     # ``LedgerRenderer`` only when the ledger is opt-in via the
@@ -204,6 +208,18 @@ class ConversationConfig(BaseModel):
     ledger_single_char_budget: int = 200
     ledger_total_char_budget: int = 800
     ledger_global_default_expose: bool = True
+
+    @model_validator(mode="after")
+    def _validate_context_budget(self) -> ConversationConfig:
+        if self.context_max_tokens < 0:
+            raise ValueError("context_max_tokens must be non-negative")
+        if self.summary_trigger_tokens < 0:
+            raise ValueError("summary_trigger_tokens must be non-negative")
+        if self.summary_keep_recent_turns < 0:
+            raise ValueError("summary_keep_recent_turns must be non-negative")
+        if self.summary_max_tokens <= 0:
+            raise ValueError("summary_max_tokens must be positive")
+        return self
 
 
 class AgentConfig(BaseModel):
@@ -239,6 +255,31 @@ class AgentConfig(BaseModel):
     default_agent: str | None = None  # path to agent yaml
     fallback_reply: str = "Sorry, I don't have a chat brain configured."
     allowed_scopes: list[str] | None = None
+    group_batch_enabled: bool = False
+    group_batch_window_s: float = 8.0
+    group_batch_max_messages: int = 20
+    group_batch_max_chars: int = 6_000
+    group_batch_max_replies: int = 3
+    group_batch_max_reply_chars: int = 500
+    group_batch_require_attention: bool = True
+    group_batch_max_hold_s: float = 30.0
+    group_batch_bot_names: list[str] = []
+
+    @model_validator(mode="after")
+    def _validate_group_batch(self) -> AgentConfig:
+        if self.group_batch_window_s < 0:
+            raise ValueError("group_batch_window_s must be non-negative")
+        if self.group_batch_max_messages <= 0:
+            raise ValueError("group_batch_max_messages must be positive")
+        if self.group_batch_max_chars <= 0:
+            raise ValueError("group_batch_max_chars must be positive")
+        if self.group_batch_max_replies < 0:
+            raise ValueError("group_batch_max_replies must be non-negative")
+        if self.group_batch_max_reply_chars <= 0:
+            raise ValueError("group_batch_max_reply_chars must be positive")
+        if self.group_batch_max_hold_s <= 0:
+            raise ValueError("group_batch_max_hold_s must be positive")
+        return self
 
 
 class MetricsConfig(BaseModel):
