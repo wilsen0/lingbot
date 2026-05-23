@@ -96,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import type { TriggerSuggestion } from "@/api/agents";
 import { useElementSizeVar } from "@/composables/useElementSizeVar";
@@ -127,6 +127,7 @@ const dockEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 const draft = ref("");
 const composing = ref(false);
+const keyboardSettleTimers: number[] = [];
 
 /* === 候选指令 (inline-suggest) === */
 const suggest = useTriggerSuggest();
@@ -161,6 +162,10 @@ useElementSizeVar(dockEl, "--chat-dock-h", { kind: "height", min: 72 });
 const canSend = computed(
   () => !props.disabled && !!draft.value.trim() && !props.streaming,
 );
+
+function suggestGuarded(): boolean {
+  return props.streaming || props.disabled || composing.value;
+}
 
 /**
  * textarea 自动高度. 合并到下一帧, 避免 input → autosize 这条链上的
@@ -239,13 +244,16 @@ function onCompositionEnd() {
 
 function onInput() {
   autosize();
+  // Esc 只是临时收起候选；用户继续输入时恢复，仍受 streaming/disabled/IME 守门。
+  if (!suggestGuarded()) suggest.suppressed.value = false;
   syncQuery();
 }
 
 function onFocus() {
   // 重新进入输入 → 上次 Esc 隐藏的面板恢复. 仍受 streaming/disabled 守门.
-  suggest.suppressed.value = props.streaming || props.disabled || composing.value;
+  suggest.suppressed.value = suggestGuarded();
   syncQuery();
+  settleOuterScroll();
   emit("focus");
 }
 
@@ -302,7 +310,7 @@ function applySuggestion(
     if (el) {
       const cursor = draft.value.length;
       el.setSelectionRange(cursor, cursor);
-      el.focus();
+      focusInput();
     }
     if (opts.autoSend) {
       submit();
@@ -324,15 +332,57 @@ function submit() {
   if (!text) return;
   emit("submit", text);
   draft.value = "";
+  clearSuggest();
   autosize();
 }
 
+function clearSuggest() {
+  suggest.query.value = "";
+  suggest.cursor.value = -1;
+}
+
+function resetOuterScroll() {
+  if (typeof window === "undefined") return;
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  const shellMain = document.querySelector<HTMLElement>(".shell-main");
+  if (shellMain) shellMain.scrollTop = 0;
+  try {
+    window.scrollTo(0, 0);
+  } catch {
+    /* jsdom / locked browsers may not expose scrollTo */
+  }
+}
+
+function settleOuterScroll() {
+  if (typeof window === "undefined") return;
+  for (const id of keyboardSettleTimers) window.clearTimeout(id);
+  keyboardSettleTimers.length = 0;
+  resetOuterScroll();
+  window.requestAnimationFrame(resetOuterScroll);
+  keyboardSettleTimers.push(
+    window.setTimeout(resetOuterScroll, 80),
+    window.setTimeout(resetOuterScroll, 320),
+  );
+}
+
+function focusInput() {
+  inputEl.value?.focus({ preventScroll: true });
+  settleOuterScroll();
+}
+
+onBeforeUnmount(() => {
+  for (const id of keyboardSettleTimers) window.clearTimeout(id);
+  keyboardSettleTimers.length = 0;
+});
+
 defineExpose({
   /** 父组件可主动聚焦 (例如 / 快捷键) */
-  focus: () => inputEl.value?.focus(),
+  focus: focusInput,
   /** 父组件清空草稿 — 焚此缘 / 切换 agent 时 */
   clear: () => {
     draft.value = "";
+    clearSuggest();
     autosize();
   },
 });

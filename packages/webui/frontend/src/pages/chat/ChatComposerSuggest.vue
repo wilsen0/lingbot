@@ -13,7 +13,7 @@
         :class="{ 'is-active': activeIdx === idx }"
         :aria-selected="activeIdx === idx"
         role="option"
-        @mousedown.prevent="$emit('pick', item)"
+        @pointerdown.prevent="$emit('pick', item)"
         @mousemove="$emit('hover', idx)"
       >
         <span class="suggest__label">
@@ -45,7 +45,7 @@ import type { TriggerSuggestion } from "@/api/agents";
  *
  * Pure-presentational. ``ChatComposer`` owns the data + keyboard
  * model (``useTriggerSuggest``); this component just renders. We
- * keep mousedown's preventDefault on the row click so picking a
+ * keep pointerdown's preventDefault on the row click so picking a
  * suggestion doesn't blur the textarea (which would steal focus
  * and close the panel before the click resolves).
  *
@@ -58,8 +58,7 @@ import type { TriggerSuggestion } from "@/api/agents";
 const props = defineProps<{
   visible: boolean;
   results: TriggerSuggestion[];
-  /** -1 means "no explicit highlight" — render results[0] as
-   * implicit default. */
+  /** -1 means "no explicit highlight". */
   cursor: number;
   query: string;
 }>();
@@ -69,10 +68,7 @@ defineEmits<{
   (e: "hover", idx: number): void;
 }>();
 
-const activeIdx = computed(() => {
-  if (!props.results.length) return -1;
-  return props.cursor === -1 ? 0 : props.cursor;
-});
+const activeIdx = computed(() => props.cursor);
 
 const ariaLabel = computed(() =>
   props.results.length === 1 ? "一条候选" : `${props.results.length} 条候选`,
@@ -128,13 +124,21 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   padding: 6px;
   z-index: 11;
   animation: var(--motion-fade-in-up);
+  overflow: hidden;
 }
 .suggest__list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 36vh;
+  max-height: max(
+    96px,
+    min(
+      36vh,
+      calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 112px)
+    )
+  );
   overflow-y: auto;
+  overscroll-behavior: contain;
   /* 隐藏滚动条但保留滚动能力 — 候选最多 8 条, 滚一下就到底,
    * 那条粗黑的浏览器默认滚动条挂在淡彩面板上太刺眼. */
   scrollbar-width: none;
@@ -202,7 +206,15 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
 }
 
 @media (max-width: 480px) {
-  .suggest__list { max-height: 44vh; }
+  .suggest__list {
+    max-height: max(
+      88px,
+      min(
+        44vh,
+        calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 96px)
+      )
+    );
+  }
   .suggest__foot { display: none; }
 }
 </style>

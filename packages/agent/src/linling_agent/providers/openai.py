@@ -49,9 +49,17 @@ class OpenAIProvider:
         # ``extra_headers={"User-Agent": ...}`` only when an endpoint
         # rejects the default.
         self._extra_headers = dict(extra_headers or {})
+        # ``trust_env=False`` keeps the LLM client off any ambient
+        # proxy. ``httpx`` defaults to honouring ``HTTP_PROXY`` /
+        # ``HTTPS_PROXY`` / ``ALL_PROXY`` / ``NO_PROXY``; for the
+        # provider call we want a direct route to the upstream API
+        # regardless of how the operator launched the bot. Adapter /
+        # tool HTTP clients still pick up proxy env on their own —
+        # this only affects the LLM round trip.
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers=self._build_headers(),
+            trust_env=False,
         )
 
     @property

@@ -8,8 +8,8 @@ import { createRafSchedule } from "@/composables/useRafSchedule";
  * 知道键盘遮了多少像素。其余一切派生:
  *
  *   • 输入条 dock / sheet / drawer 用
- *     transform: translateY(calc(-1 * var(--vv-bottom)))
- *     抬到键盘上方
+ *     bottom: var(--vv-bottom) / padding-bottom: var(--vv-bottom)
+ *     锚到键盘上方
  *   • 滚动容器 (Chat 的 main) 用 scroll-padding-bottom: var(--vv-bottom)
  *     让浏览器自己的"焦点滚到可见区"启发式知道避开键盘 — 这比我们手写
  *     scrollIntoView 更鲁棒, 因为它和原生行为同源

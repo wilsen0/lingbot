@@ -16,6 +16,6 @@ import { usePrefsStore } from "@/store/prefs";
 usePrefsStore();
 
 // 注册视窗几何追踪: visualViewport 偏移 → :root CSS 变量, 让所有底部锚定
-// 的 fixed 元素 (输入条 / sheet / drawer) 自己用 translateY 避让键盘。
+// 的 fixed 元素 (输入条 / sheet / drawer) 直接用 bottom / padding 避让键盘。
 useViewport();
 </script>

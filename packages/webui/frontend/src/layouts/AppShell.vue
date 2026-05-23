@@ -72,12 +72,25 @@ const showShellBar = computed(() => Boolean(route.meta?.showBack));
  * 没 fixed 输入条, 不锁.
  */
 const lockScroll = computed(() => route.name === "chat");
+
+function resetChatScroll() {
+  if (typeof window === "undefined") return;
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  try {
+    window.scrollTo(0, 0);
+  } catch {
+    /* no-op */
+  }
+}
+
 watch(
   lockScroll,
   (locked) => {
     if (typeof document === "undefined") return;
     if (locked) {
       document.documentElement.dataset.route = "chat";
+      resetChatScroll();
     } else if (document.documentElement.dataset.route === "chat") {
       delete document.documentElement.dataset.route;
     }

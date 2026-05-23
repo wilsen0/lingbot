@@ -95,6 +95,18 @@ html[data-route="chat"] body {
   overscroll-behavior: contain;
 }
 
+html[data-route="chat"] body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+html[data-route="chat"] #app {
+  height: 100%;
+  overflow: hidden;
+}
+
 /*
  * 输入法键盘弹起时, 让浏览器自己的"焦点滚到可见区"启发式知道避开键盘:
  * 把键盘高度通过 scroll-padding-bottom 告诉它。这比手写 scrollIntoView

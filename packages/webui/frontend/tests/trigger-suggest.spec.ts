@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, nextTick } from "vue";
 
 import type { TriggerSuggestion } from "@/api/agents";
+import ChatComposer from "@/pages/chat/ChatComposer.vue";
 import { lastQueryToken, useTriggerSuggest } from "@/pages/chat/useTriggerSuggest";
 
 vi.mock("@/api/agents", async () => {
@@ -37,6 +38,18 @@ function mountController() {
   });
   const wrapper = mount(Host);
   return { wrapper, ctrl: captured };
+}
+
+function mountComposer() {
+  return mount(ChatComposer, {
+    props: {
+      disabled: false,
+      streaming: false,
+      placeholder: "言於此",
+      agentName: "susu",
+    },
+    attachTo: document.body,
+  });
 }
 
 describe("lastQueryToken", () => {
@@ -211,5 +224,62 @@ describe("useTriggerSuggest ranking", () => {
     ctrl.query.value = "ab";
     await nextTick();
     expect(ctrl.results.value.map((r) => r.label)).toContain("ab");
+  });
+});
+
+describe("ChatComposer suggest flow", () => {
+  beforeEach(() => {
+    vi.mocked(listTriggers).mockResolvedValue([
+      s("我的灵玉"),
+      s("反馈丢失…", "反馈丢失(.*)", true),
+      s("反馈吞玉…", "反馈吞玉([0-9]+)", true),
+    ]);
+  });
+
+  it("Esc hides suggestions but fresh input brings them back", async () => {
+    const wrapper = mountComposer();
+    await flushPromises();
+    const input = wrapper.get("textarea");
+
+    await input.setValue("反");
+    await nextTick();
+    expect(wrapper.find(".suggest").exists()).toBe(true);
+    expect(wrapper.findAll(".suggest__item.is-active")).toHaveLength(0);
+
+    await input.trigger("keydown", { key: "Escape" });
+    await nextTick();
+    expect(wrapper.find(".suggest").exists()).toBe(false);
+
+    await input.setValue("反馈");
+    await nextTick();
+    expect(wrapper.find(".suggest").exists()).toBe(true);
+
+    wrapper.unmount();
+  });
+
+  it("submit and clear both drop stale query state", async () => {
+    const wrapper = mountComposer();
+    await flushPromises();
+    const input = wrapper.get("textarea");
+
+    await input.setValue("反");
+    await nextTick();
+    expect(wrapper.find(".suggest").exists()).toBe(true);
+
+    await input.trigger("keydown", { key: "Enter" });
+    await nextTick();
+    expect((input.element as HTMLTextAreaElement).value).toBe("");
+    expect(wrapper.find(".suggest").exists()).toBe(false);
+
+    await input.setValue("反");
+    await nextTick();
+    expect(wrapper.find(".suggest").exists()).toBe(true);
+
+    await (wrapper.vm as { clear: () => void }).clear();
+    await nextTick();
+    expect((input.element as HTMLTextAreaElement).value).toBe("");
+    expect(wrapper.find(".suggest").exists()).toBe(false);
+
+    wrapper.unmount();
   });
 });
