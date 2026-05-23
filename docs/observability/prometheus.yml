@@ -1,0 +1,24 @@
+# Minimal Prometheus scrape config for a local linling bot.
+#
+# Drop this into any Prometheus (or Thanos / Mimir / VictoriaMetrics)
+# config as a static-target starting point. Production deployments
+# typically swap the static_configs block for file_sd_configs or
+# kubernetes_sd_configs.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: dev
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: linling
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:8787
+        labels:
+          service: linling

@@ -1,0 +1,192 @@
+[project]
+name = "linling"
+version = "0.0.0"
+description = "对话智能体平台：LLM Agent 框架 + 中文 DSL 解释器 + 多平台适配"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "linling" }]
+
+# 根项目不提供可运行代码，只作为 workspace 聚合。
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+# ----------------------------------------------------------------------------
+# uv workspace
+# ----------------------------------------------------------------------------
+[tool.uv.workspace]
+members = [
+    "packages/core",
+    "packages/dsl",
+    "packages/agent",
+    "packages/tools-stdlib",
+    "packages/cli",
+    "packages/adapters/onebot",
+    "packages/adapters/cli",
+    "packages/webui",
+]
+
+[tool.uv.sources]
+linling-core = { workspace = true }
+linling-dsl = { workspace = true }
+linling-agent = { workspace = true }
+linling-adapter-onebot = { workspace = true }
+linling-adapter-cli = { workspace = true }
+linling-tools-stdlib = { workspace = true }
+linling-cli = { workspace = true }
+linling-webui = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+    "hypothesis>=6.100",
+    "prometheus_client>=0.20",
+]
+
+# ----------------------------------------------------------------------------
+# ruff
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["packages"]
+extend-exclude = ["QRDic", "scripts/legacy"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",       # pycodestyle / pyflakes
+    "I",                  # isort
+    "B",                  # bugbear
+    "UP",                 # pyupgrade
+    "SIM",                # simplify
+    "RUF",                # ruff-specific
+    "PL",                 # pylint (subset)
+    "ASYNC",              # async gotchas
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "PLR0911", "PLR0913", "PLR0912", "PLR0915",  # complexity; we'll enforce in review
+    "PLR2004",  # magic values; too noisy for a parser
+    "SIM108", # ternary not always clearer
+    # Full-width Chinese punctuation (：，；（）) is *intentional* in
+    # docstrings and messages — the product is Chinese-first. These
+    # rules exist to catch accidental confusables in security-sensitive
+    # ASCII contexts (domain names, tokens), which doesn't apply to our
+    # natural-language strings.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["PLR2004", "S101", "PLC0415", "PLR0913"]
+"**/__init__.py" = ["F401"]
+# FastAPI routers idiomatically place ``Depends(...)`` / ``Query(...)`` in
+# argument defaults — that's the framework's DI mechanism, not a bug.
+"packages/webui/src/linling_webui/routers/**" = ["B008"]
+# WebSocket handlers need `Depends` / `Query` in defaults too.
+"packages/webui/src/linling_webui/ws/**" = ["B008"]
+# Dependencies module holds the shared FastAPI `Depends(...)` helpers.
+"packages/webui/src/linling_webui/deps.py" = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ----------------------------------------------------------------------------
+# mypy
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = false
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+namespace_packages = true
+mypy_path = [
+    "packages/core/src",
+    "packages/dsl/src",
+    "packages/agent/src",
+    "packages/tools-stdlib/src",
+    "packages/cli/src",
+    "packages/adapters/onebot/src",
+    "packages/adapters/cli/src",
+    "packages/webui/src",
+]
+files = [
+    "packages/core/src",
+    "packages/dsl/src",
+    "packages/agent/src",
+    "packages/tools-stdlib/src",
+    "packages/cli/src",
+    "packages/adapters/onebot/src",
+    "packages/adapters/cli/src",
+    "packages/webui/src",
+]
+exclude = [
+    "^packages/.+/tests/",
+    "^scripts/",
+    "^QRDic/",
+]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "lark.*",
+    "aiosqlite.*",
+    "yaml.*",
+    "jose.*",
+    "argon2.*",
+]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------------
+# pytest
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+asyncio_mode = "auto"
+testpaths = ["packages", "tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "-ra",
+]
+markers = [
+    "integration: end-to-end tests, may need external deps",
+    "slow: takes longer than a second",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["packages"]
+omit = ["**/tests/**", "**/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

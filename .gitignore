@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+dist/
+build/
+
+# uv
+.uv/
+uv.lock
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+.env
+.env.local
+
+# Archives / large binaries
+*.zip
+
+# Allow example env
+!.env.example
+
+# Keep old project reference but don't lint it
+QRDic/data/**/*.bak

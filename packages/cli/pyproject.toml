@@ -1,0 +1,28 @@
+[project]
+name = "linling-cli"
+version = "0.0.0"
+description = "linling command-line entry point (`linling`)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "linling-core",
+    "linling-dsl",
+    "linling-agent",
+    "linling-adapter-cli",
+    "linling-adapter-onebot",
+    "linling-webui",
+    "typer>=0.12",
+    "rich>=13.7",
+    "uvicorn[standard]>=0.30",
+    "python-dotenv>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linling_cli"]
+
+[project.scripts]
+linling = "linling_cli.main:app"

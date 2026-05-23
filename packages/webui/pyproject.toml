@@ -1,0 +1,29 @@
+[project]
+name = "linling-webui"
+version = "0.0.0"
+description = "linling WebUI — 狐妖情缘主题 · FastAPI backend + Vue SPA"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "linling-core",
+    "linling-agent",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "python-jose[cryptography]>=3.3",
+    "argon2-cffi>=23.1",
+    "pyyaml>=6.0",
+    "structlog>=24.1",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linling_webui"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/linling_webui/static" = "linling_webui/static"

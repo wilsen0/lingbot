@@ -1,0 +1,18 @@
+[project]
+name = "linling-tools-stdlib"
+version = "0.0.0"
+description = "linling standard tool library (http, json, codec, image-text, …)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "linling-core",
+    "httpx>=0.27",
+    "pillow>=10.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linling_tools_stdlib"]

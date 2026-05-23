@@ -1,0 +1,13 @@
+# Default reviewer for every PR.
+# Replace with team handles or individuals as appropriate.
+*       @wilsen
+
+# Bumping this should ping the maintainer of each subsystem.
+/packages/core/                 @wilsen
+/packages/agent/                @wilsen
+/packages/dsl/                  @wilsen
+/packages/webui/                @wilsen
+/packages/adapters/             @wilsen
+/packages/cli/                  @wilsen
+/.github/                       @wilsen
+/docs/                          @wilsen

@@ -1,0 +1,276 @@
+/*
+ * Tailwind v4 主题入口。
+ * 将 tokens.css 里定义的 CSS 变量映射为 Tailwind 的 `bg-sorrow` 等工具类。
+ */
+
+@import "tailwindcss";
+
+@import "./fonts.css";
+@import "./tokens.css";
+
+@theme {
+  --color-bg:        rgb(var(--color-bg) / <alpha-value>);
+  --color-bg-veil:   rgb(var(--color-bg-veil) / <alpha-value>);
+  --color-ink:       rgb(var(--color-ink) / <alpha-value>);
+  --color-ink-soft:  rgb(var(--color-ink-soft) / <alpha-value>);
+  --color-sakura:    rgb(var(--color-sakura) / <alpha-value>);
+  --color-sakura-2:  rgb(var(--color-sakura-2) / <alpha-value>);
+  --color-sorrow:    rgb(var(--color-sorrow) / <alpha-value>);
+  --color-thread:    rgb(var(--color-thread) / <alpha-value>);
+  --color-bell:      rgb(var(--color-bell) / <alpha-value>);
+  --color-petal:     rgb(var(--color-petal) / <alpha-value>);
+  --color-glow:      rgb(var(--color-glow) / <alpha-value>);
+  --color-jade:      rgb(var(--color-jade) / <alpha-value>);
+  --color-alert:     rgb(var(--color-alert) / <alpha-value>);
+  --color-ash:       rgb(var(--color-ash) / <alpha-value>);
+
+  --font-sans:    var(--font-sans);
+  --font-serif:   var(--font-serif);
+  --font-display: var(--font-display);
+  --font-mono:    var(--font-mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+/* 基本 */
+html,
+body,
+#app { height: 100%; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: rgb(var(--color-bg));
+  color: rgb(var(--color-ink));
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" on, "pnum" on;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+  position: relative;
+  /*
+   * 用 svh ("smallest viewport height") 而非 dvh / vh:
+   *
+   *   • 100dvh 在 iOS Safari / Chrome Android 上会在地址栏开/合时
+   *     重新计算, 导致整页"跳一下" — 用户每次滚动都触发, 这是手机
+   *     发热 + 抖动的最大单一根源.
+   *   • 100vh 用最大值 (地址栏隐藏), 页面比可见区还高, 一开始就
+   *     有一段被遮.
+   *   • 100svh 永远是"最小那个", 即使地址栏出现也不变 — 整个页面
+   *     纹丝不动. 配合视窗 meta `viewport-fit=cover` 安全区域已经
+   *     单独处理.
+   *
+   * Safari 16+ / Chrome 108+ 都已支持. 不再写 fallback 100vh — 若
+   * 浏览器不认 svh, 会忽略本规则, body 仍然能从 html { height:100% }
+   * 拿到一个合理高度.
+   */
+  min-height: 100svh;
+}
+
+/*
+ * 聊天路由全屏锁: html/body 都不可滚.
+ *
+ * AppShell 在 ``route.name === 'chat'`` 时给 <html> 加 data-route="chat"
+ * (见 AppShell setup). iOS Safari 在用户聚焦 textarea 时会沿"最近可滚
+ * 祖先"链做 scrollIntoView — 即便 composer 是 fixed, Safari 仍然会去
+ * 滚 html / body / shell-main 等任意可滚祖先, 把对话区"顶上去". 用户
+ * 实测能"手动滑下来"就是这条滚动链在动.
+ *
+ * 把整条链 (html, body, shell-main) 全锁住, Safari 找不到可滚祖先就
+ * 不会滚, 焦点已经在 fixed composer 内可见, 行为正常.
+ *
+ * 其他路由 (Login / Settings / Observatory) 不锁 — 它们没 fixed 输入条,
+ * 反而需要文档自己能滚 (Login 在键盘高度大于卡片下边距时需要滚出).
+ */
+html[data-route="chat"],
+html[data-route="chat"] body {
+  overflow: hidden;
+  -webkit-overflow-scrolling: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+ * 输入法键盘弹起时, 让浏览器自己的"焦点滚到可见区"启发式知道避开键盘:
+ * 把键盘高度通过 scroll-padding-bottom 告诉它。这比手写 scrollIntoView
+ * 更鲁棒 — 与浏览器原生行为同源, 不会出现"两段动画打架"的抖动。
+ *
+ * --vv-bottom 由 useViewport 写入 (visualViewport 监听), 桌面或键盘
+ * 收起时为 0, 此规则相当于无操作。
+ */
+html, html[data-keyboard="open"] {
+  scroll-padding-bottom: var(--vv-bottom, 0px);
+}
+
+/*
+ * iOS Safari "聚焦自动放大" 全局兜底.
+ *
+ * iOS 在聚焦字号 < 16px 的可输入字段时会强制把 layout viewport 撑大
+ * 来"方便阅读", 用户必须手动捏合还原 — 也就是用户描述的"被输入法
+ * 顶乱后要手动缩小回正"。
+ *
+ * 业界标准做法: 全站可输入字段 ≥ 16px。我们已经把每一处显式 font-size
+ * 都对齐了, 但这条全局规则是"没有显式 font-size 的输入框" 的安全网,
+ * 兜住未来新加的组件不会再踩同一个坑。
+ *
+ * 不写 user-scalable=no — 那是无障碍倒退, 低视力用户必须能放大。
+ */
+input,
+textarea,
+select {
+  font-size: max(16px, 1em);
+}
+
+/*
+ * 纸纹极淡底噪. 仅在桌面 / 鼠标设备上保留 — 手机端持续在动态背景
+ * (DecoSakuraTree / 装饰层) 上叠 fixed 噪点会无端增加移动 GPU 占用,
+ * 且小屏上视觉收益极小.
+ */
+@media (pointer: fine) {
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      radial-gradient(rgb(255 255 255 / .03) 1px, transparent 1px),
+      radial-gradient(rgb(0 0 0 / .12) 1px, transparent 1px);
+    background-size: 32px 32px, 11px 11px;
+    background-position: 0 0, 4px 4px;
+    opacity: 0.6;
+  }
+}
+
+#app {
+  position: relative;
+  z-index: 2;
+}
+
+/* 顶端红线：路由顶部之上的一根极细朱痕 */
+.thread-top {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgb(var(--color-thread) / .18) 12%,
+    rgb(var(--color-thread) / .55) 50%,
+    rgb(var(--color-thread) / .18) 88%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+a {
+  color: rgb(var(--color-thread));
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* Tailwind v4 utilities */
+@utility pt-safe { padding-top: max(env(safe-area-inset-top, 0px), 0px); }
+@utility pb-safe { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
+@utility pl-safe { padding-left: max(env(safe-area-inset-left, 0px), 0px); }
+@utility pr-safe { padding-right: max(env(safe-area-inset-right, 0px), 0px); }
+@utility px-safe {
+  padding-left: max(env(safe-area-inset-left, 0px), 0px);
+  padding-right: max(env(safe-area-inset-right, 0px), 0px);
+}
+
+/* tap target utility */
+@utility tap {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * 通用 44×44 圆形透明图标按钮。
+ *
+ * 之前在 AppShell / Chat / MoreDrawer 三处各自重复定义, 三套样式微妙不同。
+ * 收敛为一个全局 class — 改一处全局生效。
+ *
+ * 用法:
+ *   <button class="icon-btn tap" aria-label="...">
+ *     <svg class="icon-btn__ic" ... />
+ *   </button>
+ *
+ * 子图标尺寸固定 20×20。需要选中态 (active page) 时叠 .icon-btn--active。
+ */
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--color-ink) / 0.85);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    transform var(--dur-tap) var(--ease-tap),
+    opacity var(--dur-fast) ease;
+}
+.icon-btn:hover {
+  background: rgb(var(--color-ink) / 0.06);
+  color: rgb(var(--color-ink));
+}
+.icon-btn:active { transform: scale(0.92); }
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.icon-btn--active {
+  color: rgb(var(--color-sorrow));
+  background: rgb(var(--color-sorrow) / 0.10);
+}
+.icon-btn__ic { width: 20px; height: 20px; }
+
+/* 玻璃态 */
+@utility glass {
+  background: rgb(var(--color-bg-veil) / 0.6);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+}
+
+/* 极细细线分组 */
+@utility hair-divide {
+  & > * + * {
+    position: relative;
+  }
+  & > * + *::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      rgb(var(--color-thread) / 0.22),
+      transparent
+    );
+  }
+}
+
+/* focus ring · 非生硬方框，柔光式 · 跟随当前形状 */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(var(--color-thread) / 0.4);
+  border-radius: inherit;
+}
+
+.font-display {
+  font-feature-settings: "pnum" on, "onum" on;
+}

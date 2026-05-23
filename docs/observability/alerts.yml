@@ -1,0 +1,153 @@
+# PromQL alerting rules for linling bots.
+#
+# Rationale per group:
+#
+# * ``linling.router`` — correctness + throughput of the dispatch path.
+#   These fire when real user traffic is failing or slow.
+#
+# * ``linling.llm`` — LLM provider health. These fire when agent-backed
+#   conversations are degraded.
+#
+# * ``linling.health`` — the bot is alive but not producing signal, or
+#   the scrape target is down entirely.
+#
+# ``for:`` durations are tuned for a 15s scrape interval (prometheus.yml
+# default). Longer windows would add confidence at the cost of slower
+# detection; shorter would flap.
+
+groups:
+  - name: linling.router
+    interval: 30s
+    rules:
+      - alert: LinlingRouterHighErrorRate
+        expr: |
+          (
+            sum by (bot_id) (rate(linling_events_total{outcome="error"}[5m]))
+            /
+            clamp_min(
+              sum by (bot_id) (rate(linling_events_total[5m])),
+              0.0001
+            )
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.bot_id }}"
+          description: >
+            More than 5% of the last 5 minutes of events on bot
+            {{ $labels.bot_id }} finished with outcome=error. Check
+            recent audit entries for the full verdict.
+
+      - alert: LinlingRouterRateLimitedSpike
+        expr: |
+          sum by (bot_id) (rate(linling_events_total{outcome="rate-limited"}[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained rate-limiting on {{ $labels.bot_id }}"
+          description: >
+            The router is refusing more than 1 event/s with outcome
+            rate-limited. Either a user is hammering, or
+            max_concurrent_events is too small for the load.
+
+      - alert: LinlingDispatchLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (bot_id, le) (rate(linling_dispatch_duration_seconds_bucket[10m]))
+          ) > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 dispatch latency above 5s on {{ $labels.bot_id }}"
+          description: >
+            95th percentile router dispatch latency exceeded 5s over
+            the last 10 minutes. A single slow handler (often the
+            chat agent waiting on an LLM) can drag this up; drill
+            down by ``kind`` to confirm.
+
+      - alert: LinlingSinkFailing
+        expr: |
+          sum by (bot_id, platform) (rate(linling_sink_failures_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Action delivery failing ({{ $labels.platform }} / {{ $labels.bot_id }})"
+          description: >
+            The outbound adapter is rejecting replies at > 0.5/s. The
+            bot is processing messages but the user is silent —
+            escalate fast.
+
+  - name: linling.llm
+    interval: 30s
+    rules:
+      - alert: LinlingLLMErrorBurst
+        expr: |
+          (
+            sum by (provider, model) (rate(linling_llm_calls_total{outcome="error"}[5m]))
+            /
+            clamp_min(
+              sum by (provider, model) (rate(linling_llm_calls_total[5m])),
+              0.0001
+            )
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.provider }} / {{ $labels.model }} error rate > 10%"
+          description: >
+            More than 10% of the last 5 minutes of LLM calls against
+            {{ $labels.model }} failed. Check provider status + API key
+            + rate limits.
+
+      - alert: LinlingLLMLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (provider, model, le) (rate(linling_llm_duration_seconds_bucket[10m]))
+          ) > 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM p95 latency > 20s ({{ $labels.model }})"
+          description: >
+            95th percentile LLM round-trip has been above 20s for 15
+            minutes. Cancellation (``/cancel``) still works, but users
+            will churn.
+
+  - name: linling.health
+    interval: 30s
+    rules:
+      - alert: LinlingBotDown
+        # The target scrape itself failed — different from "the bot is idle".
+        expr: up{job="linling"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Bot scrape target down: {{ $labels.instance }}"
+          description: >
+            Prometheus cannot reach /metrics on
+            {{ $labels.instance }}. The process may be crashed or the
+            port may have drifted.
+
+      - alert: LinlingBotStale
+        # Bot is reachable but hasn't routed anything in a while. A
+        # silent bot is usually a misconfigured adapter.
+        expr: |
+          sum by (bot_id) (rate(linling_events_total[15m])) == 0
+          and on (bot_id) linling_active_sessions > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bot {{ $labels.bot_id }} has active sessions but zero traffic"
+          description: >
+            active_sessions > 0 but no events in 15 minutes. Likely
+            an adapter disconnect — check adapter logs.

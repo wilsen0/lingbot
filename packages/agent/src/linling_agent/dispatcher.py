@@ -1,0 +1,339 @@
+"""Agent chat dispatcher — adapter between :class:`Router` and :class:`AgentRuntime`.
+
+Implements :class:`linling_core.ChatDispatcher`. Responsibilities:
+
+* Ensure the session's short-term history is populated — lazily
+  restored from an optional :class:`HistoryStore` the first time a
+  conversation is touched after a restart.
+* Invoke the agent with that history.
+* Append the new user/assistant turn to the in-memory deque.
+* Fire-and-forget persist the turn via the history store.
+* Wrap the reply text as a single reply :class:`Action`.
+
+Guardrails / rate limiting / locking are all the router's job; this
+module does not know about them.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from typing import TYPE_CHECKING
+
+import structlog
+from linling_core.events import Action, Event
+from linling_core.pipeline import ledger_scope_keys
+from linling_core.segments import TextSegment
+
+from linling_agent.llm import Message
+from linling_agent.runtime import AgentResult, AgentRuntime
+
+if TYPE_CHECKING:
+    from linling_core.pipeline import Session
+
+    from linling_agent.history import HistoryStore
+    from linling_agent.ledger import LedgerRenderer
+    from linling_dsl.ledger import LedgerStore
+
+logger = structlog.get_logger(__name__)
+
+
+# Marker inserted into the Session's ``extras``-style slot once we've
+# rehydrated that session from the HistoryStore. The Session dataclass
+# itself doesn't need to know anything about this; we pin the flag on a
+# private attribute so re-entering the same live session short-circuits
+# the KV round-trip.
+_HYDRATED_FLAG = "_linling_history_hydrated"
+# Independent twin for the DSL Action Ledger rehydrate path. Kept as a
+# distinct attribute so a transient ledger-load failure cannot mark the
+# history as hydrated (and vice-versa). Requirement 8.5.
+_LEDGER_HYDRATED_FLAG = "_linling_ledger_hydrated"
+
+
+class AgentChatDispatcher:
+    """Invokes an agent for free-form chat messages."""
+
+    def __init__(
+        self,
+        *,
+        agent: AgentRuntime,
+        empty_reply: str = "...",
+        history_store: HistoryStore | None = None,
+        ledger_store: LedgerStore | None = None,
+        ledger_renderer: LedgerRenderer | None = None,
+    ) -> None:
+        self._agent = agent
+        self._empty_reply = empty_reply
+        self._history_store = history_store
+        # Optional DSL Action Ledger backing store + renderer. ``None``
+        # for either disables the corresponding code path; existing
+        # call sites that omit them keep their current semantics
+        # exactly (Requirement 1.11 / 1.12 / 11.5).
+        self._ledger_store = ledger_store
+        self._ledger_renderer = ledger_renderer
+
+    @property
+    def agent(self) -> AgentRuntime:
+        """Read-only view of the underlying :class:`AgentRuntime`.
+
+        Exposed so transports (e.g. the WebUI) can introspect the
+        configured provider/model without reaching into private
+        attributes — *not* a hook for direct invocation, which would
+        bypass the history rehydration this dispatcher owns.
+        """
+        return self._agent
+
+    async def dispatch(self, event: Event, session: Session) -> AgentResult | None:
+        """Run one chat turn end-to-end and return the raw :class:`AgentResult`.
+
+        Handles:
+
+        * Stale-cancel-flag cleanup (the cancel event is single-shot per turn).
+        * Lazy rehydration of session history from the persistent store.
+        * Racing the LLM call against ``session.cancel_event`` so
+          ``/cancel`` aborts cleanly without writing the truncated
+          turn to history.
+        * Appending the new user / assistant pair to ``session.history``.
+        * Fire-and-forget persistence to the :class:`HistoryStore`.
+
+        Returns ``None`` when the turn was cancelled before the agent
+        completed (no reply was delivered, so nothing should be
+        recorded). Returns the populated :class:`AgentResult` on the
+        normal path.
+
+        The router's :meth:`run` wrapper turns the return value into
+        an :class:`Action` list; transports that need the raw token /
+        tool-call counts (the WebUI surfaces them in audit metadata)
+        can call ``dispatch`` directly.
+
+        ``user_input`` is taken from ``event.text`` so any caller that
+        synthesises an :class:`Event` (DSL, scheduler, WebUI) gets the
+        same handling as the IM adapters.
+
+        Concurrency contract: callers **must** hold ``session.lock``
+        across this call. The dispatcher mutates ``session.history``
+        and the persistent store; concurrent turns on the same session
+        would interleave history entries and corrupt the deque order.
+        The router takes care of this for IM adapters; transport
+        layers (WebUI) acquire it themselves.
+        """
+        user_input = event.text
+        if not user_input:
+            return None
+
+        # Clear any stale cancel flag from a prior turn. The event is a
+        # single-shot signal: set by ``/cancel`` → observed here →
+        # cleared for the next turn. Doing this under the session lock
+        # (which the caller always holds) is race-free: ``/cancel``
+        # runs outside the lock and only *sets*, never *clears*.
+        session.cancel_event.clear()
+
+        await self._maybe_rehydrate(session, event)
+
+        history = list(session.history)
+
+        # Requirement 1.9 / 1.10 / 1.11:render the LLM-visible ledger
+        # immediately *before* the LLM call. The rendered Message is
+        # transient — it is appended to the per-call ``injected``
+        # list but never reaches ``session.history`` or the
+        # HistoryStore. ``None`` means "nothing visible to inject"
+        # (Requirement 1.12) and the LLM gets the legacy history-only
+        # input.
+        injected: list[Message] = list(history)
+        ledger_msg = self._render_ledger(session, event)
+        if ledger_msg is not None:
+            injected.append(ledger_msg)
+
+        agent_task = asyncio.create_task(
+            self._agent.invoke(user_input, event=event, history=injected),
+            name="agent_invoke",
+        )
+        cancel_task = asyncio.create_task(session.cancel_event.wait(), name="agent_cancel_wait")
+        done, _pending = await asyncio.wait(
+            {agent_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+
+        if cancel_task in done and agent_task not in done:
+            # User said ``/cancel`` before the agent finished. Abort the
+            # LLM call; do not write this turn to history — the reply
+            # was never delivered, so we shouldn't remember it.
+            agent_task.cancel()
+            # Drain the cancelled task so its CancelledError / other
+            # exceptions are observed (otherwise asyncio warns about
+            # unretrieved exceptions at GC time).
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await agent_task
+            logger.info(
+                "chat_dispatcher.cancelled",
+                scope_id=event.scope.id,
+                sender_id=event.sender.id,
+            )
+            return None
+
+        # Normal path — the agent completed first. If the cancel event
+        # also fired in the same tick we still honor the completed
+        # response: the round-trip paid, the user gets the reply,
+        # history reflects reality.
+        cancel_task.cancel()
+        # Drain the cancelled task to keep asyncio from warning about
+        # an unretrieved cancellation at GC time.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await cancel_task
+        result = agent_task.result()
+
+        # Persist both turns; the deque's maxlen bounds memory.
+        session.history.append(Message(role="user", content=user_input))
+        session.history.append(Message(role="assistant", content=result.content))
+
+        if self._history_store is not None:
+            # Don't block the user on IO if the KV round-trip is slow —
+            # but do wait in tests (we'd have no way to assert otherwise).
+            # The caller's session lock keeps this ordering sane: saves
+            # from the same session never interleave.
+            await self._persist(session, event)
+
+        return result
+
+    async def run(self, event: Event, session: Session) -> list[Action]:
+        result = await self.dispatch(event, session)
+        if result is None:
+            return []
+        text = result.content or self._empty_reply
+        return [Action(kind="reply", target=event.scope, segments=[TextSegment(text=text)])]
+
+    # ---- history plumbing -------------------------------------------
+
+    async def _maybe_rehydrate(self, session: Session, event: Event) -> None:
+        """Concurrently restore chat history and DSL ledger from KV.
+
+        Requirement 8.5:both rehydrate paths fire under
+        :func:`asyncio.gather` with ``return_exceptions=True`` so a
+        failure in either does not block the other; each tracks an
+        independent hydrated flag so a transient KV blip surfaces as
+        empty state, not a permanently sticky "hydrated" marker.
+        """
+        tasks: list[asyncio.Task[None]] = []
+        if self._history_store is not None and not getattr(session, _HYDRATED_FLAG, False):
+            tasks.append(
+                asyncio.create_task(
+                    self._rehydrate_history(session, event),
+                    name="chat_rehydrate_history",
+                )
+            )
+        if self._ledger_store is not None and not getattr(
+            session, _LEDGER_HYDRATED_FLAG, False
+        ):
+            tasks.append(
+                asyncio.create_task(
+                    self._rehydrate_ledger(session, event),
+                    name="chat_rehydrate_ledger",
+                )
+            )
+        if not tasks:
+            return
+        # Both helpers swallow their own exceptions and set the
+        # hydrated flag in their finally clause; ``return_exceptions``
+        # guards against the helper itself crashing in a way we
+        # didn't anticipate (e.g. ``CancelledError``).
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _rehydrate_history(self, session: Session, event: Event) -> None:
+        assert self._history_store is not None
+        try:
+            restored = await self._history_store.load(event.scope.id, event.sender.id)
+        except Exception:
+            logger.exception("chat_dispatcher.history_load_failed")
+            restored = []
+        # Only rehydrate when the in-memory deque is empty; if the
+        # session lived through another turn already we trust the
+        # in-process copy.
+        if not session.history:
+            session.history.extend(restored)
+        object.__setattr__(session, _HYDRATED_FLAG, True)
+
+    async def _rehydrate_ledger(self, session: Session, event: Event) -> None:
+        """Restore the DSL action ledger from persistent storage.
+
+        Requirement 8.4 / 8.6:ledger rehydrate uses its own scope
+        helper (group → ``"_group"``, dm → sender id) and must not
+        block the chat path on KV failure. The flag is always set
+        in the finally branch so a slow KV failure path can't trap
+        the dispatcher in a permanent "loading" loop.
+        """
+        assert self._ledger_store is not None
+        try:
+            scope_id, file_id = ledger_scope_keys(event, logger=logger)
+            try:
+                restored = await self._ledger_store.load(scope_id, file_id)
+            except Exception:
+                logger.exception(
+                    "chat_dispatcher.ledger_load_failed",
+                    scope_id=event.scope.id,
+                    sender_id=event.sender.id,
+                )
+                restored = []
+            # Mirror the history rehydrate semantics:only seed the
+            # in-memory deque when it is empty so a session that has
+            # already accrued in-process events isn't double-counted.
+            # Restored events arrive sorted oldest-first by
+            # ``occurred_at`` (KVDslLedgerStore guarantees this); the
+            # deque's ``maxlen`` enforces FIFO eviction if the load
+            # exceeded ``Ledger_Maxlen``.
+            if not session.dsl_events:
+                for ev in restored:
+                    session.dsl_events.append(ev)
+        finally:
+            object.__setattr__(session, _LEDGER_HYDRATED_FLAG, True)
+
+    def _render_ledger(self, session: Session, event: Event) -> Message | None:
+        """Render the LLM-visible ledger snapshot for this turn.
+
+        Returns ``None`` when no renderer is configured, the deque is
+        empty, or every event is filtered (Requirement 1.12 / 4.10 /
+        11.7). Group scope flips ``include_actor`` on via the renderer's
+        zero-allocation ``with_actor`` factory; DM keeps the default.
+        """
+        if self._ledger_renderer is None:
+            return None
+        if not session.dsl_events:
+            return None
+        # ``with_actor`` is a no-op when the requested flag matches the
+        # cached renderer's, so passing the boolean directly is both
+        # cheaper than a branch and identical in behaviour.
+        renderer = self._ledger_renderer.with_actor(event.scope.kind == "group")
+        return renderer.render(session.dsl_events)
+
+    async def _persist(self, session: Session, event: Event) -> None:
+        assert self._history_store is not None
+        try:
+            await self._history_store.save(event.scope.id, event.sender.id, list(session.history))
+        except Exception:
+            logger.exception("chat_dispatcher.history_save_failed")
+
+    # ---- public admin ----------------------------------------------
+
+    async def clear_history(self, scope_id: str, sender_id: str) -> None:
+        """Drop the persisted history for a conversation.
+
+        The in-memory deque inside the (possibly still alive) Session
+        is not our concern here — the router gives us fresh sessions
+        via LRU eviction and TTL, so callers who need an immediate
+        reset should also ``ConversationStore.drop`` the key.
+        """
+        if self._history_store is None:
+            return
+        await asyncio.wait_for(self._history_store.clear(scope_id, sender_id), timeout=2.0)
+
+    async def clear_ledger(self, scope_id: str, file_id: str) -> None:
+        """Drop the persisted DSL action ledger for one ledger scope.
+
+        Implements the :class:`~linling_core.router.LedgerReset`
+        protocol so the Router's ``/reset`` command can clear chat
+        history and the ledger atomically (Requirement 7.2). Mirrors
+        :meth:`clear_history`'s 2-second timeout and silent-on-no-store
+        behaviour so the two paths degrade identically when a backing
+        store isn't configured.
+        """
+        if self._ledger_store is None:
+            return
+        await asyncio.wait_for(self._ledger_store.clear(scope_id, file_id), timeout=2.0)

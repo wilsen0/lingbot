@@ -1,0 +1,24 @@
+[project]
+name = "linling-core"
+version = "0.0.0"
+description = "linling core: events, routing, tool registry, storage, scheduler"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "structlog>=24.1",
+    "anyio>=4.4",
+    "aiosqlite>=0.20",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+prometheus = ["prometheus_client>=0.20"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linling_core"]

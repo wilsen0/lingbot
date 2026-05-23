@@ -1,0 +1,22 @@
+/*
+ * 字体：
+ *   Ma Shan Zheng · 标题楷书（Google Fonts，异步加载, 见 index.html）
+ *   正文 / 副标题 / 等宽 · 全部走系统字体, 不引外部 webfont, 避免阻塞 CSSOM。
+ *
+ * ⚠️ 这里曾经有一条 @import 直接拉 Noto Sans/Serif SC，但
+ *     CSS 内 @import 会让 CSSOM 等待外部资源完成，首屏 LCP 受 1–4s 影响。
+ *     改为：标题楷书在 index.html 用 print→all 异步加载；正文用系统字体兜底
+ *     (PingFang SC / Noto Sans CJK / HarmonyOS Sans / system-ui)。
+ *
+ * 内网部署时把 Ma Shan Zheng 自宿到 /fonts/ 下并在此覆盖同名 @font-face。
+ */
+
+/* JetBrains Mono 保持本地兜底 */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: local("JetBrains Mono"), local("JetBrainsMono"),
+    url("/fonts/jetbrains-mono.woff2") format("woff2");
+}

@@ -1,0 +1,330 @@
+/*
+ * 湖光 · 梦境 · 苦情树下
+ * 默认（无 data-theme 或 auto）= 薄暮紫（薰衣紫天 + 粉樱）
+ * light 模式保留为"白日版"：晨光薄雾 + 樱粉
+ */
+
+:root,
+:root[data-theme="auto"],
+:root[data-theme="dark"] {
+  /* 夜/薄暮：薰衣紫薄雾 + 夜苍底 */
+  --color-bg:       32 24 50;       /* #201832 夜 */
+  --color-bg-veil:  60 44 92;       /* #3C2C5C 灯纱下 */
+  --color-ink:      248 234 248;    /* #F8EAF8 月色字 */
+  --color-ink-soft: 198 176 214;    /* #C6B0D6 远灯灰 */
+
+  /* 樱 · 线 · 铃 · 星 */
+  --color-sakura:   255 184 212;    /* #FFB8D4 主樱 */
+  --color-sakura-2: 238 150 200;    /* #EE96C8 深樱 */
+  --color-sorrow:   220 64 100;     /* #DC4064 朱 */
+  --color-thread:   240 104 132;    /* #F06884 红线 */
+  --color-bell:     252 216 150;    /* #FCD896 金 */
+  --color-petal:    252 208 228;    /* #FCD0E4 落瓣 */
+  --color-glow:     220 200 255;    /* #DCC8FF 萤光紫 */
+
+  /* 态 */
+  --color-jade:     150 220 196;    /* #96DCC4 */
+  --color-alert:    240 128 112;    /* #F08070 */
+  --color-ash:      132 112 140;    /* #84708C */
+
+  --ring-sorrow: rgba(240, 104, 132, 0.45);
+
+  /* 装饰层混合模式 · light 用 multiply、dark 用 screen */
+  --decor-blend: screen;
+
+  /*
+   * 天色 · 三层径向：
+   *   上部粉紫渗下（黄昏）
+   *   左上一束月光金粒
+   *   右上一缕樱粉
+   *   底部朱红沉下
+   */
+  --sky-gradient:
+    radial-gradient(80% 45% at 50% -4%, rgb(235 188 255 / .38) 0%, rgb(32 24 50 / 0) 58%),
+    radial-gradient(55% 35% at 8% 0%, rgb(252 216 150 / .22) 0%, rgb(32 24 50 / 0) 60%),
+    radial-gradient(60% 40% at 92% 6%, rgb(255 184 212 / .30) 0%, rgb(32 24 50 / 0) 60%),
+    radial-gradient(140% 90% at 50% 120%, rgb(220 64 100 / .20) 0%, rgb(32 24 50 / 0) 55%);
+
+  --mist-gradient:
+    radial-gradient(62% 42% at 18% 30%, rgb(var(--color-sakura) / .18) 0%, transparent 68%),
+    radial-gradient(48% 40% at 82% 18%, rgb(var(--color-bell) / .16) 0%, transparent 72%),
+    radial-gradient(70% 50% at 55% 100%, rgb(var(--color-sorrow) / .16) 0%, transparent 70%),
+    radial-gradient(90% 60% at 50% 40%, rgb(var(--color-glow) / .08) 0%, transparent 80%);
+
+  /* 暗色主题：把暖卡其底图压向夜紫 — 降亮、降饱、轻微反相紫调 */
+  --decor-img-filter: brightness(0.42) saturate(0.78) hue-rotate(-12deg) contrast(1.06);
+  /* 画面上的统一色幕（覆盖在图之上，沉到 UI 底色） */
+  --sky-overlay:
+    linear-gradient(
+      to bottom,
+      rgb(var(--color-bg) / 0) 0%,
+      rgb(var(--color-bg) / 0) 38%,
+      rgb(var(--color-bg) / 0.62) 78%,
+      rgb(var(--color-bg) / 0.96) 100%
+    ),
+    radial-gradient(120% 80% at 50% -10%, rgb(var(--color-glow) / .12) 0%, transparent 60%),
+    radial-gradient(70% 50% at 12% 6%, rgb(var(--color-bell) / .08) 0%, transparent 70%);
+}
+
+:root[data-theme="light"] {
+  /* 白日 · 湖光早晨 */
+  --color-bg:       246 240 248;    /* #F6F0F8 浅紫纸 */
+  --color-bg-veil:  252 248 254;    /* #FCF8FE 月纱 */
+  --color-ink:      58 40 70;       /* #3A2846 墨 */
+  --color-ink-soft: 130 104 148;    /* #826894 */
+
+  --color-sakura:   244 140 190;    /* #F48CBE */
+  --color-sakura-2: 216 104 170;
+  --color-sorrow:   192 52 96;      /* #C03460 */
+  --color-thread:   216 84 116;     /* #D85474 */
+  --color-bell:     216 144 60;     /* #D8903C */
+  --color-petal:    252 216 228;
+  --color-glow:     188 168 232;
+
+  --color-jade:     86 150 128;
+  --color-alert:    200 68 48;
+  --color-ash:      156 136 166;
+
+  --ring-sorrow: rgba(216, 84, 116, 0.32);
+
+  --decor-blend: multiply;
+
+  --sky-gradient:
+    radial-gradient(80% 48% at 50% -4%, rgb(255 210 232 / .72) 0%, rgb(246 240 248 / 0) 60%),
+    radial-gradient(60% 38% at 8% 0%, rgb(252 228 176 / .55) 0%, rgb(246 240 248 / 0) 62%),
+    radial-gradient(60% 40% at 92% 0%, rgb(255 200 222 / .60) 0%, rgb(246 240 248 / 0) 60%),
+    radial-gradient(140% 90% at 50% 130%, rgb(192 52 96 / .08) 0%, rgb(246 240 248 / 0) 55%);
+
+  --mist-gradient:
+    radial-gradient(60% 40% at 18% 30%, rgb(var(--color-sakura) / .22) 0%, transparent 70%),
+    radial-gradient(48% 38% at 82% 20%, rgb(var(--color-bell) / .22) 0%, transparent 72%),
+    radial-gradient(72% 48% at 50% 100%, rgb(var(--color-sorrow) / .10) 0%, transparent 70%);
+
+  /* 白日主题：图本身就是暖底，只做轻微提亮 + 略减锐度 */
+  --decor-img-filter: brightness(1.04) saturate(0.96) contrast(0.98);
+  --sky-overlay:
+    linear-gradient(
+      to bottom,
+      rgb(var(--color-bg) / 0) 0%,
+      rgb(var(--color-bg) / 0) 42%,
+      rgb(var(--color-bg) / 0.55) 76%,
+      rgb(var(--color-bg) / 0.92) 100%
+    ),
+    radial-gradient(110% 70% at 50% -8%, rgb(var(--color-petal) / .18) 0%, transparent 60%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --color-bg:       246 240 248;
+    --color-bg-veil:  252 248 254;
+    --color-ink:      58 40 70;
+    --color-ink-soft: 130 104 148;
+    --color-sakura:   244 140 190;
+    --color-sakura-2: 216 104 170;
+    --color-sorrow:   192 52 96;
+    --color-thread:   216 84 116;
+    --color-bell:     216 144 60;
+    --color-petal:    252 216 228;
+    --color-glow:     188 168 232;
+    --color-jade:     86 150 128;
+    --color-alert:    200 68 48;
+    --color-ash:      156 136 166;
+
+    --ring-sorrow: rgba(216, 84, 116, 0.32);
+
+    --decor-blend: multiply;
+
+    --sky-gradient:
+      radial-gradient(80% 48% at 50% -4%, rgb(255 210 232 / .72) 0%, rgb(246 240 248 / 0) 60%),
+      radial-gradient(60% 38% at 8% 0%, rgb(252 228 176 / .55) 0%, rgb(246 240 248 / 0) 62%),
+      radial-gradient(60% 40% at 92% 0%, rgb(255 200 222 / .60) 0%, rgb(246 240 248 / 0) 60%),
+      radial-gradient(140% 90% at 50% 130%, rgb(192 52 96 / .08) 0%, rgb(246 240 248 / 0) 55%);
+
+    --mist-gradient:
+      radial-gradient(60% 40% at 18% 30%, rgb(var(--color-sakura) / .22) 0%, transparent 70%),
+      radial-gradient(48% 38% at 82% 20%, rgb(var(--color-bell) / .22) 0%, transparent 72%),
+      radial-gradient(72% 48% at 50% 100%, rgb(var(--color-sorrow) / .10) 0%, transparent 70%);
+
+    --decor-img-filter: brightness(1.04) saturate(0.96) contrast(0.98);
+    --sky-overlay:
+      linear-gradient(
+        to bottom,
+        rgb(var(--color-bg) / 0) 0%,
+        rgb(var(--color-bg) / 0) 42%,
+        rgb(var(--color-bg) / 0.55) 76%,
+        rgb(var(--color-bg) / 0.92) 100%
+      ),
+      radial-gradient(110% 70% at 50% -8%, rgb(var(--color-petal) / .18) 0%, transparent 60%);
+  }
+}
+
+/* 排版 · 圆角 · 响应式 */
+:root {
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --radius-xl: 36px;
+
+  /*
+   * 撕纸 / 印章式非对称圆角 · 全站只用这两种。
+   * 想保持"撕纸"画风的卡 / sheet / pill 用 paper；
+   * 想保持"印章"画风的按钮 / 操作 chip 用 seal。
+   */
+  --radius-paper: 14px 22px 14px 24px;
+  --radius-seal:  12px 20px 12px 22px;
+
+  --pad-x:   clamp(16px, 4vw, 28px);
+  --pad-y:   clamp(12px, 3vw, 22px);
+  --gap-sm:  clamp(8px, 2vw, 12px);
+  --gap-md:  clamp(12px, 3vw, 20px);
+  --gap-lg:  clamp(20px, 5vw, 36px);
+
+  /*
+   * 字距分级：
+   *   --track-fn   功能性文字（开关、按钮、表单标签、meta）
+   *   --track-poem 标题楷书 / 题辞
+   *   --track-meta 弱辅助说明
+   */
+  --track-fn:   0.08em;
+  --track-poem: 0.32em;
+  --track-meta: 0.18em;
+
+  /*
+   * 背景图（生图模型出的"苦情树下"画面）。
+   *   --decor-image     主画
+   *   --decor-img-filter 主题对画面的滤镜（dark 把暖图压向夜紫）
+   *   --sky-overlay     画面上的色幕（让底部沉入 UI 底色）
+   *
+   * 路由感知的位置不是 CSS 变量, 而是 DecoSakuraTree.is-shifted 类直接控制 —
+   * 因为不同断点位置不一样, 写一个变量装不下 (会变成"再写一组媒体查询"
+   * 的迂回, 还不如类直接管)。
+   */
+  --decor-image: url("/bg/linling.png");
+  --decor-img-filter: none;
+
+  --font-display: "Ma Shan Zheng", "Kaiti SC", "STKaiti",
+    "Noto Serif SC", "Songti SC", serif;
+  --font-serif: "Noto Serif SC", "STSong", "Songti SC", serif;
+  --font-sans: "HarmonyOS Sans SC", "PingFang SC", "Noto Sans SC",
+    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Noto Sans Mono CJK SC", Menlo, Consolas, monospace;
+
+  /*
+   * ─────────── 缓动 / 时长阶梯 ───────────
+   *
+   * 缓动曲线只有四种语义, 全站强制对齐:
+   *   --ease-stand : 标准入场退出 (decel)        — 浮签 / 卡片 / fade-up
+   *   --ease-firm  : 双向 sigmoid (in-out)       — 笔画 / 红线绕 / 墨痕生长 / 大面板位移
+   *   --ease-swing : 近似 ease-in-out 钟摆        — 铃摆 / 风摆 / 周期来回
+   *   --ease-tap   : 与 stand 同, 留给微交互     — 按下回弹 / 图标轻晃
+   *
+   * 时长阶梯也只有五档:
+   *   --dur-tap   120ms  按下反馈, 颜色微变
+   *   --dur-fast  160ms  hover / 颜色 / 小不透明度
+   *   --dur-base  220ms  入场 toast / 小浮签
+   *   --dur-slow  320ms  大面板 sheet / drawer / 路由切换
+   *   --dur-stage 720ms  舞台级 — 红线绕一圈, 大画面位移
+   */
+  --ease-stand: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-firm:  cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-swing: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  --ease-tap:   cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --dur-tap:   120ms;
+  --dur-fast:  160ms;
+  --dur-base:  220ms;
+  --dur-slow:  320ms;
+  --dur-stage: 720ms;
+
+  /*
+   * 命名动画。仅保留实际被引用的几条; 早先 --motion-petal-fall /
+   * --motion-tap / --motion-sheet-rise / --motion-thread-draw 与
+   * @keyframes bell-celebrate 在代码里 0 处使用, 已剔除以减少误导。
+   */
+  --motion-bell-swing:   bell-swing  2.2s var(--ease-swing) infinite alternate;
+  --motion-bell-loader:  bell-swing  1.2s var(--ease-swing) infinite alternate;
+  /*
+   * breeze-drift 改为 transform/opacity 动画 (见 @keyframes 注释).
+   * 时长 30s, 比之前 34s 略短但视觉上不可分辨; 关键在于走 GPU 合成
+   * 而非每帧 paint, 移动端发热消耗大幅下降.
+   */
+  --motion-breeze-drift: breeze-drift 30s ease-in-out       infinite alternate;
+  --motion-thread-glow:  thread-glow 1.4s ease-in-out       infinite;
+  --motion-fade-in-up:   fade-in-up  var(--dur-slow) var(--ease-stand);
+
+  /*
+   * ─────────── 视窗几何变量 (输入法回正) ───────────
+   *
+   * 这一个值由 useViewport() 在运行时根据 visualViewport 写入:
+   *   --vv-bottom : 视觉可见区底部相对 layout viewport 底部的距离 (键盘高度,
+   *                 量化到 4px 步进, 减少键盘动画期间的微抖)
+   *
+   * 桌面端 / 没有键盘弹起时为 0, 不影响布局。
+   * 键盘弹起后 fixed 底部元素只要叠一个
+   *   transform: translateY(calc(-1 * var(--vv-bottom)))
+   * 就会自动贴回视觉可见区的底部。
+   *
+   * 早先还写过 --vv-top / --vv-height — 没有消费方, 已删除。
+   */
+  --vv-bottom: 0px;
+}
+
+@keyframes bell-swing {
+  from { transform: rotate(-5deg); }
+  to   { transform: rotate(5deg); }
+}
+/*
+ * breeze-drift —— "雾扫过画面"。
+ *
+ * 旧实现动 background-position, 4 张径向渐变 × 全屏 × 永远在跑, 配合
+ * mix-blend-mode 把整个 viewport 的合成成本钉在每帧重做。这是手机端
+ * 持续发热的最大隐性成本之一。
+ *
+ * 现在改成 translate3d + opacity, 浏览器可以把这层提到独立合成层
+ * 上 GPU 处理, 不再每帧重 paint。视觉差异: 雾从"边界外缘的颜色重排"
+ * 变成"整片雾轻飘", 在 0.42-0.55 透明度 + 30s 周期下肉眼几乎无差.
+ *
+ * 不再依赖 background-size: 200% 200%; 只需要原始 100% 100%, 且元素
+ * 通过 inset:-12% (在 DecoSakuraTree 里给) 留出位移余量。
+ */
+@keyframes breeze-drift {
+  0%   { transform: translate3d(-3%, -2%, 0); opacity: var(--veil-min, 0.42); }
+  50%  { transform: translate3d( 3%,  2%, 0); opacity: var(--veil-max, 0.58); }
+  100% { transform: translate3d(-2%,  3%, 0); opacity: var(--veil-min, 0.42); }
+}
+@keyframes thread-glow {
+  0%, 100% { opacity: 0.45; transform: scale(0.95); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes deco-breathe {
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  /* 保留布局，但静默装饰层动画 */
+  .decor-petal,
+  .decor-breeze,
+  .decor-firefly,
+  .deco-sakura__veil,
+  .deco-sakura__bell {
+    animation: none !important;
+  }
+  .decor-petal,
+  .decor-firefly {
+    display: none !important;
+  }
+  /* 但允许背景图做极慢呼吸，避免画面变成静帧 */
+  .deco-sakura__sky {
+    animation: deco-breathe 18s ease-in-out infinite !important;
+  }
+}

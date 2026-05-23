@@ -1,0 +1,48 @@
+bot_id: linling
+name: 涂山苏苏
+admin_users:
+  - "2078123478"
+main_group: "754800438"
+
+storage:
+  kv: sqlite:///./data.sqlite
+  files: ./data
+  audit: sqlite:///./audit.sqlite
+  scheduler: sqlite:///./scheduler.sqlite
+
+adapters:
+  - kind: cli
+  - kind: onebot
+    # NapCat 的 WebSocket 服务地址。linling 作为客户端主动去连。
+    # 如果 NapCat 在同一台机器,127.0.0.1 就行;在另一台机器填那台的 IP。
+    ws_url: ws://127.0.0.1:3001
+    access_token: ${ONEBOT_TOKEN}
+
+rules:
+  - rules/**/*.ling
+
+agent:
+  default_agent: ./agents/susu.yaml
+  # 不匹配 DSL 又落不到 LLM 白名单时的兜底回复。留空则静默。
+  fallback_reply: "红娘今日不语，待我先去问问。"
+  # LLM 兜底白名单(只影响群聊;私聊 DM 永远开放,因为是一对一对话):
+  # - 不写或注释掉 = 群聊也全员开放(老行为)
+  # - [] = 所有群聊都关掉 LLM,DSL 与 DM 仍然能用(联调期推荐)
+  # - ["群号1", "群号2"] = 仅这些群号接 LLM
+  # WebUI 默认走 dm 通路 (%群号%==0),所以白名单不影响 web 端聊天。
+  allowed_scopes:
+    - "2986537370"
+
+metrics:
+  enabled: true
+
+# linling-webui 段（可选）。未配置则走默认。
+webui:
+  host: 0.0.0.0
+  port: 8787
+  jwt_secret: ${LINLING_WEBUI_JWT_SECRET:-change-me-in-prod}
+  auth_db_path: ./data/webui_auth.db
+  event_buffer_size: 500
+  login_rate_per_minute: 5
+  write_rate_per_minute: 60
+  cors_origins: []

@@ -1,0 +1,17 @@
+[project]
+name = "linling-agent"
+version = "0.0.0"
+description = "linling Agent framework: LLM providers, memory, tool-calling loop"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "linling-core",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linling_agent"]
