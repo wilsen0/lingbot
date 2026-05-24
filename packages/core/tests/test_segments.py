@@ -9,6 +9,7 @@ from linling_core.segments import (
     TextSegment,
     at,
     image,
+    match_text,
     text,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -66,3 +67,36 @@ def test_plain_text_concatenates_only_text_segments() -> None:
 def test_extras_bag_allows_opaque_payload() -> None:
     seg = ImageSegment(url="https://x/y.png", extras={"file_size": 1024})
     assert seg.extras["file_size"] == 1024
+
+
+def test_match_text_reprojects_at_user_ids() -> None:
+    """``match_text`` re-projects AT mentions as ``@<user_id>`` for triggers."""
+    segs: list[Segment] = [text("赠送大飞龙"), at("99999")]
+    assert match_text(segs) == "赠送大飞龙@99999"
+
+
+def test_match_text_preserves_segment_order() -> None:
+    """AT projections happen in segment order, mixed with text fragments."""
+    segs: list[Segment] = [
+        text("苏苏加好感"),
+        at("12345"),
+        text(" 50"),
+    ]
+    assert match_text(segs) == "苏苏加好感@12345 50"
+
+
+def test_match_text_drops_non_text_non_at_segments() -> None:
+    """Image / face / etc. segments are still ignored — only text + at count."""
+    segs: list[Segment] = [
+        text("hi "),
+        image(url="https://x/y.png"),
+        at("777"),
+        text("!"),
+    ]
+    assert match_text(segs) == "hi @777!"
+
+
+def test_match_text_falls_back_to_plain_when_no_at() -> None:
+    """No AT segments → match_text matches plain_text exactly."""
+    segs: list[Segment] = [text("打卡")]
+    assert match_text(segs) == plain_text(segs)

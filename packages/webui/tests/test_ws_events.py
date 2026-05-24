@@ -12,13 +12,13 @@ from linling_core.events import Event, Scope, User
 from linling_core.segments import TextSegment
 
 
-def _mk(eid: str, bot_id: str = "susu_main") -> Event:
+def _mk(eid: str, bot_id: str = "susu_main", sender_id: str = "u1") -> Event:
     return Event(
         id=eid,
         platform="test",
         bot_id=bot_id,
         scope=Scope(kind="group", id="g1", platform="test"),
-        sender=User(id="u1", platform="test"),
+        sender=User(id=sender_id, platform="test"),
         time=datetime.now(UTC),
         kind="message",
         segments=[TextSegment(text=eid)],
@@ -102,3 +102,34 @@ def test_ws_invalid_token_closes(app_client) -> None:
     except Exception:
         return
     raise AssertionError("expected WS to close on invalid token")
+
+
+def test_ws_mine_filters_live_and_replay(app_client) -> None:
+    client, _, token = app_client
+
+    async def _seed():
+        buf = client.app.state.runtime.buffer_for("susu_main", capacity=50)
+        await buf.publish(_mk("mine-old", sender_id="alice"))
+        await buf.publish(_mk("other-old", sender_id="someone-else"))
+
+    asyncio.run(_seed())
+
+    with client.websocket_connect(f"/ws/events?token={token}&mine=1") as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"t": "filter", "data": {"since_seq": 0}})
+        replay = ws.receive_json()
+        assert replay["t"] == "event"
+        assert replay["data"]["id"] == "mine-old"
+        ack = ws.receive_json()
+        assert ack["t"] == "filter_ack"
+        assert ack["replayed"] == 1
+
+        async def _push():
+            buf = client.app.state.runtime.buffer_for("susu_main", capacity=50)
+            await buf.publish(_mk("other-live", sender_id="someone-else"))
+            await buf.publish(_mk("mine-live", sender_id="alice"))
+
+        asyncio.run(_push())
+        msg = ws.receive_json()
+        assert msg["t"] == "event"
+        assert msg["data"]["id"] == "mine-live"

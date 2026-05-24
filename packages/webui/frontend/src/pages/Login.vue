@@ -17,10 +17,7 @@
           stroke-linecap="round"
         />
         <g transform="translate(22 64)" class="login__bell">
-          <path
-            d="M-8 -2 a 8 6 0 0 1 16 0 v 6 l 1.6 2 h -19.2 l 1.6 -2 z"
-            fill="url(#lo_bell)"
-          />
+          <path d="M-8 -2 a 8 6 0 0 1 16 0 v 6 l 1.6 2 h -19.2 l 1.6 -2 z" fill="url(#lo_bell)" />
           <circle cx="0" cy="9" r="1.8" fill="rgb(var(--color-sorrow))" />
           <path
             d="M-3 10 q 3 7 0 14 M 3 10 q -3 7 0 14"
@@ -34,7 +31,7 @@
 
       <div class="login__head">
         <h1 class="login__title font-display">linling · 林林</h1>
-        <p class="login__sub">— 缘起 —</p>
+        <p class="login__sub">登录</p>
       </div>
 
       <!-- 顶部错误条：放在表单上方，避免错把"掌门有误"挂到口诀字段 -->
@@ -48,17 +45,17 @@
       <form class="login__form" novalidate @submit.prevent="onSubmit">
         <UiInput
           v-model="username"
-          label="掌门"
+          label="账号"
           autocomplete="username"
-          placeholder="名"
+          placeholder="账号"
           required
         />
         <UiInput
           v-model="password"
-          label="口诀"
+          label="密码"
           type="password"
           autocomplete="current-password"
-          placeholder="讳"
+          placeholder="密码"
           required
         />
         <button
@@ -66,7 +63,7 @@
           class="login__seal tap"
           :class="{ 'is-loading': loading }"
           :disabled="loading"
-          :aria-label="loading ? '正在结缘' : '结缘'"
+          :aria-label="loading ? '正在登录' : '登录'"
         >
           <span class="login__seal-frame" aria-hidden="true">
             <svg viewBox="0 0 200 56" preserveAspectRatio="none">
@@ -84,7 +81,7 @@
             </svg>
           </span>
           <DecoBellLoader v-if="loading" size="sm" />
-          <span v-else class="login__seal-label font-display">結&thinsp;緣</span>
+          <span v-else class="login__seal-label font-display">登&thinsp;录</span>
           <!-- 印章式钩 -->
           <span class="login__seal-hook" aria-hidden="true" />
         </button>
@@ -133,7 +130,7 @@ onMounted(() => {
 async function onSubmit() {
   error.value = null;
   if (!username.value || !password.value) {
-    error.value = "请输入掌门与口诀。";
+    error.value = "请输入账号和密码。";
     return;
   }
   loading.value = true;
@@ -144,15 +141,15 @@ async function onSubmit() {
     auth.setTokens(tokens.access, tokens.refresh);
     const profile = await getProfile();
     auth.setProfile({ sub: profile.username, role: profile.role, bots: profile.bots });
-    stage.ringBell(0); // 结缘成功 · 树上一枚铃响
+    stage.ringBell(0); // 登录成功 · 树上一枚铃响
     const next = (route.query.next as string | undefined) ?? "/";
     await router.replace(next);
   } catch (e: unknown) {
     if (e && typeof e === "object" && "response" in e) {
       const resp = (e as { response?: { status?: number; data?: { detail?: string } } }).response;
-      if (resp?.status === 401) error.value = "掌门或口诀有误。";
+      if (resp?.status === 401) error.value = "账号或密码有误。";
       else if (resp?.status === 429) error.value = "尝试太频繁 · 稍后再来。";
-      else error.value = resp?.data?.detail ?? "未能结缘。";
+      else error.value = resp?.data?.detail ?? "未能登录。";
     } else {
       error.value = e instanceof Error ? e.message : "登录失败";
     }
@@ -184,7 +181,9 @@ async function onSubmit() {
   transition: padding-bottom var(--dur-base) var(--ease-stand);
 }
 @media (prefers-reduced-motion: reduce) {
-  .login { transition: none; }
+  .login {
+    transition: none;
+  }
 }
 .login__card {
   position: relative;
@@ -194,14 +193,16 @@ async function onSubmit() {
   flex-direction: column;
   gap: clamp(18px, 4vw, 28px);
   padding: clamp(36px, 7vw, 52px) clamp(22px, 6vw, 36px) clamp(28px, 6vw, 40px);
-  background: rgb(var(--color-bg-veil) / 0.62);
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.78), rgb(var(--color-bg-veil) / 0.54));
   backdrop-filter: blur(22px) saturate(140%);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgb(var(--color-ink) / 0.055);
   border-radius: var(--radius-paper);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / .25),
-    0 30px 72px rgb(0 0 0 / .32),
-    inset 0 1px 0 rgb(255 255 255 / .08);
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 30px 72px rgb(0 0 0 / 0.32),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 /* 卡角压痕 */
 .login__card::before {
@@ -213,7 +214,7 @@ async function onSubmit() {
   height: 18px;
   background: linear-gradient(
     135deg,
-    rgb(var(--color-thread) / .55) 0%,
+    rgb(var(--color-thread) / 0.55) 0%,
     rgb(var(--color-thread) / 0) 70%
   );
   border-top-left-radius: 2px;
@@ -243,14 +244,14 @@ async function onSubmit() {
 }
 .login__title {
   font-size: clamp(26px, 8vw, 32px);
-  letter-spacing: var(--track-poem);
+  letter-spacing: 0.18em;
   color: rgb(var(--color-ink));
-  text-shadow: 0 2px 6px rgb(0 0 0 / .45);
+  text-shadow: 0 2px 6px rgb(0 0 0 / 0.45);
   line-height: 1.1;
 }
 .login__sub {
-  font-family: var(--font-display);
-  letter-spacing: 0.5em;
+  font-family: var(--font-sans);
+  letter-spacing: 0.12em;
   color: rgb(var(--color-ink-soft));
   font-size: 13px;
 }
@@ -271,7 +272,10 @@ async function onSubmit() {
   font-size: 18px;
   line-height: 1;
 }
-.login__error-text { flex: 1; min-width: 0; }
+.login__error-text {
+  flex: 1;
+  min-width: 0;
+}
 
 .login__form {
   display: flex;
@@ -286,18 +290,14 @@ async function onSubmit() {
   min-height: 56px;
   border: 0;
   cursor: pointer;
-  background: linear-gradient(
-    135deg,
-    rgb(var(--color-sorrow)) 0%,
-    rgb(var(--color-sakura-2)) 100%
-  );
+  background: linear-gradient(135deg, rgb(var(--color-sorrow)) 0%, rgb(var(--color-sakura-2)) 100%);
   color: rgb(var(--color-bg));
   border-radius: var(--radius-seal);
   padding: 12px 28px;
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .14),
-    inset 0 -1px 0 rgb(0 0 0 / .14),
-    0 4px 14px rgb(var(--color-sorrow) / .26);
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    inset 0 -1px 0 rgb(0 0 0 / 0.14),
+    0 4px 14px rgb(var(--color-sorrow) / 0.26);
   transition:
     transform var(--dur-tap) var(--ease-tap),
     opacity var(--dur-fast) ease,
@@ -326,11 +326,11 @@ async function onSubmit() {
   transition: stroke-dashoffset var(--dur-stage) var(--ease-firm);
 }
 .login__seal.is-loading .login__seal-frame path {
-  filter: drop-shadow(0 0 6px rgb(var(--color-bell) / .55));
+  filter: drop-shadow(0 0 6px rgb(var(--color-bell) / 0.55));
 }
 .login__seal-label {
   font-size: 22px;
-  letter-spacing: 0.32em;
+  letter-spacing: 0.14em;
   line-height: 1;
   position: relative;
   z-index: 1;
@@ -344,7 +344,7 @@ async function onSubmit() {
   border-radius: 50%;
   background: rgb(var(--color-bell));
   transform: translateY(-50%);
-  box-shadow: 0 0 0 2px rgb(var(--color-bg) / .35);
+  box-shadow: 0 0 0 2px rgb(var(--color-bg) / 0.35);
   pointer-events: none;
 }
 .login__seal:disabled {
@@ -354,16 +354,20 @@ async function onSubmit() {
 .login__seal:hover:not(:disabled) {
   filter: brightness(1.06);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / .18),
-    inset 0 -1px 0 rgb(0 0 0 / .14),
-    0 6px 18px rgb(var(--color-sorrow) / .36);
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    inset 0 -1px 0 rgb(0 0 0 / 0.14),
+    0 6px 18px rgb(var(--color-sorrow) / 0.36);
 }
-.login__seal:active:not(:disabled) { transform: scale(0.97); }
+.login__seal:active:not(:disabled) {
+  transform: scale(0.97);
+}
 
 /* 错误转场 */
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: opacity var(--dur-base) ease, transform var(--dur-slow) var(--ease-stand);
+  transition:
+    opacity var(--dur-base) ease,
+    transform var(--dur-slow) var(--ease-stand);
 }
 .fade-slide-enter-from,
 .fade-slide-leave-to {
@@ -372,7 +376,9 @@ async function onSubmit() {
 }
 
 @media (max-width: 360px) {
-  .login__card { padding: 32px 20px 26px; }
+  .login__card {
+    padding: 32px 20px 26px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

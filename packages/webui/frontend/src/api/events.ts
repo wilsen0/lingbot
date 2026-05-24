@@ -22,6 +22,7 @@ export async function listEvents(params?: {
   bot_id?: string;
   since_seq?: number;
   kind?: string;
+  mine?: boolean;
   limit?: number;
 }): Promise<EventPage> {
   const r = await apiClient.get<EventPage>("/events", { params });

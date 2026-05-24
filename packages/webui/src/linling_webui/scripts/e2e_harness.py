@@ -66,6 +66,8 @@ def main() -> None:
     async def _seed() -> None:
         for k, v in [("alice", "10"), ("bob", "7"), ("carol", "3"), ("dave", "21")]:
             await kv.write("榜", "分数", k, v)
+        await kv.write("啊/灵玉系", "灵玉", "e2e", "128")
+        await kv.write("休闲系/珍品", "气球", "e2e", "2")
 
     asyncio.run(_seed())
 

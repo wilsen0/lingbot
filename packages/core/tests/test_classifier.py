@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from linling_core.classifier import MessageClassifier
 from linling_core.events import Event, Scope, User
-from linling_core.segments import TextSegment
+from linling_core.segments import AtSegment, TextSegment
 from linling_dsl.parser import parse
 
 
@@ -178,3 +178,98 @@ def test_blocked_scope_ignored() -> None:
     intent = c.classify(_ev("ok"))
     assert intent.kind == "ignore"
     assert intent.reason == "blocked-scope"
+
+
+# ---------------------------------------------------------------------------
+# AT-bearing triggers (QRDic gift / admin-style)
+# ---------------------------------------------------------------------------
+
+
+class TestAtSegmentTriggerMatching:
+    """``赠送大飞龙@.*`` and friends require the @ to be present in the
+    matched string.
+
+    OneBot delivers ``赠送大飞龙@<target>`` as
+    ``[TextSegment("赠送大飞龙"), AtSegment(user_id="…")]`` — the literal
+    ``@`` is no longer in any text segment. Without re-projecting the
+    AT user_id, the trigger ``赠送大飞龙@.*`` would never match and the
+    gift handler would never fire (events would silently fall through
+    to the chat agent).
+
+    The classifier consults :attr:`Event.match_text`, which stitches
+    ``@<user_id>`` back in for matching purposes only — :attr:`Event.text`
+    (used by chat dispatch / ``%参数N%`` / audit / UI) is unaffected.
+    """
+
+    def _ev_with_at(self, head_text: str, at_user_id: str, *, tail_text: str = "") -> Event:
+        segments: list[TextSegment | AtSegment] = [TextSegment(text=head_text)]
+        segments.append(AtSegment(user_id=at_user_id))
+        if tail_text:
+            segments.append(TextSegment(text=tail_text))
+        return Event(
+            id="x",
+            platform="onebot",
+            bot_id="b",
+            scope=Scope(kind="group", id="g", platform="onebot"),
+            sender=User(id="u", platform="onebot"),
+            kind="message",
+            segments=segments,
+        )
+
+    def test_gift_trigger_matches_with_at_segment(self) -> None:
+        """``赠送大飞龙@.*`` matches an AtSegment-bearing event."""
+        script = parse("赠送大飞龙@.*\nok\n", strict=False)
+        c = MessageClassifier(script=script)
+        ev = self._ev_with_at("赠送大飞龙", "99999")
+        intent = c.classify(ev)
+        assert intent.kind == "command"
+        assert intent.match is not None
+        assert intent.match.handler.trigger == "赠送大飞龙@.*"
+
+    def test_gift_trigger_misses_without_at_segment(self) -> None:
+        """No AT segment → trigger doesn't match (handler stays defensive)."""
+        script = parse("赠送大飞龙@.*\nok\n", strict=False)
+        c = MessageClassifier(script=script)
+        ev = Event(
+            id="x",
+            platform="onebot",
+            bot_id="b",
+            scope=Scope(kind="group", id="g", platform="onebot"),
+            sender=User(id="u", platform="onebot"),
+            kind="message",
+            segments=[TextSegment(text="赠送大飞龙")],
+        )
+        intent = c.classify(ev)
+        assert intent.kind == "chat"
+
+    def test_bulk_gift_trigger_matches_and_captures_count(self) -> None:
+        """``赠送大飞龙([0-9]+)@.*`` matches and captures the count."""
+        script = parse(
+            "赠送大飞龙@.*\nsingle\n\n赠送大飞龙([0-9]+)@.*\nbulk\n",
+            strict=False,
+        )
+        c = MessageClassifier(script=script)
+        ev = self._ev_with_at("赠送大飞龙3", "99999")
+        intent = c.classify(ev)
+        assert intent.kind == "command"
+        assert intent.match is not None
+        assert intent.match.handler.trigger == "赠送大飞龙([0-9]+)@.*"
+        assert intent.match.captures == ["3"]
+
+    def test_admin_trigger_with_at_then_space_then_number(self) -> None:
+        """``苏苏加好感@[\\s\\S]* [0-9]+`` matches admin-style commands."""
+        script = parse("苏苏加好感@[\\s\\S]* [0-9]+\nok\n", strict=False)
+        c = MessageClassifier(script=script)
+        ev = self._ev_with_at("苏苏加好感", "12345", tail_text=" 50")
+        intent = c.classify(ev)
+        assert intent.kind == "command"
+        assert intent.match is not None
+        assert intent.match.handler.trigger == "苏苏加好感@[\\s\\S]* [0-9]+"
+
+    def test_event_text_still_excludes_at(self) -> None:
+        """``Event.text`` is unchanged — AT user_ids do *not* leak there."""
+        ev = self._ev_with_at("赠送大飞龙", "99999")
+        # plain_text view (used by chat dispatch, %参数N%, audit, UI):
+        assert ev.text == "赠送大飞龙"
+        # match_text view (only used by the classifier):
+        assert ev.match_text == "赠送大飞龙@99999"

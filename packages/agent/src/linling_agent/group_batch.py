@@ -16,6 +16,7 @@ from linling_core.events import Action, Event, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import ReplySegment, TextSegment
 
+from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import Message, ToolCall, ToolSchema
 
@@ -43,6 +44,14 @@ class GroupBatchConfig:
     require_attention: bool = True
     max_hold_s: float = 30.0
     bot_names: tuple[str, ...] = ()
+    # Second-stage probe gate. ``False`` keeps today's behaviour exactly
+    # — the eligibility predicate in :meth:`_flush_loop` short-circuits
+    # before any probe call regardless of whether a probe instance was
+    # injected. The bootstrap flips this to ``True`` only when it has
+    # also constructed an :class:`AttentionProbe`, so the
+    # ``(attention_probe_enabled=True, probe=None)`` combination never
+    # occurs in practice; tests that omit both stay on the legacy path.
+    attention_probe_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.window_s < 0:
@@ -89,6 +98,16 @@ class _GroupState:
     flush_task: asyncio.Task[None] | None = None
     first_seen_at: float | None = None
     attention_seen: bool = False
+    # Records whether the second-stage attention probe has already
+    # been attempted for the current Batch_Lifecycle. Set to ``True``
+    # immediately *before* the probe HTTP call (under ``state.lock``)
+    # so a concurrent flush iteration cannot re-enter even if the
+    # call is still in flight; cleared by :meth:`_reset_state_locked`
+    # whenever the lifecycle ends (flush, drop, stop, clear_history).
+    # Empty-batch and all-whitespace short-circuits also flip this
+    # to ``True`` so the per-lifecycle cost cap stays at "at most one
+    # probe attempt".
+    attention_probed: bool = False
     template_event: Event | None = None
     last_session: Session | None = None
     generation: int = 0
@@ -110,11 +129,23 @@ class GroupBatchChatDispatcher:
         config: GroupBatchConfig,
         conversations: ConversationStore | None = None,
         bot_id: str = "linling",
+        probe: AttentionProbe | None = None,
     ) -> None:
         self._inner = inner
         self._cfg = config
         self._conversations = conversations
         self._bot_id = bot_id
+        # Optional second-stage attention probe. Wired up by the
+        # bootstrap when both the YAML toggle and a usable API key
+        # resolve; left as ``None`` by every existing test in
+        # ``test_group_batch.py`` so the new code path is dead weight
+        # for the legacy harness. The eligibility predicate in
+        # :meth:`_flush_loop` short-circuits on either ``self._probe
+        # is None`` or ``self._cfg.attention_probe_enabled is False``,
+        # so the impossible ``(probe=instance, enabled=False)``
+        # combination still does nothing — bootstrap flips both
+        # together.
+        self._probe: AttentionProbe | None = probe
         self._states: defaultdict[str, _GroupState] = defaultdict(_GroupState)
         self._dispatch_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._action_sink: Any = None
@@ -140,6 +171,16 @@ class GroupBatchChatDispatcher:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # Close the attention probe's httpx client *after* cancelling
+        # the flush tasks so any in-flight ``judge`` call sees
+        # :class:`asyncio.CancelledError` first. ``aclose`` itself is
+        # idempotent (httpx tolerates re-close) so duplicate calls
+        # in nested shutdown paths are safe.
+        if self._probe is not None:
+            try:
+                await self._probe.aclose()
+            except Exception:
+                logger.exception("group_batch.attention_probe.aclose_failed")
 
     async def run(self, event: Event, session: Session) -> list[Action]:
         if not self._cfg.enabled or event.scope.kind != "group":
@@ -204,6 +245,9 @@ class GroupBatchChatDispatcher:
         state = self._states[key]
         try:
             while not self._closed:
+                probe_snapshot: list[_ProbeBatchInput] | None = None
+                probe_generation = 0
+                probe_scope_id = ""
                 async with state.lock:
                     if not state.messages:
                         self._reset_state_locked(state, cancel_task=False)
@@ -228,12 +272,110 @@ class GroupBatchChatDispatcher:
                         logger.debug("group_batch.dropped_idle_batch", key=key, messages=dropped)
                         return
                     else:
-                        wait_for = self._next_wait_s(elapsed=elapsed, has_attention=has_attention)
+                        # Probe-eligibility predicate. Five conjunctions
+                        # — drawn straight from Requirement 5.5:
+                        #   * a probe instance is wired up,
+                        #   * the dispatcher's gate is on,
+                        #   * the existing rule-based gate is on,
+                        #   * the rule has not already fired (else
+                        #     ``flush_ready`` would have been true and
+                        #     we wouldn't be in this branch),
+                        #   * we haven't already probed this batch.
+                        # The window_s boundary is implicit: probing
+                        # only happens while we're holding messages
+                        # past ``window_s`` without the rule firing —
+                        # exactly the gap between ``window_s`` and
+                        # ``max_hold_s`` that today silently drops.
+                        probe_eligible = (
+                            self._probe_wired()
+                            and not state.attention_seen
+                            and not state.attention_probed
+                            and window_ready
+                        )
+                        if probe_eligible:
+                            # Snapshot under the lock; release lock
+                            # before the HTTP call so ``run`` keeps
+                            # accepting messages (Requirement 11).
+                            # Marking ``attention_probed=True`` here
+                            # — *before* the call — enforces the
+                            # at-most-once-per-Batch_Lifecycle rule
+                            # even if the call hangs or another
+                            # iteration enters this branch concurrently.
+                            probe_snapshot = [
+                                _ProbeBatchInput(
+                                    message_id=msg.message_id,
+                                    sender_name=msg.sender_name,
+                                    timestamp=msg.timestamp,
+                                    text=msg.text,
+                                )
+                                for msg in state.messages
+                            ]
+                            state.attention_probed = True
+                            probe_generation = state.generation
+                            probe_scope_id = (
+                                state.template_event.scope.id
+                                if state.template_event is not None
+                                else key
+                            )
+                        wait_for = self._next_wait_s(
+                            elapsed=elapsed,
+                            has_attention=has_attention,
+                            probe_pending=(
+                                self._probe_wired()
+                                and not state.attention_probed
+                            ),
+                        )
                         state.wakeup.clear()
                         batch = []
                         template_event = None
                         session = None
                         generation = state.generation
+                # Probe path — runs OUTSIDE ``state.lock`` so message
+                # ingestion is unaffected by the HTTP latency.
+                if probe_snapshot is not None and self._probe is not None:
+                    verdict = False
+                    try:
+                        verdict = await self._probe.judge(
+                            probe_snapshot, scope_id=probe_scope_id
+                        )
+                    except asyncio.CancelledError:
+                        # Shutdown / clear_history cancelled the flush
+                        # task. Re-raise so the surrounding ``finally``
+                        # cleans up; the verdict is moot.
+                        raise
+                    except Exception:
+                        # Defence-in-depth — :meth:`judge` is supposed
+                        # to absorb every non-cancellation exception
+                        # itself. A leaked exception here would crash
+                        # the flush task; we keep it alive so the
+                        # batch can still drop naturally at
+                        # ``max_hold_s``.
+                        logger.exception(
+                            "group_batch.attention_probe.unexpected_failure",
+                            scope_id=probe_scope_id,
+                        )
+                        verdict = False
+                    if verdict:
+                        # Generation guard mirrors the existing
+                        # ``_batch_is_current`` pattern: a
+                        # ``clear_history`` issued mid-probe bumps
+                        # ``state.generation``, so a stale ``True``
+                        # verdict would otherwise contaminate the
+                        # next lifecycle.
+                        async with state.lock:
+                            if (
+                                not self._closed
+                                and state.generation == probe_generation
+                            ):
+                                state.attention_seen = True
+                                state.wakeup.set()
+                    # Either way (verdict yes or no), loop back so the
+                    # next iteration sees the updated state. A yes
+                    # verdict produces ``flush_ready=True`` next pass;
+                    # a no verdict falls through to the wait branch
+                    # below on the *next* iteration (because
+                    # ``probe_snapshot`` is now ``None``).
+                    continue
                 if not batch or template_event is None or session is None:
                     try:
                         await asyncio.wait_for(state.wakeup.wait(), timeout=wait_for)
@@ -250,9 +392,22 @@ class GroupBatchChatDispatcher:
                 if state.flush_task is asyncio.current_task():
                     state.flush_task = None
 
-    def _next_wait_s(self, *, elapsed: float, has_attention: bool) -> float:
+    def _next_wait_s(
+        self,
+        *,
+        elapsed: float,
+        has_attention: bool,
+        probe_pending: bool = False,
+    ) -> float:
         deadlines: list[float] = []
-        if has_attention or not self._cfg.require_attention:
+        if has_attention or not self._cfg.require_attention or probe_pending:
+            # ``probe_pending`` is the new third reason to wake at the
+            # ``window_s`` boundary: when a probe is configured but
+            # hasn't run yet, we must not sleep past ``window_s`` —
+            # otherwise the eligibility predicate in
+            # :meth:`_flush_loop` only re-evaluates at
+            # ``max_hold_s``, making the probe no different from the
+            # legacy drop path.
             deadlines.append(self._cfg.window_s - elapsed)
         deadlines.append(self._cfg.max_hold_s - elapsed)
         positive = [d for d in deadlines if d > 0]
@@ -677,6 +832,7 @@ class GroupBatchChatDispatcher:
     def _reset_state_locked(self, state: _GroupState, *, cancel_task: bool) -> None:
         state.messages.clear()
         state.attention_seen = False
+        state.attention_probed = False
         state.first_seen_at = None
         state.template_event = None
         state.last_session = None
@@ -691,6 +847,24 @@ class GroupBatchChatDispatcher:
         if any(name and name in msg.text for name in self._cfg.bot_names):
             return True
         return _looks_like_question(msg.text)
+
+    def _probe_wired(self) -> bool:
+        """Whether a probe is configured and could potentially run.
+
+        ``self._probe is not None`` and ``attention_probe_enabled``
+        and ``require_attention`` is the static prerequisite — the
+        per-state predicate (``not attention_seen`` and
+        ``not attention_probed``) is checked at the call site under
+        ``state.lock``. Centralising the static part keeps the
+        eligibility predicate in :meth:`_flush_loop` and the
+        ``probe_pending`` argument to :meth:`_next_wait_s` from
+        drifting out of sync.
+        """
+        return (
+            self._probe is not None
+            and self._cfg.attention_probe_enabled
+            and self._cfg.require_attention
+        )
 
     def _build_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = ["候选消息："]

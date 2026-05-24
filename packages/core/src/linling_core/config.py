@@ -264,6 +264,15 @@ class AgentConfig(BaseModel):
     group_batch_require_attention: bool = True
     group_batch_max_hold_s: float = 30.0
     group_batch_bot_names: list[str] = []
+    # Lightweight attention-probe toggle. When ``True`` (default), the
+    # bootstrap may construct a second-stage yes/no LLM call that runs
+    # at the ``window_s`` boundary if no rule-based attention has fired
+    # for a buffered batch. The probe auto-disables when neither
+    # ``ATTENTION_PROBE_API_KEY`` nor ``OPENAI_API_KEY`` is set in the
+    # environment, so leaving this ``True`` on a deployment without
+    # probe credentials is harmless. See
+    # ``.kiro/specs/lightweight-attention-probe/`` for the full design.
+    group_batch_attention_probe_enabled: bool = True
 
     @model_validator(mode="after")
     def _validate_group_batch(self) -> AgentConfig:

@@ -14,6 +14,7 @@ export interface EventStreamMessage {
 export interface UseEventStreamOptions {
   onMessage?: (msg: EventStreamMessage) => void;
   autoReconnect?: boolean;
+  mine?: boolean;
 }
 
 function wsBase(): string {
@@ -39,7 +40,9 @@ export function useEventStream(opts: UseEventStreamOptions = {}) {
   function connect() {
     if (!auth.accessToken) return;
     status.value = ws ? "reconnecting" : "connecting";
-    const url = `${wsBase()}/ws/events?token=${encodeURIComponent(auth.accessToken)}`;
+    const params = new URLSearchParams({ token: auth.accessToken });
+    if (opts.mine) params.set("mine", "1");
+    const url = `${wsBase()}/ws/events?${params.toString()}`;
     ws = new WebSocket(url);
 
     ws.onopen = () => {

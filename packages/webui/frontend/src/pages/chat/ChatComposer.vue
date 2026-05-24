@@ -16,6 +16,7 @@
 
     <div class="composer__stack">
       <ChatComposerSuggest
+        id="chat-composer-suggest"
         :visible="suggest.visible.value"
         :results="suggest.results.value"
         :cursor="suggest.cursor.value"
@@ -30,10 +31,13 @@
           rows="1"
           :placeholder="placeholder"
           class="composer__input"
+          role="combobox"
           :disabled="disabled"
           :aria-disabled="disabled"
           aria-autocomplete="list"
           :aria-expanded="suggest.visible.value"
+          aria-haspopup="listbox"
+          aria-controls="chat-composer-suggest"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="off"
@@ -46,51 +50,51 @@
           @input="onInput"
         />
 
-      <button
-        v-if="streaming"
-        class="composer__btn composer__btn--stop tap"
-        type="button"
-        aria-label="停"
-        @click="$emit('cancel')"
-      >
-        <svg viewBox="0 0 24 24" class="composer__btn-stop-ic" fill="none">
-          <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
-        </svg>
-      </button>
-      <button
-        v-else
-        class="composer__btn composer__btn--send tap"
-        :class="{ 'is-mute': !canSend }"
-        type="submit"
-        aria-label="寄一句"
-        :disabled="!canSend"
-      >
-        <!-- 铃铛 · 红线吊穗。无草稿时去掉铃舌 + 飘带 ("铃不响") -->
-        <svg viewBox="0 0 36 44" class="composer__btn-send-ic" fill="none" aria-hidden="true">
-          <path
-            d="M18 2 v 6"
-            stroke="rgb(var(--color-thread))"
-            stroke-width="1.2"
-            stroke-linecap="round"
-          />
-          <path
-            d="M18 8 c -6 0 -10 4 -10 10 v 7 l -2 2 c -0.6 0.6 -0.2 1.6 0.7 1.6 h 22.6 c 0.9 0 1.3 -1 0.7 -1.6 L 28 25 v -7 c 0 -6 -4 -10 -10 -10 z"
-            fill="rgb(var(--color-bell))"
-            stroke="rgb(var(--color-ink) / .4)"
-            stroke-width="0.8"
-          />
-          <circle v-if="canSend" cx="18" cy="31" r="2.4" fill="rgb(var(--color-sorrow))" />
-          <path
-            v-if="canSend"
-            d="M14 32 q 4 8 0 10 M 22 32 q -4 8 0 10"
-            stroke="rgb(var(--color-thread))"
-            stroke-width="1.1"
-            fill="none"
-            stroke-linecap="round"
-          />
-        </svg>
-      </button>
-    </form>
+        <button
+          v-if="streaming"
+          class="composer__btn composer__btn--stop tap"
+          type="button"
+          aria-label="停止生成"
+          @click="$emit('cancel')"
+        >
+          <svg viewBox="0 0 24 24" class="composer__btn-stop-ic" fill="none">
+            <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          v-else
+          class="composer__btn composer__btn--send tap"
+          :class="{ 'is-mute': !canSend }"
+          type="submit"
+          aria-label="发送消息"
+          :disabled="!canSend"
+        >
+          <!-- 铃铛图标。无草稿时去掉铃舌 + 飘带，保持轻一点。 -->
+          <svg viewBox="0 0 36 44" class="composer__btn-send-ic" fill="none" aria-hidden="true">
+            <path
+              d="M18 2 v 6"
+              stroke="rgb(var(--color-thread))"
+              stroke-width="1.2"
+              stroke-linecap="round"
+            />
+            <path
+              d="M18 8 c -6 0 -10 4 -10 10 v 7 l -2 2 c -0.6 0.6 -0.2 1.6 0.7 1.6 h 22.6 c 0.9 0 1.3 -1 0.7 -1.6 L 28 25 v -7 c 0 -6 -4 -10 -10 -10 z"
+              fill="rgb(var(--color-bell))"
+              stroke="rgb(var(--color-ink) / .4)"
+              stroke-width="0.8"
+            />
+            <circle v-if="canSend" cx="18" cy="31" r="2.4" fill="rgb(var(--color-sorrow))" />
+            <path
+              v-if="canSend"
+              d="M14 32 q 4 8 0 10 M 22 32 q -4 8 0 10"
+              stroke="rgb(var(--color-thread))"
+              stroke-width="1.1"
+              fill="none"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </form>
     </div>
   </footer>
 </template>
@@ -159,9 +163,7 @@ watch(
  */
 useElementSizeVar(dockEl, "--chat-dock-h", { kind: "height", min: 72 });
 
-const canSend = computed(
-  () => !props.disabled && !!draft.value.trim() && !props.streaming,
-);
+const canSend = computed(() => !props.disabled && !!draft.value.trim() && !props.streaming);
 
 function suggestGuarded(): boolean {
   return props.streaming || props.disabled || composing.value;
@@ -183,9 +185,7 @@ watch(draft, autosize);
 function onKeydown(ev: KeyboardEvent) {
   // 候选面板可见时优先处理导航键. IME 选词期间一切让位 (composing/229).
   const imeActive =
-    ev.isComposing ||
-    composing.value ||
-    (ev as unknown as { keyCode: number }).keyCode === 229;
+    ev.isComposing || composing.value || (ev as unknown as { keyCode: number }).keyCode === 229;
   if (imeActive) return;
 
   if (suggest.visible.value) {
@@ -286,10 +286,7 @@ function syncQuery() {
  * - 多行草稿: 只替换最后一行的最后一个 token. 其他行保持原样
  *   (用户可能在前几行写了上下文, 忽略它会失礼).
  */
-function applySuggestion(
-  item: TriggerSuggestion,
-  opts: { autoSend: boolean },
-): void {
+function applySuggestion(item: TriggerSuggestion, opts: { autoSend: boolean }): void {
   const before = draft.value;
   const lines = before.split(/\r?\n/);
   const lastLine = lines.at(-1) ?? "";
@@ -419,8 +416,8 @@ defineExpose({
   background: linear-gradient(
     to top,
     rgb(var(--color-bg)) 0%,
-    rgb(var(--color-bg) / .9) 30%,
-    rgb(var(--color-bg) / .2) 78%,
+    rgb(var(--color-bg) / 0.92) 34%,
+    rgb(var(--color-bg) / 0.32) 76%,
     rgb(var(--color-bg) / 0)
   );
   transition: bottom var(--dur-base) var(--ease-stand);
@@ -440,37 +437,62 @@ defineExpose({
 :root[data-keyboard="open"] .composer__thread {
   display: none;
 }
+:root[data-keyboard="open"] .composer__stack {
+  animation: none;
+}
 @media (prefers-reduced-motion: reduce) {
-  .composer { transition: none; }
+  .composer {
+    transition: none;
+  }
+  .composer__stack {
+    animation: none;
+  }
 }
 
 .composer__thread {
   display: block;
-  width: min(62%, 400px);
+  width: min(68%, 480px);
   height: 16px;
   margin: 0 auto -6px;
-  opacity: 0.85;
+  opacity: 0.75;
 }
 .composer__stack {
   position: relative;
+  max-width: 860px;
+  margin: 0 auto;
+  animation: composer-dock-rise var(--dur-slow) var(--ease-stand) 88ms both;
+  will-change: opacity, transform;
   /* 容纳建议面板的浮动 anchor — 面板用 position: absolute, bottom: 100% 贴到 form 上沿. */
 }
 .composer__form {
   margin: 0 auto;
-  max-width: 720px;
+  max-width: 780px;
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 6px 6px 6px 18px;
-  background: rgb(var(--color-bg-veil) / 0.86);
+  padding: 7px 7px 7px 18px;
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.96), rgb(var(--color-bg-veil) / 0.82));
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgb(var(--color-thread) / 0.14);
   border-radius: var(--radius-paper);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / .25),
-    0 20px 42px rgb(0 0 0 / .18),
-    inset 0 1px 0 rgb(255 255 255 / .1);
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 22px 48px rgb(0 0 0 / 0.2),
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 -1px 0 rgb(var(--color-thread) / 0.08);
   margin-inline: var(--pad-x);
+}
+.composer__form::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(120deg, rgb(255 255 255 / 0.06), transparent 34%);
+  pointer-events: none;
 }
 .composer__input {
   flex: 1;
@@ -488,14 +510,14 @@ defineExpose({
    */
   font-size: 16px;
   line-height: 1.65;
-  letter-spacing: 0.04em;
-  padding: 10px 2px;
+  letter-spacing: 0.01em;
+  padding: 11px 2px;
   max-height: 180px;
 }
 .composer__input::placeholder {
   color: rgb(var(--color-ink-soft) / 0.7);
-  font-family: var(--font-display);
-  letter-spacing: 0.4em;
+  font-family: var(--font-sans);
+  letter-spacing: 0.08em;
 }
 .composer__input:disabled {
   color: rgb(var(--color-ink-soft));
@@ -504,38 +526,57 @@ defineExpose({
 
 .composer__btn {
   flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  border: 0;
-  background: transparent;
+  width: 50px;
+  height: 50px;
+  border: 1px solid rgb(var(--color-ink) / 0.05);
+  background: rgb(var(--color-bg) / 0.22);
+  border-radius: var(--radius-seal);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   position: relative;
-  transition: transform var(--dur-tap) var(--ease-tap),
-              filter var(--dur-fast) ease,
-              opacity var(--dur-fast) ease;
+  transition:
+    transform var(--dur-tap) var(--ease-tap),
+    filter var(--dur-fast) ease,
+    opacity var(--dur-fast) ease;
 }
-.composer__btn:disabled { cursor: not-allowed; }
+.composer__btn:disabled {
+  cursor: not-allowed;
+}
 
 .composer__btn--send {
   color: rgb(var(--color-bell));
+  background: linear-gradient(
+    180deg,
+    rgb(var(--color-bell) / 0.18) 0%,
+    rgb(var(--color-sorrow) / 0.14) 100%
+  );
+  border-color: rgb(var(--color-bell) / 0.18);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 8px 18px rgb(var(--color-sorrow) / 0.12);
 }
 .composer__btn-send-ic {
   width: 32px;
   height: 40px;
-  filter: drop-shadow(0 2px 6px rgb(var(--color-sorrow) / .35));
-  transition: transform var(--dur-fast) var(--ease-tap),
-              filter var(--dur-base) ease;
+  filter: drop-shadow(0 2px 6px rgb(var(--color-sorrow) / 0.35));
+  transition:
+    transform var(--dur-fast) var(--ease-tap),
+    filter var(--dur-base) ease;
 }
 .composer__btn--send.is-mute .composer__btn-send-ic {
-  filter: drop-shadow(0 2px 4px rgb(0 0 0 / .15)) grayscale(0.6);
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.15)) grayscale(0.6);
   opacity: 0.5;
+}
+.composer__btn--send.is-mute {
+  background: rgb(var(--color-bg) / 0.18);
+  border-color: rgb(var(--color-ink) / 0.04);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 .composer__btn--send:hover:not(:disabled) .composer__btn-send-ic {
   transform: rotate(-8deg);
-  filter: drop-shadow(0 4px 12px rgb(var(--color-sorrow) / .55));
+  filter: drop-shadow(0 4px 12px rgb(var(--color-sorrow) / 0.55));
 }
 .composer__btn--send:active:not(:disabled) .composer__btn-send-ic {
   transform: rotate(8deg) scale(0.94);
@@ -543,13 +584,34 @@ defineExpose({
 
 .composer__btn--stop {
   color: rgb(var(--color-ink) / 0.85);
+  background: rgb(var(--color-alert) / 0.12);
+  border-color: rgb(var(--color-alert) / 0.18);
 }
-.composer__btn--stop:hover { color: rgb(var(--color-ink)); }
-.composer__btn-stop-ic { width: 20px; height: 20px; }
+.composer__btn--stop:hover {
+  color: rgb(var(--color-ink));
+}
+.composer__btn-stop-ic {
+  width: 20px;
+  height: 20px;
+}
 
 @media (max-width: 420px) {
   /* 窄屏稍收紧默认底 padding; 键盘开时仍然走 :root[data-keyboard]
    * 的覆盖规则 (specificity 更高), 不会被这条压回去. */
-  .composer { padding-bottom: calc(env(safe-area-inset-bottom, 0) + 8px); }
+  .composer {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0) + 8px);
+  }
+}
+
+@keyframes composer-dock-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

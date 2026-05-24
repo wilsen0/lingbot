@@ -1,13 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="drawer">
-      <div
-        v-if="open"
-        class="drawer-root"
-        role="dialog"
-        aria-modal="true"
-        aria-label="菜单"
-      >
+      <div v-if="open" class="drawer-root" role="dialog" aria-modal="true" aria-label="菜单">
         <div class="drawer-veil" @click="emit('close')" />
         <aside ref="panelEl" class="drawer-panel px-safe" tabindex="-1">
           <header class="drawer-head">
@@ -69,9 +63,9 @@ useOverlay(toRef(props, "open"), panelEl, {
 });
 
 const navItems = [
-  { to: "/",     glyph: "言", label: "对话", hint: "与红娘相对而言" },
-  { to: "/观测", glyph: "观", label: "观测", hint: "因缘 · 灵玉 · 命格" },
-  { to: "/设置", glyph: "司", label: "司事", hint: "在册 · 装饰 · 解缘" },
+  { to: "/", glyph: "言", label: "对话", hint: "和助手聊天" },
+  { to: "/观测", glyph: "观", label: "观测", hint: "我的记录 · 资产 · 系统" },
+  { to: "/设置", glyph: "设", label: "设置", hint: "账号 · 外观 · 声音" },
 ];
 </script>
 
@@ -90,7 +84,9 @@ const navItems = [
   transition: padding-bottom var(--dur-base) var(--ease-stand);
 }
 @media (prefers-reduced-motion: reduce) {
-  .drawer-root { transition: none; }
+  .drawer-root {
+    transition: none;
+  }
 }
 .drawer-veil {
   position: absolute;
@@ -106,10 +102,14 @@ const navItems = [
   width: min(320px, 88vw);
   padding-top: calc(env(safe-area-inset-top, 0) + 18px);
   padding-bottom: calc(env(safe-area-inset-bottom, 0) + 24px);
-  background: rgb(var(--color-bg-veil) / 0.96);
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.98) 0%, rgb(var(--color-bg-veil) / 0.92) 100%);
   backdrop-filter: blur(22px) saturate(140%);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
-  box-shadow: -14px 0 48px rgb(0 0 0 / 0.5);
+  border-left: 1px solid rgb(var(--color-thread) / 0.12);
+  box-shadow:
+    -14px 0 48px rgb(0 0 0 / 0.46),
+    inset 1px 0 0 rgb(255 255 255 / 0.05);
   display: flex;
   flex-direction: column;
   outline: none;
@@ -122,11 +122,13 @@ const navItems = [
 }
 .drawer-head__name {
   font-size: clamp(22px, 6vw, 26px);
-  letter-spacing: var(--track-poem);
+  letter-spacing: 0.2em;
   color: rgb(var(--color-ink));
 }
 
-.drawer-hair { margin-bottom: 12px; }
+.drawer-hair {
+  margin-bottom: 12px;
+}
 
 .drawer-nav {
   display: flex;
@@ -138,33 +140,45 @@ const navItems = [
   grid-template-columns: auto 1fr auto;
   gap: 16px;
   align-items: center;
-  padding: 18px 0;
+  padding: 16px 12px;
   color: rgb(var(--color-ink));
   text-decoration: none;
   min-height: 56px;
-  transition: color var(--dur-fast) ease, transform var(--dur-tap) var(--ease-tap);
+  border-radius: var(--radius-seal);
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    transform var(--dur-tap) var(--ease-tap);
   position: relative;
 }
-.drawer-item:active { transform: translateX(2px); }
-.drawer-item:hover  { color: rgb(var(--color-sorrow)); }
-.drawer-item.router-link-exact-active { color: rgb(var(--color-sorrow)); }
-.drawer-item.router-link-exact-active .drawer-item__glyph { color: rgb(var(--color-sorrow)); }
+.drawer-item:active {
+  transform: translateX(2px);
+}
+.drawer-item:hover {
+  color: rgb(var(--color-sorrow));
+  background: rgb(var(--color-ink) / 0.04);
+}
+.drawer-item.router-link-exact-active {
+  color: rgb(var(--color-sorrow));
+  background: rgb(var(--color-sorrow) / 0.08);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+.drawer-item.router-link-exact-active .drawer-item__glyph {
+  color: rgb(var(--color-sorrow));
+}
 
 .drawer-item::before {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 12px;
+  right: 12px;
   top: 0;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgb(var(--color-thread) / 0.22),
-    transparent
-  );
+  background: linear-gradient(to right, transparent, rgb(var(--color-thread) / 0.22), transparent);
 }
-.drawer-item.is-first::before { display: none; }
+.drawer-item.is-first::before {
+  display: none;
+}
 
 .drawer-item__glyph {
   font-size: 26px;
@@ -181,12 +195,12 @@ const navItems = [
 }
 .drawer-item__label {
   font-size: 17px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.14em;
 }
 .drawer-item__hint {
   font-size: 11px;
   color: rgb(var(--color-ink-soft));
-  letter-spacing: var(--track-meta);
+  letter-spacing: 0.08em;
 }
 .drawer-item__chevron {
   color: rgb(var(--color-ink-soft) / 0.5);
@@ -214,8 +228,16 @@ const navItems = [
 .drawer-leave-active .drawer-panel {
   transition: transform var(--dur-slow) var(--ease-firm);
 }
-.drawer-enter-from { opacity: 0; }
-.drawer-leave-to { opacity: 0; }
-.drawer-enter-from .drawer-panel { transform: translateX(100%); }
-.drawer-leave-to .drawer-panel { transform: translateX(100%); }
+.drawer-enter-from {
+  opacity: 0;
+}
+.drawer-leave-to {
+  opacity: 0;
+}
+.drawer-enter-from .drawer-panel {
+  transform: translateX(100%);
+}
+.drawer-leave-to .drawer-panel {
+  transform: translateX(100%);
+}
 </style>

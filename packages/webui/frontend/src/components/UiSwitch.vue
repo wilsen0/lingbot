@@ -45,7 +45,7 @@ const props = withDefaults(
     offLabel?: string;
     label?: string;
   }>(),
-  { onLabel: "响", offLabel: "静", label: "开关" },
+  { onLabel: "开", offLabel: "关", label: "开关" },
 );
 const emit = defineEmits<(e: "update:modelValue", v: boolean) => void>();
 
@@ -60,8 +60,8 @@ function toggle() {
   align-items: center;
   gap: 10px;
   padding: 6px 12px 6px 6px;
-  background: transparent;
-  border: 0;
+  background: linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.42), rgb(var(--color-bg-veil) / 0.22));
+  border: 1px solid rgb(var(--color-ink) / 0.05);
   cursor: pointer;
   color: rgb(var(--color-ink-soft));
   border-radius: var(--radius-seal);
@@ -72,7 +72,7 @@ function toggle() {
   min-height: 44px;
 }
 .ink-switch:hover {
-  background: rgb(var(--color-ink) / 0.04);
+  background: linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.54), rgb(var(--color-bg-veil) / 0.3));
 }
 .ink-switch:active {
   transform: scale(0.97);
@@ -99,7 +99,7 @@ function toggle() {
 .ink-switch.is-on .ink-switch__bell {
   color: rgb(var(--color-bell));
   animation: ink-switch-ring 480ms var(--ease-swing);
-  filter: drop-shadow(0 0 6px rgb(var(--color-bell) / .55));
+  filter: drop-shadow(0 0 6px rgb(var(--color-bell) / 0.55));
 }
 .ink-switch:not(.is-on) .ink-switch__bell {
   color: rgb(var(--color-ink-soft) / 0.65);
@@ -128,8 +128,8 @@ function toggle() {
 }
 
 .ink-switch__label {
-  font-size: 14px;
-  letter-spacing: 0.32em;
+  font-size: 13px;
+  letter-spacing: 0.16em;
   color: rgb(var(--color-ink));
   transition: color var(--dur-base) ease;
   min-width: 1em;
@@ -139,10 +139,18 @@ function toggle() {
 }
 
 @keyframes ink-switch-ring {
-  0%   { transform: rotate(-18deg); }
-  40%  { transform: rotate(14deg); }
-  70%  { transform: rotate(-6deg); }
-  100% { transform: rotate(0deg); }
+  0% {
+    transform: rotate(-18deg);
+  }
+  40% {
+    transform: rotate(14deg);
+  }
+  70% {
+    transform: rotate(-6deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

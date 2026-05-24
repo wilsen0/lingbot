@@ -44,6 +44,7 @@ async def list_events(
     limit: int = Query(default=100, ge=1, le=500),
     kind: str | None = Query(default=None),
     scope_kind: str | None = Query(default=None),
+    mine: bool = Query(default=False),
     caller: Caller = Depends(require_auth),
     state: WebUIState = Depends(get_state),
     config: WebUIConfig = Depends(get_config),
@@ -60,18 +61,21 @@ async def list_events(
         buf = state.event_buffers.get(bid)
         if buf is None:
             continue
-        tail = await buf.tail(since_seq=since_seq, limit=limit)
+        tail_limit = buf.capacity if (kind or scope_kind or mine) else limit
+        tail = await buf.tail(since_seq=since_seq, limit=tail_limit)
         items.extend(tail)
 
     # Keep relative ordering: each buffer is already ordered by seq, merge by time.
     items.sort(key=lambda it: it.event.time)
-    if len(items) > limit:
-        items = items[-limit:]
 
     if kind:
         items = [it for it in items if it.event.kind == kind]
     if scope_kind:
         items = [it for it in items if it.event.scope.kind == scope_kind]
+    if mine:
+        items = [it for it in items if it.event.sender.id == caller.username]
+    if len(items) > limit:
+        items = items[-limit:]
 
     next_cursor = items[-1].seq if items else None
     # Defensive: don't expose buffered events beyond per-bot capacity.

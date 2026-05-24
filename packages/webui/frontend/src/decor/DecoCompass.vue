@@ -27,11 +27,7 @@
       <circle cx="14" cy="14" r="6" stroke="currentColor" stroke-width="0.7" opacity=".4" />
       <!-- 罗盘指针 · 旋转层 -->
       <g class="deco-compass__needle">
-        <path
-          d="M14 4 L 16 14 L 14 24 L 12 14 Z"
-          fill="rgb(var(--color-thread))"
-          opacity="0.85"
-        />
+        <path d="M14 4 L 16 14 L 14 24 L 12 14 Z" fill="rgb(var(--color-thread))" opacity="0.85" />
         <circle cx="14" cy="14" r="1.4" fill="rgb(var(--color-bell))" />
       </g>
     </svg>
@@ -45,7 +41,7 @@ withDefaults(
     spinning?: boolean;
     label?: string;
   }>(),
-  { size: "md", spinning: true, label: "正在掐指" },
+  { size: "md", spinning: true, label: "正在处理" },
 );
 </script>
 
@@ -56,8 +52,14 @@ withDefaults(
   justify-content: center;
   color: rgb(var(--color-bell));
 }
-.is-sm svg { width: 16px; height: 16px; }
-.is-md svg { width: 22px; height: 22px; }
+.is-sm svg {
+  width: 16px;
+  height: 16px;
+}
+.is-md svg {
+  width: 22px;
+  height: 22px;
+}
 
 .deco-compass__needle {
   transform-origin: 14px 14px;
@@ -68,8 +70,12 @@ withDefaults(
 }
 
 @keyframes compass-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

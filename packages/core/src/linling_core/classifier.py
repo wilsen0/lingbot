@@ -189,7 +189,7 @@ class MessageClassifier:
         if event.sender.id in self._block_senders:
             return Intent(kind="ignore", reason="blocked-sender")
 
-        text = event.text
+        text = event.match_text
 
         # Commands marked with a prefix always resolve to a command
         # verdict, even on miss — that's how users discover typos.

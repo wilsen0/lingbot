@@ -2,7 +2,7 @@ bot_id: linling
 name: 涂山苏苏
 admin_users:
   - "2078123478"
-main_group: "754800438"
+main_group: "271891388"
 
 storage:
   kv: sqlite:///./data.sqlite
@@ -37,11 +37,16 @@ agent:
   # 后交给 LLM 选择性回复，避免每条群消息都触发一次模型。
   group_batch_enabled: true
   group_batch_window_s: 8
-  group_batch_max_messages: 20
+  group_batch_max_messages: 50
   group_batch_max_chars: 6000
   group_batch_max_replies: 3
   group_batch_require_attention: true
-  group_batch_max_hold_s: 30
+  group_batch_max_hold_s: 300
+  # 群批时窗到点仍未触发关注规则时,跑一个轻量 LLM (yes/no) 再决定要不要
+  # 把这批消息交给主 LLM。关掉就回到老行为(直接丢弃)。配套的 API key /
+  # base URL / model 在 .env 里设置(见 .env.example);.env 里没填 key
+  # 也没问题——bootstrap 会静默跳过。
+  group_batch_attention_probe_enabled: true
   group_batch_bot_names:
     - 苏苏
     - 涂山苏苏
@@ -51,7 +56,7 @@ conversation:
   context_max_tokens: 65536
   summary_trigger_tokens: 60000
   summary_keep_recent_turns: 8
-  summary_max_tokens: 2000
+  summary_max_tokens: 8000
 
 metrics:
   enabled: true

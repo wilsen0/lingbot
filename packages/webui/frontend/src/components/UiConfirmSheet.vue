@@ -126,13 +126,16 @@ watch(
   width: 100%;
   max-width: 360px;
   padding: 22px 24px 20px;
-  background: rgb(var(--color-bg-veil) / 0.96);
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.98), rgb(var(--color-bg-veil) / 0.92));
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgb(var(--color-thread) / 0.12);
   border-radius: var(--radius-paper);
   box-shadow:
     0 1px 2px rgb(0 0 0 / .35),
-    0 32px 80px rgb(0 0 0 / .55);
+    0 32px 80px rgb(0 0 0 / .5),
+    inset 0 1px 0 rgb(255 255 255 / .06);
   outline: none;
 }
 .confirm-thread {
@@ -146,7 +149,7 @@ watch(
 .confirm-title {
   text-align: center;
   font-size: 22px;
-  letter-spacing: var(--track-poem);
+  letter-spacing: 0.18em;
   color: rgb(var(--color-ink));
   margin: 0 0 10px;
 }
@@ -170,7 +173,7 @@ watch(
   cursor: pointer;
   font-family: var(--font-sans);
   font-size: 15px;
-  letter-spacing: var(--track-poem);
+  letter-spacing: 0.1em;
   border-radius: var(--radius-seal);
   background: transparent;
   color: rgb(var(--color-ink));

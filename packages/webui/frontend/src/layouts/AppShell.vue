@@ -1,8 +1,11 @@
 <template>
   <div class="app-shell">
-    <header v-if="showShellBar" class="shell-bar px-safe pt-safe" role="banner">
-      <div class="thread-top" />
-      <div class="shell-bar__inner">
+    <transition name="shell-chrome" appear>
+      <nav
+        v-if="showShellChrome"
+        class="shell-chrome px-safe pt-safe"
+        aria-label="页面快捷操作"
+      >
         <router-link to="/" class="icon-btn tap" aria-label="回到对话">
           <svg viewBox="0 0 24 24" class="icon-btn__ic" fill="none">
             <path
@@ -14,27 +17,26 @@
             />
           </svg>
         </router-link>
-        <div class="shell-title-wrap">
-          <h1 class="shell-title font-display">{{ shellHead.glyph }}</h1>
-          <p class="shell-sub">{{ shellHead.label }}</p>
-        </div>
         <button class="icon-btn tap" aria-label="打开菜单" @click="drawerOpen = true">
           <svg viewBox="0 0 24 24" class="icon-btn__ic" fill="none">
-            <path d="M4 8h16M4 16h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            <path
+              d="M4 8h16M4 16h10"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
-      </div>
-    </header>
+      </nav>
+    </transition>
 
-    <main class="shell-main" :class="{ 'shell-main--lock': lockScroll }" role="main">
+    <main class="shell-main" role="main">
       <router-view v-slot="{ Component }">
         <!--
-          mode="out-in" 保证一次只有一份页面挂载, 避免 chat 在切走后还
-          短暂持有 WebSocket; 时长用 dur-slow + ease-stand, 与全站统一。
-          注意: 内部 page 不要再在根节点跑 --motion-fade-in-up, 否则会
-          和这层 transition 叠加成"双重淡入"。
+          页层切换不再 out-in: 旧层留在底下淡出, 新层从上方轻落。
+          这样从观测 / 设置回对话时, 画面不会先空一帧再挂聊天页。
         -->
-        <transition name="fade-up" mode="out-in">
+        <transition name="page-layer" appear>
           <component :is="Component" @open-drawer="drawerOpen = true" />
         </transition>
       </router-view>
@@ -51,27 +53,21 @@ import { useRoute } from "vue-router";
 import MoreDrawer from "@/layouts/MoreDrawer.vue";
 
 const route = useRoute();
-const shellHead = computed(() => {
-  // 路由门头：观测 → 观；设置 → 司
-  if (route.path.startsWith("/观测")) return { glyph: "观", label: "观测台" };
-  if (route.path.startsWith("/设置")) return { glyph: "司", label: "司事" };
-  return { glyph: "言", label: "对话" };
-});
-const showShellBar = computed(() => Boolean(route.meta?.showBack));
+const showShellChrome = computed(() => Boolean(route.meta?.showBack));
 /*
- * 仅在聊天路由锁住 shell-main 滚动 + 文档级滚动 (html/body 也跟着锁,
- * 见 tailwind.css 的 html[data-route="chat"] 选择器).
+ * 仅在聊天路由锁住文档级滚动 (html/body, 见 tailwind.css 的
+ * html[data-route="chat"] 选择器).
  *
  * 原因 — iOS Safari 在用户聚焦 textarea 时会沿"最近可滚祖先"链做
  * scrollIntoView. 聊天页 composer 是 fixed, 焦点已经可见, 但 Safari
- * 仍然会去滚任意可滚祖先 (html / body / shell-main / msg-list), 把
- * 对话区视觉上"顶上去". 用户实测能向下滑回去就是这条链在动.
+ * 仍然会去滚任意可滚祖先 (html / body / msg-list), 把对话区视觉上
+ * "顶上去". 用户实测能向下滑回去就是这条链在动.
  *
- * 把整条链锁住, Safari 找不到可滚祖先就不会滚 — 唯一保留 msg-list
- * 内部滚动让用户能浏览历史. 其他路由 (Login / Settings / Observatory)
- * 没 fixed 输入条, 不锁.
+ * AppShell 现在只是页层舞台, 不再滚动; 这里继续锁住文档级滚动,
+ * 唯一保留 msg-list 内部滚动让用户能浏览历史. 其他路由没有 fixed
+ * 输入条, 不锁.
  */
-const lockScroll = computed(() => route.name === "chat");
+const isChatRoute = computed(() => route.name === "chat");
 
 function resetChatScroll() {
   if (typeof window === "undefined") return;
@@ -85,7 +81,7 @@ function resetChatScroll() {
 }
 
 watch(
-  lockScroll,
+  isChatRoute,
   (locked) => {
     if (typeof document === "undefined") return;
     if (locked) {
@@ -110,94 +106,111 @@ const drawerOpen = ref(false);
 .app-shell {
   display: flex;
   flex-direction: column;
+  position: relative;
   /*
    * 100% 链自 html/body { height: 100% } + body { min-height: 100svh }.
    * 不再写 100dvh / 100vh — dvh 在 iOS 地址栏抖动时会重算, 整页跟着抖.
    * svh 锁在最小可见高度, 整个 app-shell 高度纹丝不动.
-   */
+  */
   min-height: 100%;
 }
-.shell-bar {
-  position: sticky;
+
+.shell-chrome {
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 20;
-  background: linear-gradient(
-    to bottom,
-    rgb(var(--color-bg) / 0.86),
-    rgb(var(--color-bg) / 0.55)
-  );
-  backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
-}
-.shell-bar__inner {
-  display: grid;
-  grid-template-columns: 44px 1fr 44px;
-  align-items: center;
-  gap: 8px;
-  height: 56px;
-  padding: 0 10px;
-}
-.shell-title-wrap {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
 }
-.shell-title {
-  font-size: clamp(22px, 6vw, 26px);
-  letter-spacing: var(--track-poem);
-  color: rgb(var(--color-ink));
-  line-height: 1;
-  margin: 0;
-}
-.shell-sub {
-  font-size: 10px;
-  letter-spacing: var(--track-fn);
-  color: rgb(var(--color-ink-soft));
-  line-height: 1;
+.shell-chrome .icon-btn {
+  margin: 10px;
+  pointer-events: auto;
+  background: rgb(var(--color-bg-veil) / 0.38);
+  border: 1px solid rgb(var(--color-ink) / 0.045);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 0.1),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 
 .shell-main {
   flex: 1;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   /*
-   * 默认: 可滚动 (Settings / Observatory 等需要 shell 自己滚).
-   * 聊天路由叠 .shell-main--lock 锁住 — 见下面注释和 AppShell 脚本中的
-   * lockScroll 计算属性.
+   * 页层自己持有滚动 (Observatory / Settings), shell-main 只做舞台。
+   * 这样 route transition 能把旧页留在底层淡出, 不再依赖外层滚动容器
+   * 的高度重排。
    */
-  overflow-y: auto;
   overscroll-behavior: contain;
   min-height: 0;
 }
-/*
- * 聊天路由专用: 锁住 shell-main 的滚动.
- *
- * 历来 shell-main 一律可滚. 但聊天页有个特殊情况 — composer 是 position:
- * fixed, iOS Safari 在用户聚焦其内的 textarea 时会沿"最近可滚祖先"链做
- * scrollIntoView, 把 shell-main 滚一段距离, 看起来就是"对话区被向上顶,
- * 下方多出空白". 用户实测能"向下滑回去"—证明就是 shell-main 在被滚.
- *
- * 锁住后, Safari 找不到可滚祖先, 焦点元素 (composer/textarea) 已经
- * 在 fixed 位置可见, 不会被滚. msg-list 仍然内部可滚, 用户的对话浏览
- * 不受影响.
- */
-.shell-main--lock {
-  overflow: hidden;
+.shell-chrome-enter-active,
+.shell-chrome-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-stand),
+    transform var(--dur-base) var(--ease-stand);
+  will-change: opacity;
+}
+.shell-chrome-enter-from,
+.shell-chrome-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.shell-chrome-leave-active {
+  position: absolute;
+  inset: 0 0 auto 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-chrome-enter-active,
+  .shell-chrome-leave-active {
+    transition: none;
+  }
 }
 
 /*
- * 路由切换 (mode="out-in"):
- *   leave 用 fast 档 — 旧页快速让位, 用户不至于觉得"卡了一下";
- *   enter 用 slow 档 — 新页舒展入场, 与子树自身的入场感保持一致;
- *   transform 距离 6px (原来 10px), 在窄屏上更克制不"晃"。
+ * 页层切换: 不走 out-in, 新旧页同时存在一小段时间。
+ * 旧页在底层轻微失焦, 新页从更近的层进入, 避免顶部栏/输入框硬切。
  */
-.fade-up-enter-active {
-  transition: opacity var(--dur-slow) var(--ease-stand),
-              transform var(--dur-slow) var(--ease-stand);
+.page-layer-enter-active,
+.page-layer-leave-active {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  transition:
+    opacity var(--dur-slow) var(--ease-stand),
+    transform var(--dur-slow) var(--ease-stand),
+    filter var(--dur-slow) var(--ease-stand);
+  will-change: opacity, transform, filter;
 }
-.fade-up-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-stand),
-              transform var(--dur-fast) var(--ease-stand);
+.page-layer-enter-active {
+  z-index: 1;
 }
-.fade-up-enter-from { opacity: 0; transform: translateY(6px); }
-.fade-up-leave-to { opacity: 0; transform: translateY(-3px); }
+.page-layer-leave-active {
+  z-index: 0;
+  pointer-events: none;
+}
+.page-layer-enter-from {
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(10px) scale(0.985);
+}
+.page-layer-leave-to {
+  opacity: 0;
+  filter: blur(4px);
+  transform: translateY(-4px) scale(1.01);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-layer-enter-active,
+  .page-layer-leave-active {
+    transition: none;
+    filter: none;
+    transform: none;
+  }
+}
 </style>

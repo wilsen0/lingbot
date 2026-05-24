@@ -50,7 +50,11 @@ async def _authorize(ws: WebSocket, token: str | None) -> tuple[dict[str, Any], 
 
 
 @router.websocket("/ws/events")
-async def events_ws(ws: WebSocket, token: str = Query(default="")) -> None:
+async def events_ws(
+    ws: WebSocket,
+    token: str = Query(default=""),
+    mine: bool = Query(default=False),
+) -> None:
     await ws.accept()
     claims, visible = await _authorize(ws, token)
     if not claims:
@@ -58,6 +62,7 @@ async def events_ws(ws: WebSocket, token: str = Query(default="")) -> None:
 
     state = ws.app.state.runtime
     config = ws.app.state.config
+    username = str(claims.get("sub", ""))
 
     # Determine initial target bot set; auto-create buffers for registered bots
     # so that later publishes also flow to this client.
@@ -75,11 +80,15 @@ async def events_ws(ws: WebSocket, token: str = Query(default="")) -> None:
 
     send_lock = asyncio.Lock()
 
-    async def deliver(buffered: BufferedEvent, bot_id: str) -> None:
+    async def deliver(buffered: BufferedEvent, bot_id: str) -> bool:
+        if mine and buffered.event.sender.id != username:
+            return False
         envelope = _to_envelope(buffered).model_dump()
         async with send_lock:
             with contextlib.suppress(Exception):
                 await ws.send_json({"t": "event", "bot_id": bot_id, "data": envelope})
+                return True
+        return False
 
     # Subscribe to live updates on all target buffers.
     unsubscribes: list[Callable[[], None]] = []
@@ -139,8 +148,8 @@ async def events_ws(ws: WebSocket, token: str = Query(default="")) -> None:
                             continue
                         items = await buf.tail(since_seq=int(since_seq), limit=buf.capacity)
                         for it in items:
-                            await deliver(it, bid)
-                            replayed += 1
+                            if await deliver(it, bid):
+                                replayed += 1
                 async with send_lock:
                     await ws.send_json({"t": "filter_ack", "replayed": replayed})
                 continue

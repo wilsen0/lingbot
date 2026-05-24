@@ -185,9 +185,9 @@
    *   --track-poem 标题楷书 / 题辞
    *   --track-meta 弱辅助说明
    */
-  --track-fn:   0.08em;
-  --track-poem: 0.32em;
-  --track-meta: 0.18em;
+  --track-fn:   0.06em;
+  --track-poem: 0.24em;
+  --track-meta: 0.12em;
 
   /*
    * 背景图（生图模型出的"苦情树下"画面）。

@@ -1,10 +1,5 @@
 <template>
-  <div
-    v-if="visible"
-    class="suggest"
-    role="listbox"
-    :aria-label="ariaLabel"
-  >
+  <div v-if="visible" class="suggest" role="listbox" :aria-label="ariaLabel">
     <ul class="suggest__list">
       <li
         v-for="(item, idx) in results"
@@ -22,15 +17,11 @@
             <template v-else>{{ seg.text }}</template>
           </template>
         </span>
-        <span
-          v-if="item.has_args"
-          class="suggest__hint font-display"
-          aria-hidden="true"
-        >续</span>
+        <span v-if="item.has_args" class="suggest__hint font-display" aria-hidden="true">参数</span>
       </li>
     </ul>
     <p v-if="results.length" class="suggest__foot font-display" aria-hidden="true">
-      ↑↓ 择 · ⏎ 寄 · Esc 隐
+      ↑↓ 选择 · Enter 发送 · Esc 关闭
     </p>
   </div>
 </template>
@@ -110,21 +101,33 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   transform: translateX(-50%);
   bottom: 100%;
   margin-bottom: 6px;
-  width: min(calc(100% - 2 * var(--pad-x)), 720px);
-  max-width: 720px;
+  width: min(calc(100% - 2 * var(--pad-x)), 780px);
+  max-width: 780px;
   pointer-events: auto;
-  background: rgb(var(--color-bg-veil) / 0.94);
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.98) 0%, rgb(var(--color-bg-veil) / 0.9) 100%);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgb(var(--color-thread) / 0.12);
   border-radius: var(--radius-paper);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / .25),
-    0 12px 28px rgb(0 0 0 / .18),
-    inset 0 1px 0 rgb(255 255 255 / .08);
-  padding: 6px;
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 16px 36px rgb(0 0 0 / 0.2),
+    inset 0 1px 0 rgb(255 255 255 / 0.1);
+  padding: 7px;
   z-index: 11;
   animation: var(--motion-fade-in-up);
   overflow: hidden;
+}
+.suggest::before {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgb(var(--color-bell) / 0.42), transparent);
+  pointer-events: none;
 }
 .suggest__list {
   list-style: none;
@@ -132,10 +135,7 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   padding: 0;
   max-height: max(
     96px,
-    min(
-      36vh,
-      calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 112px)
-    )
+    min(36vh, calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 112px))
   );
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -151,20 +151,22 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border-radius: calc(var(--radius-paper) - 4px);
   color: rgb(var(--color-ink));
   cursor: pointer;
   font-size: 14px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   line-height: 1.4;
-  transition: background var(--dur-fast) ease,
-              color var(--dur-fast) ease;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
 }
 .suggest__item:hover,
 .suggest__item.is-active {
-  background: rgb(var(--color-thread) / 0.16);
+  background: linear-gradient(90deg, rgb(var(--color-thread) / 0.16), rgb(var(--color-sorrow) / 0.1));
   color: rgb(var(--color-sorrow));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 .suggest__label {
   flex: 1;
@@ -181,11 +183,12 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
 .suggest__hint {
   flex-shrink: 0;
   font-size: 11px;
-  letter-spacing: 0.32em;
+  letter-spacing: 0.14em;
   color: rgb(var(--color-ink-soft));
-  padding: 1px 6px;
-  background: rgb(var(--color-ink) / 0.05);
-  border-radius: 4px;
+  padding: 2px 7px;
+  background: rgb(var(--color-bg) / 0.22);
+  border: 1px solid rgb(var(--color-ink) / 0.05);
+  border-radius: 999px;
 }
 .suggest__item.is-active .suggest__hint {
   color: rgb(var(--color-sorrow) / 0.72);
@@ -196,25 +199,26 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   padding-top: 6px;
   border-top: 1px solid rgb(var(--color-ink) / 0.06);
   font-size: 10px;
-  letter-spacing: 0.32em;
+  letter-spacing: 0.14em;
   color: rgb(var(--color-ink-soft));
   text-align: right;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .suggest { animation: none; }
+  .suggest {
+    animation: none;
+  }
 }
 
 @media (max-width: 480px) {
   .suggest__list {
     max-height: max(
       88px,
-      min(
-        44vh,
-        calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 96px)
-      )
+      min(44vh, calc(100svh - var(--vv-bottom, 0px) - var(--chat-dock-h, 96px) - 96px))
     );
   }
-  .suggest__foot { display: none; }
+  .suggest__foot {
+    display: none;
+  }
 }
 </style>

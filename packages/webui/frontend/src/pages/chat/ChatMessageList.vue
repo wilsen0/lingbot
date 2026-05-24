@@ -1,29 +1,16 @@
 <template>
-  <main
-    ref="rootEl"
-    class="msg-list"
-    @scroll.passive="onScroll"
-  >
+  <main ref="rootEl" class="msg-list" @scroll.passive="onScroll">
     <div class="msg-list__center">
       <slot name="empty" />
 
       <ul class="msgs" aria-live="polite">
-        <li
-          v-for="m in messages"
-          :key="m.id"
-          class="msg"
-          :class="['msg--' + m.role]"
-        >
+        <li v-for="m in messages" :key="m.id" class="msg" :class="['msg--' + m.role]">
           <template v-if="m.role === 'tool'">
             <details class="msg-tool" :open="m.toolName === '↳ 卷'">
               <summary>
                 <DecoCompass size="sm" :spinning="isToolPending(m)" />
                 <span class="msg-tool__name font-display">
-                  {{
-                    m.toolName === "↳ 卷"
-                      ? "↳ 卷"
-                      : `掐指 · ${m.toolName ?? "工具"}`
-                  }}
+                  {{ m.toolName === "↳ 卷" ? "工具结果" : `工具 · ${m.toolName ?? "调用"}` }}
                 </span>
                 <span class="msg-tool__chevron" aria-hidden="true">›</span>
               </summary>
@@ -37,10 +24,7 @@
 
               <template v-if="m.segments && m.segments.length">
                 <template v-for="(seg, idx) in m.segments" :key="idx">
-                  <p
-                    v-if="seg.kind === 'text' && seg.text"
-                    class="bubble__text"
-                  >
+                  <p v-if="seg.kind === 'text' && seg.text" class="bubble__text">
                     {{ seg.text }}
                   </p>
                   <img
@@ -80,7 +64,7 @@
         <li v-if="streaming && !lastIsStreamingAssistant" class="msg msg--assistant">
           <article class="bubble bubble--loading">
             <DecoBellLoader size="sm" />
-            <span class="bubble__hint">正在牵线……</span>
+            <span class="bubble__hint">正在回复…</span>
           </article>
         </li>
       </ul>
@@ -162,8 +146,7 @@ function scrollToBottom(force = false) {
 function onScroll() {
   const el = rootEl.value;
   if (!el) return;
-  stickToBottom.value =
-    el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 }
 
 function onImgError(ev: Event) {
@@ -197,8 +180,13 @@ defineExpose({
   overflow-y: auto;
   display: flex;
   justify-content: center;
-  padding: var(--pad-y) var(--pad-x)
-           calc(var(--chat-dock-h, 96px) + 24px + var(--vv-bottom, 0px));
+  padding: var(--pad-y) var(--pad-x) calc(var(--chat-dock-h, 96px) + 24px + var(--vv-bottom, 0px));
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--color-bg) / 0) 0%,
+    rgb(var(--color-bg) / 0.08) 36%,
+    rgb(var(--color-bg) / 0.18) 100%
+  );
   overscroll-behavior: contain;
   /*
    * 让浏览器原生的"焦点滚到可见区"知道避开输入条 + 键盘。
@@ -209,9 +197,13 @@ defineExpose({
 }
 .msg-list__center {
   width: 100%;
-  max-width: 720px;
+  max-width: 780px;
   display: flex;
   flex-direction: column;
+  padding-inline: clamp(0px, 1vw, 12px);
+  box-shadow:
+    inset 1px 0 0 rgb(var(--color-thread) / 0.06),
+    inset -1px 0 0 rgb(var(--color-thread) / 0.06);
 }
 
 /* 消息 */
@@ -233,17 +225,23 @@ defineExpose({
   content-visibility: auto;
   contain-intrinsic-size: 0 80px;
 }
-.msg--user      { justify-content: flex-end; }
-.msg--assistant { justify-content: flex-start; }
-.msg--tool      { justify-content: center; }
+.msg--user {
+  justify-content: flex-end;
+}
+.msg--assistant {
+  justify-content: flex-start;
+}
+.msg--tool {
+  justify-content: center;
+}
 
 .bubble {
   position: relative;
-  max-width: min(86%, 640px);
+  max-width: min(84%, 660px);
   padding: 12px 18px;
   font-size: 15px;
   line-height: 1.72;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   color: rgb(var(--color-ink));
   /*
    * 气泡数量随对话长度线性增加, 每个 backdrop-filter 区域在动态底图上
@@ -253,29 +251,32 @@ defineExpose({
    */
   background: linear-gradient(
     180deg,
-    rgb(var(--color-bg-veil) / 0.94) 0%,
-    rgb(var(--color-bg-veil) / 0.88) 100%
+    rgb(var(--color-bg-veil) / 0.98) 0%,
+    rgb(var(--color-bg-veil) / 0.86) 100%
   );
+  border: 1px solid rgb(var(--color-ink) / 0.055);
   border-radius: var(--radius-paper);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / .2),
-    0 14px 36px rgb(0 0 0 / .14),
-    inset 0 1px 0 rgb(255 255 255 / .12),
-    inset 0 0 0 1px rgb(255 255 255 / .04);
+    0 1px 2px rgb(0 0 0 / 0.2),
+    0 16px 38px rgb(0 0 0 / 0.16),
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.04);
   animation: var(--motion-fade-in-up);
 }
 .msg--user .bubble {
   background: linear-gradient(
     135deg,
-    rgb(var(--color-sorrow) / 0.52),
-    rgb(var(--color-sakura-2) / 0.4)
+    rgb(var(--color-sorrow) / 0.62) 0%,
+    rgb(var(--color-thread) / 0.46) 58%,
+    rgb(var(--color-bell) / 0.18) 100%
   );
   color: rgb(var(--color-ink));
+  border-color: rgb(var(--color-bell) / 0.16);
   border-radius: 22px 14px 24px 14px;
   box-shadow:
-    0 1px 2px rgb(0 0 0 / .22),
-    0 14px 36px rgb(var(--color-sorrow) / .22),
-    inset 0 1px 0 rgb(255 255 255 / .14);
+    0 1px 2px rgb(0 0 0 / 0.22),
+    0 16px 40px rgb(var(--color-sorrow) / 0.22),
+    inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 .bubble__corner {
@@ -283,14 +284,14 @@ defineExpose({
   width: 10px;
   height: 10px;
   pointer-events: none;
-  opacity: .85;
+  opacity: 0.62;
 }
 .bubble__corner--tl {
   top: 0;
   left: 0;
   background: linear-gradient(
     135deg,
-    rgb(var(--color-thread) / .55) 0%,
+    rgb(var(--color-thread) / 0.55) 0%,
     rgb(var(--color-thread) / 0) 70%
   );
   border-top-left-radius: 2px;
@@ -300,7 +301,7 @@ defineExpose({
   right: 0;
   background: linear-gradient(
     315deg,
-    rgb(var(--color-bell) / .45) 0%,
+    rgb(var(--color-bell) / 0.45) 0%,
     rgb(var(--color-bell) / 0) 70%
   );
   border-bottom-right-radius: 2px;
@@ -308,7 +309,7 @@ defineExpose({
 .msg--user .bubble .bubble__corner--tl {
   background: linear-gradient(
     135deg,
-    rgb(var(--color-bell) / .55) 0%,
+    rgb(var(--color-bell) / 0.55) 0%,
     rgb(var(--color-bell) / 0) 70%
   );
 }
@@ -329,10 +330,12 @@ defineExpose({
   height: auto;
   border-radius: 12px;
   margin: 6px 0 0;
-  box-shadow: 0 4px 12px rgb(0 0 0 / .25);
-  background: rgb(var(--color-ink) / .04);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
+  background: rgb(var(--color-ink) / 0.04);
 }
-.bubble__img:first-child { margin-top: 0; }
+.bubble__img:first-child {
+  margin-top: 0;
+}
 .bubble__img-fail {
   font-size: 12px;
   color: rgb(var(--color-ink-soft));
@@ -344,7 +347,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: rgb(var(--color-ink) / .8);
+  color: rgb(var(--color-ink) / 0.8);
 }
 .bubble__hint {
   font-family: var(--font-display);
@@ -364,17 +367,20 @@ defineExpose({
   width: 100%;
   height: 100%;
   animation: thread-glow 1.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 4px rgb(var(--color-thread) / .55));
+  filter: drop-shadow(0 0 4px rgb(var(--color-thread) / 0.55));
   transform-origin: 0% 50%;
 }
 
 .msg-tool {
-  background: rgb(var(--color-bell) / 0.16);
+  background: linear-gradient(180deg, rgb(var(--color-bell) / 0.18), rgb(var(--color-bell) / 0.08));
+  border: 1px solid rgb(var(--color-bell) / 0.16);
   border-radius: var(--radius-paper);
   padding: 10px 16px;
   max-width: 92%;
   /* tool 卡数量也随对话长度增长, 同样不能挂 backdrop-filter (见 .bubble) */
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / .04);
+  box-shadow:
+    0 10px 24px rgb(0 0 0 / 0.1),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 .msg-tool summary {
   cursor: pointer;
@@ -387,15 +393,21 @@ defineExpose({
   color: rgb(var(--color-bell));
   letter-spacing: var(--track-meta);
 }
-.msg-tool summary::-webkit-details-marker { display: none; }
-.msg-tool__name { line-height: 1; }
+.msg-tool summary::-webkit-details-marker {
+  display: none;
+}
+.msg-tool__name {
+  line-height: 1;
+}
 .msg-tool__chevron {
   font-family: var(--font-display);
   color: rgb(var(--color-ink-soft));
   font-size: 16px;
   transition: transform var(--dur-base) var(--ease-stand);
 }
-.msg-tool[open] .msg-tool__chevron { transform: rotate(90deg); }
+.msg-tool[open] .msg-tool__chevron {
+  transform: rotate(90deg);
+}
 .msg-tool__body {
   margin: 8px 0 0;
   font-family: var(--font-mono);
@@ -410,6 +422,9 @@ defineExpose({
 }
 
 @media (max-width: 420px) {
-  .bubble { font-size: 14.5px; padding: 11px 16px; }
+  .bubble {
+    font-size: 14.5px;
+    padding: 11px 16px;
+  }
 }
 </style>

@@ -54,9 +54,7 @@ export function useConversation() {
   /** 当前会话连接到的 agent 名 — close 时和 stream 一起置 null */
   const currentAgent = ref<string | null>(null);
 
-  const status = computed(() =>
-    stream ? stream.status.value : ("closed" as const),
-  );
+  const status = computed(() => (stream ? stream.status.value : ("closed" as const)));
 
   let msgIdCounter = 1;
   function nextId() {
@@ -116,11 +114,7 @@ export function useConversation() {
           cur.streaming = false;
           if (meta?.segments?.length) {
             cur.segments = meta.segments
-              .filter(
-                (s) =>
-                  (s.kind === "text" && s.text) ||
-                  (s.kind === "image" && s.url),
-              )
+              .filter((s) => (s.kind === "text" && s.text) || (s.kind === "image" && s.url))
               .map((s) => ({
                 kind: s.kind,
                 text: s.text ?? "",
@@ -186,7 +180,7 @@ export function useConversation() {
           case "error":
             queue.abortAssistant();
             streaming.value = false;
-            toast.error("红娘今日不语", msg.msg);
+            toast.error("助手暂时没有回应", msg.msg);
             return;
         }
       },
@@ -219,7 +213,7 @@ export function useConversation() {
       return true;
     } catch (e) {
       streaming.value = false;
-      toast.error("红线未牵", (e as Error).message || "WebSocket 未就绪");
+      toast.error("连接未就绪", (e as Error).message || "请稍后再试");
       return false;
     }
   }

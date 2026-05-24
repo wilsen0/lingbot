@@ -1,8 +1,8 @@
 <template>
   <UiSheet
     :open="open"
-    title="择一红娘"
-    subtitle="按一下名字即可换人"
+    title="选择助手"
+    subtitle="点一下名字即可切换"
     @update:open="$emit('update:open', $event)"
   >
     <ul v-if="agents.length" class="picker">
@@ -20,15 +20,15 @@
             v-if="a.name === currentName"
             class="picker__current font-display"
             aria-hidden="true"
-          >在</span>
+            >当前</span
+          >
         </button>
       </li>
     </ul>
 
     <UiEmptyState v-else variant="compact">
-      <template #title>树上尚无红娘</template>
-      在 <code>bot.yaml</code> 的 <code>agent.default_agent</code> 指向一份
-      <code>agents/*.yaml</code> 即可。
+      <template #title>暂无可用助手</template>
+      接入助手后，就可以在这里切换。
     </UiEmptyState>
   </UiSheet>
 </template>
@@ -62,21 +62,32 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 16px 8px;
+  padding: 14px 10px;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   width: 100%;
   cursor: pointer;
   color: rgb(var(--color-ink));
   text-align: left;
   border-radius: var(--radius-seal);
-  transition: color var(--dur-fast) ease,
-              transform var(--dur-tap) var(--ease-tap),
-              background var(--dur-fast) ease;
+  transition:
+    color var(--dur-fast) ease,
+    transform var(--dur-tap) var(--ease-tap),
+    background var(--dur-fast) ease;
 }
-.picker__row:hover { background: rgb(var(--color-ink) / .04); }
-.picker__row:active { transform: translateX(2px); }
-.picker__row.is-active { color: rgb(var(--color-sorrow)); }
+.picker__row:hover {
+  background: rgb(var(--color-ink) / 0.04);
+  border-color: rgb(var(--color-ink) / 0.04);
+}
+.picker__row:active {
+  transform: translateX(2px);
+}
+.picker__row.is-active {
+  color: rgb(var(--color-sorrow));
+  background: rgb(var(--color-sorrow) / 0.08);
+  border-color: rgb(var(--color-sorrow) / 0.12);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
 .picker__mark {
   font-size: 20px;
   color: rgb(var(--color-thread));
@@ -88,7 +99,7 @@ defineEmits<{
 }
 .picker__name {
   font-size: 19px;
-  letter-spacing: var(--track-poem);
+  letter-spacing: 0.14em;
 }
 .picker__meta {
   margin-top: 3px;
@@ -98,14 +109,14 @@ defineEmits<{
 }
 .picker__current {
   font-size: 14px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.1em;
   color: rgb(var(--color-sorrow));
-  padding: 2px 10px;
-  background: rgb(var(--color-sorrow) / .12);
+  padding: 3px 10px;
+  background: rgb(var(--color-sorrow) / 0.12);
   border-radius: var(--radius-seal);
 }
 code {
-  background: rgb(var(--color-ink) / .06);
+  background: rgb(var(--color-ink) / 0.06);
   padding: 1px 6px;
   border-radius: 4px;
   font-family: var(--font-mono);

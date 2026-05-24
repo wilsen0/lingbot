@@ -104,10 +104,10 @@ function onClick(ev: MouseEvent) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   font-family: var(--font-sans);
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-decoration: none;
   cursor: pointer;
   border: 0;
@@ -141,7 +141,7 @@ function onClick(ev: MouseEvent) {
   padding: 12px 26px;
   font-size: 16px;
   min-height: 50px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.12em;
 }
 
 /* ===== 文字型（无背景，仅色差 + 前墨点） ===== */
@@ -175,16 +175,16 @@ function onClick(ev: MouseEvent) {
 
 /* ===== 实色型 · primary 作为主动作 ===== */
 .brush-btn--primary {
-  background: rgb(var(--color-sorrow));
+  background: linear-gradient(180deg, rgb(var(--color-sorrow)) 0%, rgb(var(--color-thread)) 100%);
   color: rgb(var(--color-bg));
   border-radius: var(--radius-seal);
   box-shadow:
-    0 1px 0 rgb(0 0 0 / .08) inset,
-    0 -1px 0 rgb(var(--color-thread) / .5) inset,
-    0 4px 14px rgb(var(--color-sorrow) / .22);
+    0 1px 0 rgb(255 255 255 / .12) inset,
+    0 -1px 0 rgb(0 0 0 / .08) inset,
+    0 8px 20px rgb(var(--color-sorrow) / .24);
 }
 .brush-btn--primary:hover:not(:disabled) {
-  filter: brightness(1.04);
+  filter: brightness(1.03);
 }
 
 /* 收笔印记：primary 右下角有一个小墨点，模拟提笔时的"钩" */
@@ -201,20 +201,24 @@ function onClick(ev: MouseEvent) {
 }
 
 .brush-btn--danger {
-  background: rgb(var(--color-alert));
+  background: linear-gradient(180deg, rgb(var(--color-alert)) 0%, rgb(var(--color-sorrow)) 100%);
   color: rgb(var(--color-bg));
   border-radius: var(--radius-seal);
-  box-shadow: 0 4px 14px rgb(var(--color-alert) / .3);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / .12) inset,
+    0 8px 20px rgb(var(--color-alert) / .22);
 }
 .brush-btn--danger:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
 .brush-btn--jade {
-  background: rgb(var(--color-jade));
+  background: linear-gradient(180deg, rgb(var(--color-jade)) 0%, rgb(100 180 156) 100%);
   color: rgb(var(--color-bg));
   border-radius: var(--radius-seal);
-  box-shadow: 0 4px 14px rgb(var(--color-jade) / .22);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / .12) inset,
+    0 8px 20px rgb(var(--color-jade) / .2);
 }
 .brush-btn--jade:hover:not(:disabled) {
   filter: brightness(1.05);

@@ -22,17 +22,15 @@
       <template #empty>
         <div v-if="!messages.length && !streaming" class="chat__empty">
           <p class="chat__empty-poem font-display">
-            <template v-if="currentAgent">— 说一句，铃自响 —</template>
-            <template v-else-if="loadingAgents">— 正请红娘 —</template>
-            <template v-else>— 此处尚无红娘 —</template>
+            <template v-if="currentAgent">开始聊天</template>
+            <template v-else-if="loadingAgents">正在加载助手</template>
+            <template v-else>尚未接入助手</template>
           </p>
           <p v-if="!currentAgent && !loadingAgents" class="chat__empty-hint">
-            在 <code>bot.yaml</code> 的
-            <code>agent.default_agent</code>
-            指向一份 <code>agents/*.yaml</code>，再 <code>linling run</code>。
+            当前还没有可用助手。接入助手后即可开始对话。
           </p>
           <p v-else-if="currentAgent" class="chat__empty-hint">
-            <kbd>⏎</kbd> 寄一句 · <kbd>⇧</kbd>+<kbd>⏎</kbd> 续语 · <kbd>Esc</kbd> 退出
+            <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 关闭候选
           </p>
         </div>
       </template>
@@ -42,7 +40,7 @@
       ref="composerRef"
       :disabled="!currentAgent"
       :streaming="streaming"
-      :placeholder="currentAgent ? '言於此' : '未见红娘'"
+      :placeholder="currentAgent ? '输入消息' : '尚未接入助手'"
       :agent-name="currentAgentName"
       @submit="onComposerSubmit"
       @cancel="cancel"
@@ -55,11 +53,7 @@
       @pick="onPickAgent"
     />
 
-    <ChatScopeSheet
-      v-model:open="scopeOpen"
-      :current="prefs.scope"
-      @apply="onScopeApply"
-    />
+    <ChatScopeSheet v-model:open="scopeOpen" :current="prefs.scope" @apply="onScopeApply" />
   </div>
 </template>
 
@@ -67,10 +61,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { listAgents, type AgentSummary } from "@/api/agents";
-import {
-  confirmDestructive,
-  confirmReroute,
-} from "@/composables/useConfirm";
+import { confirmDestructive, confirmReroute } from "@/composables/useConfirm";
 import { toast } from "@/composables/useToast";
 import { usePrefsStore } from "@/store/prefs";
 
@@ -103,21 +94,13 @@ defineEmits<(e: "open-drawer") => void>();
 const prefs = usePrefsStore();
 // 解构 — 让模板可以直接写 messages / streaming, 自动解 ref;
 // 否则 conv.messages 在模板里是 Ref 本身, 要 conv.messages.value, 重复且易错。
-const {
-  messages,
-  streaming,
-  newMsgToken,
-  openFor,
-  send,
-  cancel,
-  reset,
-} = useConversation();
+const { messages, streaming, newMsgToken, openFor, send, cancel, reset } = useConversation();
 
 const agents = ref<AgentSummary[]>([]);
 const loadingAgents = ref(true);
 const currentAgentName = ref<string | null>(null);
-const currentAgent = computed(() =>
-  agents.value.find((a) => a.name === currentAgentName.value) ?? null,
+const currentAgent = computed(
+  () => agents.value.find((a) => a.name === currentAgentName.value) ?? null,
 );
 
 const agentPickerOpen = ref(false);
@@ -129,7 +112,7 @@ const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null);
 function onAgentClick() {
   if (!agents.value.length) return;
   if (agents.value.length === 1) {
-    toast.info("树上仅此一位", agents.value[0].name);
+    toast.info("当前只有一个助手", agents.value[0].name);
     return;
   }
   agentPickerOpen.value = true;
@@ -138,10 +121,7 @@ function onAgentClick() {
 async function onResetClick() {
   if (!currentAgent.value) return;
   if (!messages.value.length && !streaming.value) return;
-  const ok = await confirmDestructive(
-    "焚此缘",
-    "焚后此对话不复，红线另结一段。",
-  );
+  const ok = await confirmDestructive("清空对话", "清空后这段内容将无法恢复。", "清空");
   if (!ok) return;
   reset();
   composerRef.value?.clear();
@@ -154,10 +134,7 @@ async function onPickAgent(name: string) {
     return;
   }
   if (messages.value.length > 0) {
-    const ok = await confirmReroute(
-      "另结一段",
-      "此对话将焚于风中。",
-    );
+    const ok = await confirmReroute("切换助手", "当前对话会先清空，再切到新的助手。", "切换");
     if (!ok) return;
   }
   currentAgentName.value = name;
@@ -165,16 +142,13 @@ async function onPickAgent(name: string) {
   reset();
   composerRef.value?.clear();
   openFor(name);
-  toast.info("已换人", name);
+  toast.info("已切换助手", name);
 }
 
 function onScopeApply(value: string) {
   prefs.setScope(value);
   scopeOpen.value = false;
-  toast.info(
-    value ? "已切换测试场景" : "已恢复默认",
-    value || "你的账号",
-  );
+  toast.info(value ? "已切换测试场景" : "已恢复默认", value || "你的账号");
 }
 
 async function onComposerSubmit(text: string) {
@@ -189,9 +163,7 @@ function onShortcut(ev: KeyboardEvent) {
   const target = ev.target as HTMLElement | null;
   const typing =
     target &&
-    (target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.isContentEditable);
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 
   if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
     ev.preventDefault();
@@ -252,28 +224,36 @@ onBeforeUnmount(() => {
   animation: var(--motion-fade-in-up);
   text-align: center;
 }
+.chat__empty::before {
+  content: "";
+  width: 72px;
+  height: 1px;
+  margin-bottom: 2px;
+  background: linear-gradient(to right, transparent, rgb(var(--color-thread) / 0.5), transparent);
+  filter: drop-shadow(0 1px 2px rgb(var(--color-thread) / 0.25));
+}
 .chat__empty-poem {
   font-size: clamp(15px, 4vw, 18px);
-  letter-spacing: 0.45em;
-  color: rgb(var(--color-ink) / .9);
+  letter-spacing: 0.22em;
+  color: rgb(var(--color-ink) / 0.9);
   /* 浅色主题用浅墨 + 朱影; 深色主题保留黑色阴影 */
-  text-shadow: 0 1px 2px rgb(var(--color-sorrow) / .15);
+  text-shadow: 0 1px 2px rgb(var(--color-sorrow) / 0.15);
   padding: 0 12px;
 }
 :root[data-theme="dark"] .chat__empty-poem,
 :root[data-theme="auto"] .chat__empty-poem {
-  text-shadow: 0 2px 6px rgb(0 0 0 / .5);
+  text-shadow: 0 2px 6px rgb(0 0 0 / 0.5);
 }
 .chat__empty-hint {
   font-size: 12px;
   letter-spacing: var(--track-meta);
-  color: rgb(var(--color-ink-soft));
+  color: rgb(var(--color-ink) / 0.88);
   text-align: center;
   max-width: 28em;
   line-height: 1.7;
 }
 .chat__empty-hint code {
-  background: rgb(var(--color-ink) / .06);
+  background: rgb(var(--color-ink) / 0.06);
   padding: 1px 6px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -284,7 +264,7 @@ onBeforeUnmount(() => {
 .chat__empty-hint kbd {
   display: inline-block;
   padding: 1px 6px;
-  background: rgb(var(--color-ink) / .08);
+  background: rgb(var(--color-ink) / 0.08);
   border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 10px;

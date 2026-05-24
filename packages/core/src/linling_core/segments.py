@@ -161,3 +161,30 @@ def reply(message_id: str) -> ReplySegment:
 def plain_text(segments: list[Segment]) -> str:
     """Concatenate all ``TextSegment``s; useful for regex matching."""
     return "".join(s.text for s in segments if isinstance(s, TextSegment))
+
+
+def match_text(segments: list[Segment]) -> str:
+    """Build a *trigger-matching* view of ``segments``.
+
+    Like :func:`plain_text` but also re-projects ``AtSegment`` mentions
+    back into the string as ``@<user_id>`` tokens, in segment order.
+    This is what classifier-style regex triggers want: a QQ user typing
+    ``赠送大飞龙@小苏苏`` arrives as
+    ``[TextSegment("赠送大飞龙"), AtSegment(user_id="…")]`` over OneBot,
+    with the literal ``@<id>`` no longer in any text segment. Triggers
+    such as ``赠送大飞龙@.*`` (and ~60 others in the migrated QRDic
+    rule set) author the ``@`` literally and rely on it being there;
+    without this re-projection they never match.
+
+    LLM-visible callers (chat dispatch, group batching, audit / UI
+    surfaces, the DSL's ``%参数-1%`` / ``%参数N%`` resolvers) keep
+    using :func:`plain_text` so AT user-ids never leak into chat
+    history, audit logs, or rendered UIs.
+    """
+    parts: list[str] = []
+    for seg in segments:
+        if isinstance(seg, TextSegment):
+            parts.append(seg.text)
+        elif isinstance(seg, AtSegment):
+            parts.append(f"@{seg.user_id}")
+    return "".join(parts)

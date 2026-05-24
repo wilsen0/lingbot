@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from linling_core.segments import Segment, plain_text
+from linling_core.segments import Segment, match_text, plain_text
 
 
 class Scope(BaseModel):
@@ -71,6 +71,23 @@ class Event(BaseModel):
     def text(self) -> str:
         """Concatenation of all text segments; useful for regex triggers."""
         return plain_text(self.segments)
+
+    @property
+    def match_text(self) -> str:
+        """Trigger-matching view that re-projects ``@user_id`` mentions.
+
+        OneBot delivers ``赠送大飞龙@<user>`` as
+        ``[TextSegment("赠送大飞龙"), AtSegment(user_id="…")]``; the bare
+        ``@`` is no longer in any text segment. QRDic-era triggers like
+        ``赠送大飞龙@.*`` author the ``@`` literally and would never
+        match against :attr:`text` alone. This view stitches the
+        ``@<user_id>`` back in (in segment order) so the classifier and
+        the Router's built-in command detection can match the raw
+        author intent. LLM-visible surfaces (chat dispatch, group
+        batching, audit, UI) keep using :attr:`text` so AT user-ids
+        don't leak into those streams.
+        """
+        return match_text(self.segments)
 
     @property
     def is_group(self) -> bool:

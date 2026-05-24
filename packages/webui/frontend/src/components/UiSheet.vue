@@ -117,31 +117,38 @@ function onDragEnd() {
   /* 90% of viewport — svh 锁住"最小可见", 不会因为地址栏开合而变.
    * dvh 在 iOS 滚动时会重算, sheet 高度跟着抖. */
   max-height: 90svh;
-  background: rgb(var(--color-bg-veil) / 0.96);
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.98) 0%, rgb(var(--color-bg-veil) / 0.92) 100%);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-top: 1px solid rgb(var(--color-thread) / 0.18);
+  border-left: 1px solid rgb(var(--color-thread) / 0.08);
+  border-right: 1px solid rgb(var(--color-thread) / 0.08);
   border-top-left-radius: var(--radius-xl);
   border-top-right-radius: var(--radius-xl);
   padding: 10px 20px calc(env(safe-area-inset-bottom, 0) + 16px) 20px;
-  box-shadow: 0 -8px 32px rgb(0 0 0 / .35), 0 -2px 6px rgb(0 0 0 / .1);
+  box-shadow:
+    0 -12px 36px rgb(0 0 0 / .34),
+    0 1px 0 rgb(255 255 255 / .05) inset,
+    0 18px 36px rgb(0 0 0 / .08);
   transform: translateY(var(--drag-y, 0));
   overflow-y: auto;
   overscroll-behavior: contain;
   outline: none;
 }
 .ui-sheet-handle {
-  width: 40px;
+  width: 44px;
   height: 4px;
-  border-radius: 2px;
-  background: rgb(var(--color-ink-soft) / 0.3);
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgb(var(--color-thread) / 0.35), transparent);
   margin: 4px auto 12px;
 }
 .ui-sheet-header {
   margin-bottom: 12px;
 }
 .ui-sheet-title {
-  font-size: 18px;
-  letter-spacing: var(--track-poem);
+  font-size: 17px;
+  letter-spacing: 0.18em;
   color: rgb(var(--color-ink));
   margin: 0;
 }
@@ -149,7 +156,7 @@ function onDragEnd() {
   margin-top: 4px;
   font-size: 12px;
   color: rgb(var(--color-ink-soft));
-  letter-spacing: var(--track-meta);
+  letter-spacing: 0.08em;
 }
 .ui-sheet-footer {
   margin-top: 16px;
