@@ -35,7 +35,11 @@ test.describe("登录 → 对话 → 菜单导航", () => {
     await page.getByRole("button", { name: "菜单" }).click();
     await page.getByRole("link", { name: /观测/ }).click();
     await page.getByRole("tab", { name: /资产/ }).click();
-    await expect(page.locator(".asset-panel--mine").getByText("灵玉余额").first()).toBeVisible({
+    await expect(page.getByRole("tab", { name: /财富榜/ })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /实力榜/ })).toBeVisible();
+    await page.getByRole("tab", { name: /财富榜/ }).click();
+    await expect(page.getByRole("heading", { name: /财富榜/ })).toBeVisible();
+    await expect(page.locator(".asset-panel--stats").getByText("节日礼包").first()).toBeVisible({
       timeout: 8_000,
     });
   });

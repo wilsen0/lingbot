@@ -67,7 +67,12 @@ def main() -> None:
         for k, v in [("alice", "10"), ("bob", "7"), ("carol", "3"), ("dave", "21")]:
             await kv.write("榜", "分数", k, v)
         await kv.write("啊/灵玉系", "灵玉", "e2e", "128")
+        await kv.write("啊/禁言系", "妖力", "e2e", "64")
+        await kv.write("啊/节日系", "节日礼包", "e2e", "2")
+        await kv.write("啊/活动系", "玫瑰花", "e2e", "3")
+        await kv.write("啊/活动系", "锦囊", "e2e", "1")
         await kv.write("休闲系/珍品", "气球", "e2e", "2")
+        await kv.write("休闲系/珍品", "小豆芽", "e2e", "1")
 
     asyncio.run(_seed())
 

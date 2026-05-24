@@ -1,32 +1,37 @@
 <template>
   <div class="obs-pane asset-stage" role="tabpanel">
-    <UiEmptyState v-if="loadingNs" variant="compact">正在加载资产……</UiEmptyState>
+    <UiEmptyState v-if="loadingNs" variant="compact">正在整理资产……</UiEmptyState>
     <UiEmptyState v-else-if="nsError" variant="compact">{{ nsError }}</UiEmptyState>
-    <UiEmptyState v-else-if="assets.length === 0" variant="compact">暂无资产</UiEmptyState>
+    <UiEmptyState v-else-if="assets.length === 0" variant="compact">暂无可展示资产</UiEmptyState>
 
     <div v-else class="asset-board">
       <section class="asset-panel asset-panel--mine" aria-labelledby="asset-mine-title">
         <header class="asset-panel__head">
           <span>
-            <span class="asset-panel__eyebrow">私密</span>
+            <span class="asset-panel__eyebrow">私藏</span>
             <h2 id="asset-mine-title" class="asset-panel__title">我的资产</h2>
           </span>
           <span class="asset-panel__metric font-mono">{{ mineSummary }}</span>
         </header>
 
         <ul class="mine-list" aria-label="我的资产">
-          <li v-for="asset in personalAssets" :key="asset.id" class="mine-item">
+          <li
+            v-for="asset in personalAssets"
+            :key="asset.id"
+            class="mine-item"
+            :class="{
+              'is-rank': asset.visibleInRank,
+              'is-active': asset.id === selectedRankAssetId,
+            }"
+          >
             <span class="mine-item__mark font-display" aria-hidden="true">
-              {{ asset.kind.slice(0, 1) }}
+              {{ assetBadge(asset) }}
             </span>
             <span class="mine-item__main">
               <span class="mine-item__name">{{ asset.label }}</span>
               <span class="mine-item__desc">{{ asset.description }}</span>
             </span>
-            <span
-              class="mine-item__value font-mono"
-              :class="'is-' + ownAssetStatus(asset)"
-            >
+            <span class="mine-item__value font-mono" :class="'is-' + ownAssetStatus(asset)">
               {{ ownAssetLabel(asset) }}
             </span>
           </li>
@@ -36,56 +41,41 @@
       <section class="asset-panel asset-panel--stats" aria-labelledby="asset-stats-title">
         <header class="asset-panel__head">
           <span>
-            <span class="asset-panel__eyebrow">统计</span>
-            <h2 id="asset-stats-title" class="asset-panel__title">持有人</h2>
+            <span class="asset-panel__eyebrow">公开统计</span>
+            <h2 id="asset-stats-title" class="asset-panel__title">收藏热度</h2>
           </span>
-          <span class="asset-panel__metric font-mono">{{ holderSummary }}</span>
+          <span class="asset-panel__metric font-mono">{{ collectionSummary }}</span>
         </header>
 
-        <div class="asset-filter" role="tablist" aria-label="资产分类">
-          <button
-            v-for="filter in statFilters"
-            :key="filter.key"
-            class="asset-filter__btn tap"
-            :class="{ 'is-active': activeCategory === filter.key }"
-            type="button"
-            role="tab"
-            :aria-selected="activeCategory === filter.key"
-            @click="activeCategory = filter.key"
-          >
-            {{ filter.label }}
-          </button>
+        <div class="collection-grid" aria-label="可统计的收藏资产">
+          <article v-for="asset in collectionAssets" :key="asset.id" class="collection-card">
+            <div class="collection-card__top">
+              <span class="collection-card__mark font-display" aria-hidden="true">
+                {{ assetBadge(asset) }}
+              </span>
+              <span class="collection-card__count font-mono">{{ asset.countLabel }}</span>
+            </div>
+            <div class="collection-card__body">
+              <span class="collection-card__kind">{{ asset.kind }}</span>
+              <h3 class="collection-card__label">{{ asset.label }}</h3>
+              <p class="collection-card__desc">{{ asset.description }}</p>
+            </div>
+            <div class="collection-card__bar" aria-hidden="true">
+              <span :style="{ width: collectionPercent(asset) + '%' }" />
+            </div>
+          </article>
         </div>
-
-        <ul class="holder-list" aria-label="资产持有人统计">
-          <li v-for="asset in statAssets" :key="asset.id">
-            <button
-              class="holder-row"
-              :class="{ 'is-rankable': asset.rankable }"
-              type="button"
-              :disabled="!asset.rankable"
-              @click="focusRank(asset)"
-            >
-              <span class="holder-row__main">
-                <span class="holder-row__name">{{ asset.label }}</span>
-                <span class="holder-row__kind">{{ asset.kind }}</span>
-              </span>
-              <span class="holder-row__bar" aria-hidden="true">
-                <span :style="{ width: holderPercent(asset) + '%' }" />
-              </span>
-              <span class="holder-row__count font-mono">{{ asset.count }}</span>
-            </button>
-          </li>
-        </ul>
       </section>
 
       <section class="asset-panel asset-panel--rank" aria-labelledby="asset-rank-title">
         <header class="asset-panel__head">
           <span>
-            <span class="asset-panel__eyebrow">匿名</span>
-            <h2 id="asset-rank-title" class="asset-panel__title">排行榜</h2>
+            <span class="asset-panel__eyebrow">匿名榜</span>
+            <h2 id="asset-rank-title" class="asset-panel__title">
+              {{ selectedRankAsset?.rankLabel ?? "排行榜" }}
+            </h2>
           </span>
-          <span class="asset-panel__metric">不显示身份</span>
+          <span class="asset-panel__metric">{{ selectedRankAsset?.tabLabel ?? "匿名展示" }}</span>
         </header>
 
         <div v-if="rankableAssets.length" class="rank-switch" role="tablist" aria-label="排行榜资产">
@@ -97,9 +87,11 @@
             type="button"
             role="tab"
             :aria-selected="selectedRankAssetId === asset.id"
+            :aria-label="asset.rankLabel ? `${asset.rankLabel} · ${asset.tabLabel ?? asset.label}` : asset.label"
             @click="selectedRankAssetId = asset.id"
           >
-            {{ asset.label }}
+            <span class="rank-switch__primary">{{ asset.rankLabel ?? asset.label }}</span>
+            <span class="rank-switch__secondary">{{ asset.tabLabel ?? asset.label }}</span>
           </button>
         </div>
 
@@ -108,9 +100,7 @@
         </UiEmptyState>
         <UiEmptyState v-else-if="loadingRank" variant="compact">正在读取排行……</UiEmptyState>
         <UiEmptyState v-else-if="rankError" variant="compact">{{ rankError }}</UiEmptyState>
-        <UiEmptyState v-else-if="rankRows.length === 0" variant="compact">
-          暂无排行数据
-        </UiEmptyState>
+        <UiEmptyState v-else-if="rankRows.length === 0" variant="compact">暂无排行数据</UiEmptyState>
 
         <ol v-else class="leader-list" aria-label="匿名排行榜">
           <li v-for="row in rankRows" :key="row.rank" class="leader-row">
@@ -132,18 +122,13 @@ import { computed, onActivated, ref, watch } from "vue";
 import UiEmptyState from "@/components/UiEmptyState.vue";
 import { useAuthStore } from "@/store/auth";
 
-import {
-  ASSET_CATEGORY_LABELS,
-  toAssetCards,
-  type AssetCard,
-  type AssetCategory,
-} from "./assetCatalog";
+import { toAssetCards, type AssetCard } from "./assetCatalog";
 import { useKv } from "./useKv";
-
-type StatFilter = AssetCategory | "all";
 
 const kv = useKv();
 const auth = useAuthStore();
+
+const selectedRankAssetId = ref("");
 
 const loadingNs = kv.loadingNs;
 const nsError = kv.nsError;
@@ -151,54 +136,30 @@ const loadingRank = kv.loadingRank;
 const rankError = kv.rankError;
 const rankRows = kv.rankRows;
 
-const activeCategory = ref<StatFilter>("all");
-const selectedRankAssetId = ref("");
-
 const assets = computed(() => toAssetCards(kv.ns.value));
 const ownerKey = computed(() => auth.profile?.sub ?? "");
 
 const personalAssets = computed(() => assets.value.filter((asset) => asset.ownReadable));
-const rankableAssets = computed(() => assets.value.filter((asset) => asset.rankable));
+const collectionAssets = computed(() =>
+  assets.value
+    .filter((asset) => asset.visibleInCollection)
+    .sort((a, b) => b.count - a.count || a.priority - b.priority || a.label.localeCompare(b.label, "zh-Hans-CN")),
+);
+const rankableAssets = computed(() => assets.value.filter((asset) => asset.visibleInRank));
 const selectedRankAsset = computed(
   () => rankableAssets.value.find((asset) => asset.id === selectedRankAssetId.value) ?? null,
 );
 
-const statFilters = computed<Array<{ key: StatFilter; label: string }>>(() => {
-  const present = new Set(assets.value.map((asset) => asset.category));
-  const filters: Array<{ key: StatFilter; label: string }> = [{ key: "all", label: "全部" }];
-  for (const [key, label] of Object.entries(ASSET_CATEGORY_LABELS)) {
-    if (present.has(key as AssetCategory)) {
-      filters.push({ key: key as AssetCategory, label });
-    }
-  }
-  return filters;
-});
-
-const statAssets = computed(() => {
-  const list =
-    activeCategory.value === "all"
-      ? assets.value
-      : assets.value.filter((asset) => asset.category === activeCategory.value);
-  return [...list].sort((a, b) => b.count - a.count || a.priority - b.priority);
-});
-
-const maxHolderCount = computed(() =>
-  Math.max(1, ...statAssets.value.map((asset) => asset.count)),
-);
+const collectionMaxCount = computed(() => Math.max(1, ...collectionAssets.value.map((asset) => asset.count)));
 
 const mineSummary = computed(() => {
   if (!ownerKey.value) return "未登录";
   if (kv.loadingOwn.value) return "读取中";
-  const held = personalAssets.value.filter(
-    (asset) => kv.ownValues.value[asset.id]?.status === "held",
-  ).length;
+  const held = personalAssets.value.filter((asset) => kv.ownValues.value[asset.id]?.status === "held").length;
   return `${held}/${personalAssets.value.length}`;
 });
 
-const holderSummary = computed(() => {
-  const count = statAssets.value.reduce((sum, asset) => sum + asset.count, 0);
-  return `${count.toLocaleString("zh-CN")} 条`;
-});
+const collectionSummary = computed(() => `${collectionAssets.value.length} 种`);
 
 watch(
   [assets, ownerKey],
@@ -213,16 +174,6 @@ watch(
   (authed) => {
     if (authed) {
       void kv.loadNs();
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  statFilters,
-  (filters) => {
-    if (!filters.some((filter) => filter.key === activeCategory.value)) {
-      activeCategory.value = "all";
     }
   },
   { immediate: true },
@@ -258,14 +209,12 @@ onActivated(() => {
   }
 });
 
-function focusRank(asset: AssetCard) {
-  if (asset.rankable) {
-    selectedRankAssetId.value = asset.id;
-  }
+function assetBadge(asset: AssetCard): string {
+  return (asset.kind || asset.label).slice(0, 1);
 }
 
-function holderPercent(asset: AssetCard): number {
-  return Math.max(8, Math.round((asset.count / maxHolderCount.value) * 100));
+function collectionPercent(asset: AssetCard): number {
+  return Math.max(8, Math.round((asset.count / collectionMaxCount.value) * 100));
 }
 
 function ownAssetStatus(asset: AssetCard): "held" | "empty" | "error" | "loading" {
@@ -280,6 +229,9 @@ function ownAssetLabel(asset: AssetCard): string {
   if (!own && kv.loadingOwn.value) return "读取中";
   if (!own || own.status === "empty") return "未持有";
   if (own.status === "error") return "读取失败";
+  if (asset.label === "个人守护" && String(own.value ?? "").trim() === "0") {
+    return "未设定";
+  }
   return formatAssetValue(own.value ?? "", asset.unit);
 }
 
@@ -303,7 +255,7 @@ function formatAssetValue(raw: string | number, unit?: string): string {
 
 .asset-board {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   grid-template-areas:
     "mine stats"
     "rank rank";
@@ -315,7 +267,7 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   overflow: hidden;
   padding: 16px;
   background:
-    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.78), rgb(var(--color-bg-veil) / 0.52));
+    linear-gradient(180deg, rgb(var(--color-bg-veil) / 0.78), rgb(var(--color-bg-veil) / 0.54));
   border: 1px solid rgb(var(--color-ink) / 0.055);
   border-radius: var(--radius-paper);
   color: rgb(var(--color-ink));
@@ -337,9 +289,17 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   pointer-events: none;
 }
 
-.asset-panel--mine { grid-area: mine; }
-.asset-panel--stats { grid-area: stats; }
-.asset-panel--rank { grid-area: rank; }
+.asset-panel--mine {
+  grid-area: mine;
+}
+
+.asset-panel--stats {
+  grid-area: stats;
+}
+
+.asset-panel--rank {
+  grid-area: rank;
+}
 
 .asset-panel__head {
   display: flex;
@@ -380,15 +340,13 @@ function formatAssetValue(raw: string | number, unit?: string): string {
 }
 
 .mine-list,
-.holder-list,
 .leader-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.mine-list,
-.holder-list {
+.mine-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -400,6 +358,24 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   align-items: center;
   gap: 10px;
   min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid rgb(var(--color-ink) / 0.045);
+  border-radius: 12px;
+  background: rgb(var(--color-bg) / 0.13);
+  transition:
+    border-color var(--dur-base) ease,
+    background var(--dur-base) ease,
+    transform var(--dur-tap) var(--ease-tap);
+}
+
+.mine-item.is-rank {
+  border-color: rgb(var(--color-bell) / 0.14);
+  background: linear-gradient(180deg, rgb(var(--color-bell) / 0.08), rgb(var(--color-bg) / 0.12));
+}
+
+.mine-item.is-active {
+  border-color: rgb(var(--color-sorrow) / 0.22);
+  background: linear-gradient(180deg, rgb(var(--color-sorrow) / 0.1), rgb(var(--color-bg) / 0.14));
 }
 
 .mine-item__mark {
@@ -409,11 +385,22 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   align-items: center;
   justify-content: center;
   border: 1px solid rgb(var(--color-jade) / 0.18);
-  border-radius: 8px 12px 8px 14px;
+  border-radius: 9px 12px 9px 14px;
   background: linear-gradient(180deg, rgb(var(--color-jade) / 0.18), rgb(var(--color-bell) / 0.08));
   color: rgb(var(--color-jade));
   font-size: 15px;
   letter-spacing: 0;
+}
+
+.mine-item.is-rank .mine-item__mark {
+  border-color: rgb(var(--color-bell) / 0.18);
+  background: linear-gradient(180deg, rgb(var(--color-bell) / 0.2), rgb(var(--color-thread) / 0.1));
+  color: rgb(var(--color-bell));
+}
+
+.mine-item.is-active .mine-item__mark {
+  border-color: rgb(var(--color-sorrow) / 0.28);
+  color: rgb(var(--color-sorrow));
 }
 
 .mine-item__main {
@@ -444,7 +431,7 @@ function formatAssetValue(raw: string | number, unit?: string): string {
 }
 
 .mine-item__value {
-  max-width: 116px;
+  max-width: 132px;
   overflow: hidden;
   padding: 5px 8px;
   border-radius: 999px;
@@ -465,39 +452,141 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   color: rgb(var(--color-alert));
 }
 
-.asset-filter,
-.rank-switch {
+.collection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+  gap: 10px;
+}
+
+.collection-card {
+  position: relative;
   display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 132px;
+  padding: 13px 14px 12px;
+  border: 1px solid rgb(var(--color-ink) / 0.05);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgb(var(--color-bg) / 0.17), rgb(var(--color-bg-veil) / 0.18));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 10px 24px rgb(0 0 0 / 0.06);
 }
 
-.asset-filter {
-  margin-bottom: 12px;
+.collection-card::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgb(var(--color-thread) / 0.25), transparent);
 }
 
-.rank-switch {
-  margin-bottom: 14px;
+.collection-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.asset-filter::-webkit-scrollbar,
-.rank-switch::-webkit-scrollbar {
-  display: none;
+.collection-card__mark {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--color-bell) / 0.18);
+  border-radius: 9px 11px 9px 12px;
+  background: linear-gradient(180deg, rgb(var(--color-bell) / 0.16), rgb(var(--color-bg) / 0.12));
+  color: rgb(var(--color-bell));
+  font-size: 13px;
+  letter-spacing: 0;
 }
 
-.asset-filter__btn,
-.rank-switch__btn {
-  flex: 0 0 auto;
-  min-height: 34px;
-  min-width: auto;
-  padding: 0 11px;
+.collection-card__count {
+  flex-shrink: 0;
+  padding: 3px 7px;
   border: 1px solid rgb(var(--color-ink) / 0.06);
   border-radius: 999px;
   background: rgb(var(--color-bg) / 0.18);
   color: rgb(var(--color-ink-soft));
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: var(--track-fn);
+}
+
+.collection-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.collection-card__kind {
+  color: rgb(var(--color-bell));
+  font-size: 11px;
+  letter-spacing: var(--track-fn);
+  line-height: 1;
+}
+
+.collection-card__label {
+  margin: 0;
+  color: rgb(var(--color-ink));
+  font-size: 14px;
+  font-weight: 640;
+  line-height: 1.18;
+}
+
+.collection-card__desc {
+  margin: 0;
+  color: rgb(var(--color-ink-soft));
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: var(--track-meta);
+}
+
+.collection-card__bar {
+  overflow: hidden;
+  height: 6px;
+  margin-top: auto;
+  border-radius: 999px;
+  background: rgb(var(--color-bg) / 0.24);
+}
+
+.collection-card__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(to right, rgb(var(--color-thread) / 0.72), rgb(var(--color-bell) / 0.72));
+  box-shadow: 0 0 12px rgb(var(--color-thread) / 0.18);
+}
+
+.rank-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.rank-switch::-webkit-scrollbar {
+  display: none;
+}
+
+.rank-switch__btn {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 44px;
+  min-width: 96px;
+  padding: 8px 12px;
+  border: 1px solid rgb(var(--color-ink) / 0.06);
+  border-radius: 12px;
+  background: rgb(var(--color-bg) / 0.18);
+  color: rgb(var(--color-ink-soft));
   cursor: pointer;
   transition:
     background var(--dur-fast) ease,
@@ -506,81 +595,30 @@ function formatAssetValue(raw: string | number, unit?: string): string {
     transform var(--dur-tap) var(--ease-tap);
 }
 
-.asset-filter__btn:active,
 .rank-switch__btn:active {
-  transform: scale(0.96);
+  transform: scale(0.97);
 }
 
-.asset-filter__btn.is-active,
 .rank-switch__btn.is-active {
   border-color: rgb(var(--color-sorrow) / 0.22);
-  background: rgb(var(--color-sorrow) / 0.12);
+  background: linear-gradient(180deg, rgb(var(--color-sorrow) / 0.14), rgb(var(--color-sorrow) / 0.08));
   color: rgb(var(--color-sorrow));
 }
 
-.holder-row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: minmax(92px, 1fr) minmax(80px, 0.9fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 42px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-}
-
-.holder-row.is-rankable {
-  cursor: pointer;
-}
-
-.holder-row:disabled {
-  cursor: default;
-}
-
-.holder-row__main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.holder-row__name {
-  overflow: hidden;
-  color: rgb(var(--color-ink));
-  font-size: 13px;
+.rank-switch__primary {
+  font-size: 12px;
   font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.1;
 }
 
-.holder-row__kind {
-  flex-shrink: 0;
-  color: rgb(var(--color-ink-soft));
+.rank-switch__secondary {
   font-size: 10px;
   letter-spacing: var(--track-fn);
+  line-height: 1.1;
 }
 
-.holder-row__bar {
-  overflow: hidden;
-  height: 7px;
-  border-radius: 999px;
-  background: rgb(var(--color-bg) / 0.24);
-}
-
-.holder-row__bar > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(to right, rgb(var(--color-thread) / 0.72), rgb(var(--color-bell) / 0.72));
-  box-shadow: 0 0 12px rgb(var(--color-thread) / 0.18);
-}
-
-.holder-row__count {
-  color: rgb(var(--color-ink-soft));
-  font-size: 12px;
+.rank-switch__btn.is-active .rank-switch__secondary {
+  color: rgb(var(--color-sorrow) / 0.78);
 }
 
 .leader-list {
@@ -644,10 +682,6 @@ function formatAssetValue(raw: string | number, unit?: string): string {
     grid-column: 2;
     justify-self: start;
     max-width: min(100%, 180px);
-  }
-
-  .holder-row {
-    grid-template-columns: minmax(88px, 1fr) minmax(64px, 0.7fr) auto;
   }
 
   .leader-list {

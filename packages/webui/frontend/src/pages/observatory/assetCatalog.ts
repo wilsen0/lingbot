@@ -1,27 +1,26 @@
 import type { KvNamespace } from "@/api/kv";
 
-export type AssetCategory = "currency" | "relationship" | "card" | "treasure" | "fishing";
-
 export interface AssetCard extends KvNamespace {
   id: string;
   label: string;
+  tabLabel?: string;
   kind: string;
   description: string;
   countLabel: string;
-  category: AssetCategory;
   unit?: string;
-  rankable: boolean;
+  rankLabel?: string;
+  visibleInCollection: boolean;
+  visibleInRank: boolean;
   ownReadable: boolean;
   priority: number;
 }
 
-export const ASSET_CATEGORY_LABELS: Record<AssetCategory, string> = {
-  currency: "余额",
-  relationship: "关系",
-  card: "卡券",
-  treasure: "珍品",
-  fishing: "钓鱼",
-};
+type AssetSpec = Omit<AssetCard, keyof KvNamespace>;
+
+const RANK_PATHS = {
+  wealth: "啊/灵玉系/灵玉",
+  strength: "啊/禁言系/妖力",
+} as const;
 
 const TREASURE_ITEMS = new Set([
   "个人守护",
@@ -38,94 +37,92 @@ const TREASURE_ITEMS = new Set([
   "郫忧",
 ]);
 
-const FISHING_ITEMS = new Set(["水桶价值", "鱼竿", "鱼饵"]);
+const GIFT_ITEMS = new Set(["节日礼包", "玫瑰花", "花标", "锦囊"]);
 
-function isPrivateTokenScope(scope: string): boolean {
-  return /^啊\/(?:0|admin|cli-group|webui:.+)$/.test(scope);
+function buildAsset(ns: KvNamespace, spec: AssetSpec): AssetCard {
+  return { ...ns, ...spec };
 }
 
 export function describeAsset(ns: KvNamespace): AssetCard | null {
-  const path = `${ns.scope}/${ns.file}`;
   if (ns.scope.startsWith("__")) return null;
 
-  if (path === "啊/灵玉系/灵玉") {
-    return {
-      ...ns,
+  const path = `${ns.scope}/${ns.file}`;
+
+  if (path === RANK_PATHS.wealth) {
+    return buildAsset(ns, {
       id: path,
-      label: "灵玉余额",
-      kind: "货币",
-      description: "可消费的个人余额",
+      label: "灵玉",
+      tabLabel: "灵玉",
+      kind: "财富",
+      description: "可公开排行的个人财富",
       countLabel: `${ns.count} 人持有`,
-      category: "currency",
       unit: "灵玉",
-      rankable: true,
+      rankLabel: "财富榜",
+      visibleInCollection: false,
+      visibleInRank: true,
       ownReadable: true,
       priority: 10,
-    };
+    });
   }
 
-  if (path === "fox/人性化ai/好感度记录") {
-    return {
-      ...ns,
+  if (path === RANK_PATHS.strength) {
+    return buildAsset(ns, {
       id: path,
-      label: "好感度",
-      kind: "关系",
-      description: "你和该助手的互动值",
+      label: "妖力",
+      tabLabel: "妖力",
+      kind: "实力",
+      description: "可公开排行的实力数值",
       countLabel: `${ns.count} 人持有`,
-      category: "relationship",
       unit: "点",
-      rankable: false,
+      rankLabel: "实力榜",
+      visibleInCollection: false,
+      visibleInRank: true,
       ownReadable: true,
       priority: 15,
-    };
+    });
   }
 
-  if (ns.file === "禁言卡" && isPrivateTokenScope(ns.scope)) {
-    return {
-      ...ns,
+  if (path === "啊/节日系/节日礼包") {
+    return buildAsset(ns, {
       id: path,
-      label: "禁言卡",
-      kind: "卡券",
-      description: "可用于禁言的道具",
+      label: "节日礼包",
+      kind: "礼品",
+      description: "节日活动礼品",
       countLabel: `${ns.count} 人持有`,
-      category: "card",
-      unit: "张",
-      rankable: true,
+      visibleInCollection: true,
+      visibleInRank: false,
       ownReadable: true,
-      priority: 20,
-    };
+      priority: 18,
+    });
+  }
+
+  if (ns.scope === "啊/活动系" && GIFT_ITEMS.has(ns.file)) {
+    return buildAsset(ns, {
+      id: path,
+      label: ns.file,
+      kind: "礼品",
+      description: "适合公开展示的活动礼品",
+      countLabel: `${ns.count} 人持有`,
+      visibleInCollection: true,
+      visibleInRank: false,
+      ownReadable: true,
+      priority: ns.file === "花标" ? 27 : 24,
+    });
   }
 
   if (ns.scope === "休闲系/珍品" && TREASURE_ITEMS.has(ns.file)) {
-    return {
-      ...ns,
+    return buildAsset(ns, {
       id: path,
       label: ns.file,
       kind: ns.file === "个人守护" ? "守护" : "珍品",
-      description: ns.file === "个人守护" ? "当前守护对象" : "背包内可持有物品",
+      description: ns.file === "个人守护" ? "当前守护对象" : "值得公开展示的珍品",
       countLabel: `${ns.count} 人持有`,
-      category: "treasure",
       unit: ns.file === "个人守护" ? undefined : "件",
-      rankable: ns.file !== "个人守护",
+      visibleInCollection: true,
+      visibleInRank: false,
       ownReadable: true,
       priority: 30,
-    };
-  }
-
-  if (ns.scope === "休闲系/钓鱼" && FISHING_ITEMS.has(ns.file)) {
-    return {
-      ...ns,
-      id: path,
-      label: ns.file === "水桶价值" ? "水桶" : ns.file,
-      kind: "钓鱼",
-      description: ns.file === "水桶价值" ? "水桶收获价值" : "钓鱼玩法物品",
-      countLabel: `${ns.count} 人持有`,
-      category: "fishing",
-      unit: ns.file === "水桶价值" ? "点" : "件",
-      rankable: true,
-      ownReadable: true,
-      priority: 40,
-    };
+    });
   }
 
   return null;
