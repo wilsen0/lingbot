@@ -948,17 +948,14 @@ class _ExecContext:
             return resolver(self._event)
 
         # Bot-level identity vars exposed via ``extras``. The bootstrap
-        # pushes ``admin_users`` (tuple) and ``main_group`` (string)
-        # into the dispatcher extras so the migrator-emitted
-        # ``%管理员%`` / ``%主群%`` / ``%主人%`` placeholders resolve
-        # at runtime. ``%管理员%`` returns the *first* admin
-        # (matching QRSpeed's single-owner convention); ``%主人%``
-        # is an alias.
+        # pushes ``admin_users`` (tuple) into the dispatcher extras so
+        # the migrator-emitted ``%管理员%`` / ``%主人%`` placeholders
+        # resolve at runtime. ``%管理员%`` returns the *first* admin
+        # (matching QRSpeed's single-owner convention); ``%主人%`` is
+        # an alias.
         if name in ("管理员", "主人"):
             admins = self._vm._extras.get("admin_users") or ()
             return str(admins[0]) if admins else ""
-        if name == "主群":
-            return str(self._vm._extras.get("main_group") or "")
 
         # Capture groups: 括号1..括号9 → 1-based index into regex captures.
         if name.startswith("括号") and name[2:].isdigit():

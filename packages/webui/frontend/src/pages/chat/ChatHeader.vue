@@ -32,24 +32,6 @@
         <div class="chat-header__actions">
           <button
             class="icon-btn tap"
-            :class="{ 'icon-btn--active': !!scope }"
-            :aria-label="scope ? `切换测试场景 · 当前 ${scope}` : '切换测试场景'"
-            :title="scope ? `测试场景：${scope}（点击修改）` : '测试场景：默认（你自己的账号）'"
-            @click="$emit('open-scope')"
-          >
-            <svg viewBox="0 0 24 24" class="icon-btn__ic" fill="none">
-              <circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.4" />
-              <path
-                d="M12 4v3.5M12 16.5V20M4 12h3.5M16.5 12H20"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-
-          <button
-            class="icon-btn tap"
             :aria-label="`清空对话 · 当前 ${messageCount} 条`"
             title="清空对话"
             :disabled="!canReset"
@@ -80,7 +62,6 @@ const props = defineProps<{
   currentAgent: AgentSummary | null;
   agentCount: number;
   loadingAgents: boolean;
-  scope: string;
   messageCount: number;
   canReset: boolean;
 }>();
@@ -88,7 +69,6 @@ const props = defineProps<{
 defineEmits<{
   (e: "open-drawer"): void;
   (e: "pick-agent"): void;
-  (e: "open-scope"): void;
   (e: "reset"): void;
 }>();
 
@@ -132,11 +112,6 @@ const loadingLabel = computed(() => (props.loadingAgents ? "加载中" : "待接
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.05),
     0 8px 18px rgb(0 0 0 / 0.08);
-}
-.chat-header .icon-btn--active {
-  color: rgb(var(--color-bell));
-  background: rgb(var(--color-bell) / 0.13);
-  border-color: rgb(var(--color-bell) / 0.18);
 }
 .chat-header__center {
   min-width: 0;

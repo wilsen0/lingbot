@@ -4,12 +4,10 @@
       :current-agent="currentAgent"
       :agent-count="agents.length"
       :loading-agents="loadingAgents"
-      :scope="prefs.scope"
       :message-count="messages.length"
       :can-reset="!!currentAgent && (messages.length > 0 || streaming)"
       @open-drawer="$emit('open-drawer')"
       @pick-agent="onAgentClick"
-      @open-scope="scopeOpen = true"
       @reset="onResetClick"
     />
 
@@ -52,8 +50,6 @@
       :current-name="currentAgentName"
       @pick="onPickAgent"
     />
-
-    <ChatScopeSheet v-model:open="scopeOpen" :current="prefs.scope" @apply="onScopeApply" />
   </div>
 </template>
 
@@ -63,13 +59,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { listAgents, type AgentSummary } from "@/api/agents";
 import { confirmDestructive, confirmReroute } from "@/composables/useConfirm";
 import { toast } from "@/composables/useToast";
-import { usePrefsStore } from "@/store/prefs";
 
 import ChatAgentPicker from "./chat/ChatAgentPicker.vue";
 import ChatComposer from "./chat/ChatComposer.vue";
 import ChatHeader from "./chat/ChatHeader.vue";
 import ChatMessageList from "./chat/ChatMessageList.vue";
-import ChatScopeSheet from "./chat/ChatScopeSheet.vue";
 import { useConversation } from "./chat/useConversation";
 
 defineEmits<(e: "open-drawer") => void>();
@@ -79,19 +73,17 @@ defineEmits<(e: "open-drawer") => void>();
  *
  * 所有"实质工作"已下沉到子组件 / composable:
  *   useConversation : WS 生命周期 / 消息状态 / 流式 delta 合并 / 完成态副作用
- *   ChatHeader      : 顶 bar + 4 个动作按钮
+ *   ChatHeader      : 顶 bar + 常用动作
  *   ChatMessageList : 消息渲染 + 滚动跟手 + 粘底
  *   ChatComposer    : 输入条 + IME guard + autosize + 发布 dock 高度
- *   ChatAgentPicker / ChatScopeSheet : 两个轻量浮签
+ *   ChatAgentPicker : 助手切换浮签
  *
  * 此处只做"编排":
  *   • 页面级初始化 (拉 agent 列表, 选第一个)
  *   • 用户主动语义 (二次确认 / 切换 / 焚此缘)
  *   • 全局快捷键 (Cmd+K / /)
- *   • 把 prefs.scope 喂给 conversation.send()
  */
 
-const prefs = usePrefsStore();
 // 解构 — 让模板可以直接写 messages / streaming, 自动解 ref;
 // 否则 conv.messages 在模板里是 Ref 本身, 要 conv.messages.value, 重复且易错。
 const { messages, streaming, newMsgToken, openFor, send, cancel, reset } = useConversation();
@@ -104,7 +96,6 @@ const currentAgent = computed(
 );
 
 const agentPickerOpen = ref(false);
-const scopeOpen = ref(false);
 
 const msgListRef = ref<InstanceType<typeof ChatMessageList> | null>(null);
 const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null);
@@ -145,18 +136,12 @@ async function onPickAgent(name: string) {
   toast.info("已切换助手", name);
 }
 
-function onScopeApply(value: string) {
-  prefs.setScope(value);
-  scopeOpen.value = false;
-  toast.info(value ? "已切换测试场景" : "已恢复默认", value || "你的账号");
-}
-
 async function onComposerSubmit(text: string) {
-  await send(text, prefs.scope || undefined);
+  await send(text);
   msgListRef.value?.scrollToBottom();
 }
 
-/* === 全局快捷键: / 聚焦输入, Cmd/Ctrl+K 打开切换, Esc 关 sheet === */
+/* === 全局快捷键: / 聚焦输入, Cmd/Ctrl+K 打开切换 === */
 function onShortcut(ev: KeyboardEvent) {
   if (ev.isComposing) return; // composing 时一切快捷键让位 IME
 

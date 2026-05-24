@@ -36,7 +36,7 @@ from linling_dsl.vm import VM
 
 GIFT_RULES = """\
 赠送大飞龙@.*
-如果:%群号%==%主群%|%群号%==待更替群
+如果:%群号%==待更替群
 返回
 如果尾
 如果:%AT0%==%QQ%
@@ -66,7 +66,7 @@ $写 休闲系/珍品/个人守护天 %AT0% %时间MMdd%$
 大飞龙守护1h！
 
 赠送大飞龙([0-9]+)@.*
-如果:%群号%==%主群%|%群号%==待更替群
+如果:%群号%==待更替群
 返回
 如果尾
 如果:%AT0%==%QQ%
@@ -101,8 +101,7 @@ $写 休闲系/珍品/个人守护时 %AT0% %时间MMddHH%$
 大飞龙守护1h！
 """
 
-MAIN_GROUP = "754800438"
-TEST_GROUP = "999999"  # not the main group → guard passes
+TEST_GROUP = "999999"
 SENDER = "111111"
 TARGET = "222222"
 
@@ -156,7 +155,7 @@ def _vm(kv: SqliteKVStore) -> VM:
         tool_registry=registry,
         kv=kv,
         bot_id="susu_test",
-        extras={"admin_users": ("9999",), "main_group": MAIN_GROUP},
+        extras={"admin_users": ("9999",)},
     )
 
 
@@ -236,24 +235,6 @@ async def test_single_gift_happy_path(script, classifier, kv):
     assert await kv.read("休闲系/珍品", "大飞龙", SENDER) == "0"
     assert await kv.read("啊/灵玉系", "灵玉", TARGET) == "700"
     assert await kv.read("休闲系/珍品", "个人守护", TARGET) == "大飞龙"
-
-
-@pytest.mark.asyncio
-async def test_single_gift_main_group_silent_return(script, classifier, kv):
-    """Sender in the main group: handler exits silently (no-op guard)."""
-    await kv.write("休闲系/珍品", "大飞龙", SENDER, "1")
-    ev = _onebot_event("赠送大飞龙", at_user_id=TARGET)
-    # Override scope to the configured main group.
-    ev = ev.model_copy(
-        update={"scope": Scope(kind="group", id=MAIN_GROUP, platform="onebot")}
-    )
-    intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
-    assert result.segments == []
-    # KV must be untouched.
-    assert await kv.read("休闲系/珍品", "大飞龙", SENDER) == "1"
 
 
 @pytest.mark.asyncio

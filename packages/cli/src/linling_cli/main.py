@@ -84,7 +84,6 @@ def migrate_qrdic(
     out: Path = typer.Option(..., "--out", help="Output directory"),  # noqa: B008
     bot_id: str = typer.Option("linling", "--bot-id"),
     admin_qq: str = typer.Option("", "--admin-qq"),
-    main_group: str = typer.Option("", "--main-group"),
 ) -> None:
     """Migrate a QRDic project to linling format."""
     config = MigrationConfig(
@@ -92,7 +91,6 @@ def migrate_qrdic(
         out_dir=out,
         bot_id=bot_id,
         admin_qq=admin_qq,
-        main_group=main_group,
     )
     report = asyncio.run(migrate(config))
     typer.echo(

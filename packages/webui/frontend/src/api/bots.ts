@@ -13,13 +13,6 @@ export async function listBots(): Promise<BotInfo[]> {
   return r.data;
 }
 
-export async function hotReload(botId: string): Promise<Record<string, unknown>> {
-  const r = await apiClient.post<Record<string, unknown>>(
-    `/bots/${encodeURIComponent(botId)}/hot-reload`,
-  );
-  return r.data;
-}
-
 export interface SettingsView {
   host: string;
   port: number;

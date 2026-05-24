@@ -129,12 +129,6 @@ class TestRewrites:
         assert "2078123478" not in out
         assert r.substitution_counts["admin"] == 1
 
-    def test_main_group_substitution(self) -> None:
-        out, r = self._rewrite("如果:%群号%==754800438\n返回\n如果尾")
-        assert "%主群%" in out
-        assert "754800438" not in out
-        assert r.substitution_counts["main_group"] == 1
-
     def test_picture_path_preserves_extension(self) -> None:
         out, r = self._rewrite("±img=/storage/emulated/0/QR/QRDic/data/picture/郫忧.jpg±")
         assert out == "±img=@pic:郫忧.jpg±"
@@ -149,11 +143,6 @@ class TestRewrites:
         out, r = self._rewrite("x=20781234780\n")  # trailing 0, not a match
         assert "2078123478" in out
         assert r.substitution_counts["admin"] == 0
-
-    def test_multiple_on_one_line(self) -> None:
-        out, r = self._rewrite("a=754800438 b=754800438")
-        assert out == "a=%主群% b=%主群%"
-        assert r.substitution_counts["main_group"] == 2
 
 
 # ===========================================================================
@@ -233,9 +222,6 @@ def _build_fake_qrdic(root: Path) -> None:
         "&&<配置>兼容模式:是\n"
         "\n"
         "好运赠送(.*)\n"
-        "如果:%群号%==754800438\n"
-        "返回\n"
-        "如果尾\n"
         "$写 休闲系/珍品/机会 %括号1% 1$\n"
         "完成\n"
         "\n"
@@ -288,9 +274,9 @@ class TestIntegrationFake:
         assert report.kv_files_migrated == 2
         assert report.kv_rows_inserted == 4
 
-        # Substitutions: 1 admin, 1 main_group, 1 pic, 1 bsh.
+        # Substitutions: 1 admin, 1 pic, 1 bsh.
         counts = report.substitution_counts
-        assert counts == {"admin": 1, "main_group": 1, "pic": 1, "bsh": 1}
+        assert counts == {"admin": 1, "pic": 1, "bsh": 1}
 
         # main.ling written and re-parses.
         ling_path = out / "rules" / "main.ling"
@@ -298,7 +284,6 @@ class TestIntegrationFake:
         ling = ling_path.read_text(encoding="utf-8")
         assert "@pic:郫忧.jpg" in ling
         assert "$图文 完成!$" in ling
-        assert "%主群%" in ling
         assert "%管理员%" in ling
         parse_dsl(ling)  # must not raise
 

@@ -16,7 +16,6 @@ class TestFromYamlStr:
         yaml_str = """
 bot_id: my_bot
 name: MyBot
-main_group: "12345"
 admin_users:
   - "111"
   - "222"
@@ -33,7 +32,6 @@ rules:
         cfg = BotConfig.from_yaml_str(yaml_str)
         assert cfg.bot_id == "my_bot"
         assert cfg.name == "MyBot"
-        assert cfg.main_group == "12345"
         assert cfg.admin_users == ["111", "222"]
         assert len(cfg.adapters) == 1
         assert cfg.adapters[0].kind == "onebot"
@@ -99,7 +97,6 @@ class TestDefaults:
         assert cfg.bot_id == "linling"
         assert cfg.name == "linling"
         assert cfg.admin_users == []
-        assert cfg.main_group == ""
         assert cfg.storage.kv == "sqlite:///./data/kv.db"
         assert cfg.storage.files == "./data/files"
         assert cfg.adapters == []

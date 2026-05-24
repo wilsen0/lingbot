@@ -2,7 +2,6 @@ bot_id: linling
 name: 涂山苏苏
 admin_users:
   - "2078123478"
-main_group: "271891388"
 
 storage:
   kv: sqlite:///./data.sqlite

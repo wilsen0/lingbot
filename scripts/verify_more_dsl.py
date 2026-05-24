@@ -42,7 +42,6 @@ from linling_dsl.vm import VM
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = REPO_ROOT / "bot" / "rules" / "main.ling"
 ADMIN_QQ = "2078123478"
-MAIN_GROUP = "754800438"
 ESCROW_QQ = "1707476110"  # 苏总账户, 灵玉划转 4% 手续费目的地
 TEST_GROUP = "999999999"
 TEST_GROUP_ROUTE = "206470486"  # (我在|我去) 路线规则只在这群生效
@@ -100,7 +99,6 @@ def build_vm(
 ) -> VM:
     extras: dict[str, Any] = {
         "admin_users": (ADMIN_QQ,),
-        "main_group": MAIN_GROUP,
     }
     if scheduler is not None:
         extras["scheduler"] = scheduler

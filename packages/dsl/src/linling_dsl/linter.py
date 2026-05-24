@@ -139,7 +139,6 @@ _BUILTIN_VARS: frozenset[str] = frozenset(
         "Robot",
         "自己",
         "管理员",
-        "主群",
         # message metadata
         "Code",
         "Reqid",

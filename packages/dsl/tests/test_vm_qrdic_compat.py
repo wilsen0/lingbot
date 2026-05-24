@@ -354,7 +354,7 @@ async def test_qrspeed_inline_case_insensitive_trigger_matches() -> None:
 
 
 # ---------------------------------------------------------------------------
-# QRSpeed P1 compatibility additions: %NDTime%, %RobotRunTime%, %管理员%/%主人%/%主群%,
+# QRSpeed P1 compatibility additions: %NDTime%, %RobotRunTime%, %管理员%/%主人%,
 # new media sigils ±ptt= ±fimg= ±rep, $时间 fmt$, $MD5$, $JSON 包含/键$
 # ---------------------------------------------------------------------------
 
@@ -385,34 +385,31 @@ async def test_robotruntime_reflects_set_bot_start_time(kv, vm) -> None:
     assert result.segments[0].text == "1700000000000"
 
 
-async def test_admin_main_group_resolved_from_extras(kv) -> None:
-    """``%管理员%`` / ``%主人%`` / ``%主群%`` come from dispatcher extras."""
+async def test_admin_resolved_from_extras(kv) -> None:
+    """``%管理员%`` / ``%主人%`` come from dispatcher extras."""
     vm = VM(
         tool_registry=registry,
         kv=kv,
         bot_id="linling",
         extras={
             "admin_users": ("2078123478", "11111"),
-            "main_group": "754800438",
         },
     )
-    source = "ids\n管理员=%管理员% 主人=%主人% 主群=%主群%"
+    source = "ids\n管理员=%管理员% 主人=%主人%"
     script = parse(source, strict=False)
     result = await vm.execute_handler(script.handlers[0], _event("ids"))
     text = result.segments[0].text
     assert "管理员=2078123478" in text
     assert "主人=2078123478" in text  # alias
-    assert "主群=754800438" in text
 
 
-async def test_admin_main_group_empty_when_unconfigured(kv, vm) -> None:
-    """No admin_users / main_group configured → empty strings, not crash."""
-    source = "ids\nadmin=%管理员% group=%主群%"
+async def test_admin_empty_when_unconfigured(kv, vm) -> None:
+    """No admin_users configured → empty strings, not crash."""
+    source = "ids\nadmin=%管理员%"
     script = parse(source, strict=False)
     result = await vm.execute_handler(script.handlers[0], _event("ids"))
     text = result.segments[0].text
     assert "admin=" in text and "admin=2078123478" not in text
-    assert "group=" in text
 
 
 async def test_voice_sigil_emits_voice_segment(kv, vm) -> None:

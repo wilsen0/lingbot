@@ -42,9 +42,7 @@ from linling_dsl.parser import ParseError
 
 # Hardcoded substitutions that the task spec requires us to apply unconditionally.
 DEFAULT_ADMIN_QQ = "2078123478"
-DEFAULT_MAIN_GROUP = "754800438"
 ADMIN_PLACEHOLDER = "%管理员%"
-MAIN_GROUP_PLACEHOLDER = "%主群%"
 
 # $BSH 图文.java imagettftext <text>$ — <text> may not contain $.
 _BSH_TUTU_RE = re.compile(r"\$BSH 图文\.java imagettftext ([^$]*)\$")
@@ -83,7 +81,7 @@ class Substitution:
     """Record a single textual substitution applied to the script."""
 
     line: int
-    kind: str  # "admin" | "main_group" | "pic" | "bsh"
+    kind: str  # "admin" | "pic" | "bsh"
     before: str
     after: str
     trigger: str
@@ -107,7 +105,7 @@ class MigrationReport:
     # derived
     @property
     def substitution_counts(self) -> dict[str, int]:
-        counts = {"admin": 0, "main_group": 0, "pic": 0, "bsh": 0}
+        counts = {"admin": 0, "pic": 0, "bsh": 0}
         for s in self.substitutions:
             counts[s.kind] = counts.get(s.kind, 0) + 1
         return counts
@@ -254,24 +252,6 @@ def rewrite_block(
                         kind="admin",
                         before=DEFAULT_ADMIN_QQ,
                         after=ADMIN_PLACEHOLDER,
-                        trigger=trigger,
-                    )
-                )
-
-        # 4. Hardcoded main group.
-        new_line, n = re.subn(
-            rf"(?<!\d){re.escape(DEFAULT_MAIN_GROUP)}(?!\d)",
-            MAIN_GROUP_PLACEHOLDER,
-            new_line,
-        )
-        if n:
-            for _ in range(n):
-                report.substitutions.append(
-                    Substitution(
-                        line=block_start + i,
-                        kind="main_group",
-                        before=DEFAULT_MAIN_GROUP,
-                        after=MAIN_GROUP_PLACEHOLDER,
                         trigger=trigger,
                     )
                 )
@@ -456,7 +436,7 @@ def render_report(report: MigrationReport, bot_id: str, elapsed: float) -> str:
     lines.append(f"- Orphan blocks merged: {report.orphan_blocks_merged}")
     lines.append(
         f"- Hardcoded substitutions: {counts['admin']} author IDs, "
-        f"{counts['main_group']} main group IDs, {counts['pic']} picture paths, "
+        f"{counts['pic']} picture paths, "
         f"{counts['bsh']} BSH 图文 calls"
     )
     lines.append("")
@@ -482,7 +462,6 @@ def render_report(report: MigrationReport, bot_id: str, elapsed: float) -> str:
         # Group by kind for readability; within each kind, show up to 50 entries.
         for kind, label in (
             ("admin", "Admin QQ"),
-            ("main_group", "Main group ID"),
             ("pic", "Picture path"),
             ("bsh", "BSH 图文 call"),
         ):
@@ -517,7 +496,7 @@ def render_report(report: MigrationReport, bot_id: str, elapsed: float) -> str:
     lines.append("- Review parse-error handlers above and fix DSL syntax.")
     lines.append("- Confirm that `@pic:<name>` references resolve via the future file store.")
     lines.append(
-        "- Set `admin_users` / `main_group` in `bot.yaml` so `%管理员%` / `%主群%` bind correctly."
+        "- Set `admin_users` in `bot.yaml` so `%管理员%` binds correctly."
     )
     lines.append("")
 

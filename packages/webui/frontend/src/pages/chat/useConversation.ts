@@ -194,7 +194,7 @@ export function useConversation() {
     currentAgent.value = null;
   }
 
-  async function send(text: string, scopeId?: string): Promise<boolean> {
+  async function send(text: string): Promise<boolean> {
     const t = text.trim();
     if (!t) return false;
     if (!currentAgent.value || !stream) return false;
@@ -209,7 +209,7 @@ export function useConversation() {
 
     try {
       await stream.whenOpen(2000);
-      stream.input(t, scopeId);
+      stream.input(t);
       return true;
     } catch (e) {
       streaming.value = false;

@@ -90,12 +90,6 @@ class TestScriptMigration:
         assert out == "如果:%QQ%==%管理员%\n返回\n如果尾"
         assert any("admin QQ" in w for w in warnings)
 
-    def test_main_group_replacement(self, tmp_path: Path) -> None:
-        cfg = _cfg(tmp_path, main_group="754800438")
-        src = "如果:%群号%==754800438\n返回\n如果尾"
-        out, _ = migrate_script(src, cfg)
-        assert out == "如果:%群号%==%主群%\n返回\n如果尾"
-
     def test_no_admin_no_main_leaves_numbers(self, tmp_path: Path) -> None:
         src = "如果:%QQ%==2078123478\n返回\n如果尾"
         out, _ = migrate_script(src, _cfg(tmp_path))
@@ -221,7 +215,7 @@ class TestEndToEnd:
         out = tmp_path / "out"
         _build_mini_qrdic(src)
 
-        cfg = MigrationConfig(src_dir=src, out_dir=out, main_group="754800438")
+        cfg = MigrationConfig(src_dir=src, out_dir=out)
         report = await migrate(cfg)
 
         assert report.rules_written == 1
@@ -231,7 +225,6 @@ class TestEndToEnd:
         ling = (out / "rules" / "main.ling").read_text(encoding="utf-8")
         assert "@pic:呦呦" in ling
         assert "$图文 完成!$" in ling
-        assert "%主群%" in ling
 
         # KV populated
         kv = SqliteKVStore("linling", db_path=out / "data" / "kv.db")
@@ -294,8 +287,6 @@ class TestCli:
                 str(out),
                 "--bot-id",
                 "susu",
-                "--main-group",
-                "754800438",
             ],
         )
         assert result.exit_code == 0, result.output

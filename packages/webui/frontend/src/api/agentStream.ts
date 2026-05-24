@@ -150,15 +150,8 @@ export function useAgentStream(agent: string, opts: UseAgentStreamOptions = {}) 
     ws.send(JSON.stringify(payload));
   }
 
-  function input(content: string, scopeId?: string): void {
-    const frame: Record<string, unknown> = { t: "input", content };
-    if (scopeId) {
-      // Optional: pin the QQ-side group id this WebUI chat
-      // simulates. Leave undefined to use the dispatcher's default
-      // (a per-account ``webui:<user>`` synthetic scope).
-      frame.scope_id = scopeId;
-    }
-    send(frame);
+  function input(content: string): void {
+    send({ t: "input", content });
   }
   function cancel(): void {
     send({ t: "cancel" });

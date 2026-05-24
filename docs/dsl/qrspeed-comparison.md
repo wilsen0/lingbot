@@ -108,7 +108,7 @@
 | `%RobotRunTime%` 机器人启动时间戳 | 0 | ✅（运行时间显示） | ❌ **MISSING**——bot 启动时记一次，全局可读 |
 | `%UinName%` `%Inviteename%` 加群事件名 | 0 | ✅（系统事件） | ❌ **MISSING**——OneBot 加群 notice 字段 |
 | `%主人%` | 0 | ✅ | ❌ **MISSING**——bot 配置里 owner_id（dicpro.txt 用 `%管理员%`，是同一概念） |
-| `%管理员%` `%主群%` 等迁移占位 | 多 | 0 | ✅（迁移层注入） |
+| `%管理员%` 等迁移占位 | 多 | 0 | ✅（迁移层注入） |
 
 > **真实缺口（按重要性排序）**：
 > 1. `%IMG0%` `%IMGNUM%` —— dicpro.txt 5 处，是"接扔瓶子"和"苏苏问答"功能的核心（没有它，瓶子永远不存图，问答匹配图片永远失败）
@@ -210,8 +210,8 @@
 7. ✅ **`$MD5 text$`**（已交付）—— `format_ops.md5_hex`，variadic 接全部 token，hashlib MD5（usedforsecurity=False）。
 8. ✅ **`$JSON 包含 var key$`** + `$JSON 键 var$`（已交付）—— `json_ops` 加 `_contains` 和 `_keys` 子命令。dict 看 key 集合，list 看元素 in，缺失返回空。
 9. ✅ **`±ptt=` `±fimg=` `±rep` `±bub` `±strmsg` 媒体 sigil**（已交付）—— AST 加 `OutputVoice`/`OutputFlashImage`/`OutputReply`，parser 识别，VM emit `VoiceSegment` / `ImageSegment(extras={"flash":True})` / `ReplySegment`。`±bub` `±strmsg` 静默丢弃（QQ 装饰）。
-10. ✅ **`%管理员%` `%主人%` `%主群%`**（这次顺便交付）—— bootstrap 注入 `admin_users`/`main_group` 到 dispatcher extras；VM 在 `_get_event_context_var` 解析 `%管理员%`(=admin_users[0])、`%主人%`(同 alias)、`%主群%`(=main_group)。
-11. ✅ **WebUI ⇄ QQ 身份桥**（这次顺便交付）—— WebUI dispatcher 把 `scope.id` 默认设为 bot 配置的 `main_group`；REST `chat()` body / WS `input` 帧都接 `scope_id` 字段供测试时切群；测试覆盖。
+10. ✅ **`%管理员%` `%主人%`**（这次顺便交付）—— bootstrap 注入 `admin_users` 到 dispatcher extras；VM 在 `_get_event_context_var` 解析 `%管理员%`(=admin_users[0])、`%主人%`(同 alias)。
+11. ✅ **WebUI ⇄ QQ 身份桥**（这次顺便交付）—— WebUI dispatcher 把 `scope.id` 默认合成成 DM (`%群号%==0`)；REST `chat()` body / WS `input` 帧都接 `scope_id` 字段供测试时切群；测试覆盖。
 
 ### P2 ── 影响 OneBot 适配器接好后才生效的特性
 
@@ -233,7 +233,7 @@
 
 P0 三项**已全部交付**（`%IMG*%` / `%IMGNUM%`、`\%XX` 解码、`##` 注释）。
 
-P1 八项**已全部交付**（`%NDTime%` / `%RobotRunTime%`、`%管理员%` / `%主人%` / `%主群%`、`±ptt=` / `±fimg=` / `±rep` / `±bub` 媒体 sigil、`$时间 fmt$`、`$MD5$`、`$JSON 包含/键$`、`(?i)` flag 已锁、WebUI 身份桥）。
+P1 八项**已全部交付**（`%NDTime%` / `%RobotRunTime%`、`%管理员%` / `%主人%`、`±ptt=` / `±fimg=` / `±rep` / `±bub` 媒体 sigil、`$时间 fmt$`、`$MD5$`、`$JSON 包含/键$`、`(?i)` flag 已锁、WebUI 身份桥）。
 
 P2 项**全部已交付**：
 - ✅ `[系统]` `[退群]` `[上下管理]` 特殊触发器（OneBot adapter 翻译 notice / request 为合成 message 事件，且当规则集没注册对应 handler 时分类器返回 `ignore` 而不是兜到 LLM）

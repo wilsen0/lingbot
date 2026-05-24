@@ -177,17 +177,16 @@ class RunningBot:
         if update is None:
             return
         update(action_sink=sink)
-        # Bot-level identity: expose ``admin_users`` and ``main_group``
-        # as ``%管理员%`` / ``%主群%`` placeholders the migrator emits
-        # into rule files. Resolved at runtime so a config swap (or
-        # the legacy unset state) changes behaviour without recompiling
-        # the rule files. ``%管理员%`` resolves to the *first* admin
-        # user, matching QRSpeed's single-owner convention; rules
-        # checking against multiple admins should iterate
-        # ``admin_users`` themselves once we expose it as a list var.
+        # Bot-level identity: expose ``admin_users`` as the
+        # ``%管理员%`` placeholder the migrator emits into rule files.
+        # Resolved at runtime so a config swap changes behaviour
+        # without recompiling rule files. ``%管理员%`` resolves to the
+        # *first* admin user, matching QRSpeed's single-owner
+        # convention; rules checking against multiple admins should
+        # iterate ``admin_users`` themselves once we expose it as a
+        # list var.
         update(
             admin_users=tuple(self.config.admin_users),
-            main_group=self.config.main_group,
         )
         rpc_adapter = next((a for a in self.adapters if hasattr(a, "rpc")), None)
         if rpc_adapter is not None:

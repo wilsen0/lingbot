@@ -116,7 +116,6 @@
 | `%Inviteename%` | 0 | ✅ | ✅ | OneBot notice 字段（操作者 / 邀请人昵称） |
 | `%Json%` `%Skey%` | 5+5 | 0 | ⚠️ STUB | QRDic adapter 私有字段，恒空 |
 | `%管理员%` `%主人%` | （migrator 注入） | ✅ | ✅ | bot 配置 `admin_users[0]` |
-| `%主群%` | （migrator 注入） | 0 | ✅ | bot 配置 `main_group` |
 | `%NDTime%` | 0 | ✅ | ✅ | 当前毫秒时间戳 |
 | `%RobotRunTime%` | 0 | ✅ | ✅ | bot 启动毫秒时间戳（`set_bot_start_time_ms`） |
 
@@ -269,26 +268,19 @@ tip:只有双方互相申请才能互删   # 不是赋值！是 OutputText
 | 上下文变量 | QQ 端来源 | WebUI 端来源 | 状态 |
 | :- | :- | :- | :-: |
 | `%QQ%` | `event.sender.id`（QQ 号） | `event.sender.id` = WebUI 用户名 = QQ 号 | ✅ 一致 |
-| `%群号%` | `event.scope.id`（QQ 群号） | 默认 = `webui:<account>` 合成 scope（**避开 main_group**），可被请求 / WS 帧的 `scope_id` 覆盖 | ✅ 一致 |
+| `%群号%` | `event.scope.id`（QQ 群号） | 默认 = 合成 DM scope（``%群号%==0``），可被请求 / WS 帧的 `scope_id` 覆盖 | ✅ 一致 |
 | `%昵称%` | QQ 群昵称或 QQ 昵称 | WebUI 用户名（暂时） | ⚠️ 需要 OneBot adapter 才能拿到真群昵称 |
 | `%AT0%` … | QQ AT 段 | 暂无（WebUI 不支持 AT 段） | ⚠️ |
 | `%IMG0%` … | QQ 图片消息 | WebUI 上传图片（后续） | ⚠️ |
 
-**关键设计决定（WebUI scope 不默认走 main_group）**：
+**关键设计决定（WebUI scope = 合成 DM）**：
 
-`dicpro.txt` 里 95% 的 group-gated 规则的形状是：
-```
-如果:%群号%==754800438     # 在主群里
-返回                        # 让位给主 bot，本 bot 不响应
-如果尾
-（这里才是真正的逻辑）
-```
-也就是说，**主群是 "本 bot 让位"** 的群，其他群才是本 bot 真正干活的地方。如果 WebUI 默认把 `%群号%` 设成 `main_group`，几乎所有规则都会在 WebUI 里 silently 早退。
+QRSpeed 约定 `%群号%==0` 为私聊。`dicpro.txt` 里 group-only 规则一般以 `如果:%群号%==0 返回` 开头跳过私聊；私聊友好的规则反过来 `如果:%群号%!=0 返回`。
 
-所以 WebUI dispatcher 给每个账号合成一个 stable scope `webui:<account>`：
-- 不等于 `main_group`，所以 "skip in main_group" 的 gate 通不过 → 规则正常运行；
+WebUI dispatcher 把每次请求合成成 DM scope（`kind="dm", id="0"`）：
+- `%群号%` 解析为 `0`，`event.is_dm` 为 true，QQ 端 DM 和 WebUI 走同一条码路；
 - 每账号独立，KV 状态不会跨账号污染；
-- 操作员显式传 `scope_id="754800438"` 时，可以测试 "in main_group" 分支（回到 QQ 主群行为）。
+- 操作员显式传 `scope_id="<某个群号>"` 时，把 scope 翻成 `kind="group", id=<override>`，可以测试只在某具体群里跑的规则。
 
 **前端实现细节**：
 - `POST /api/agents/<name>/chat` 请求体接 `scope_id`（可选）—— 带就用，不带就用 `webui:<account>`。
@@ -316,7 +308,7 @@ tip:只有双方互相申请才能互删   # 不是赋值！是 OutputText
 | :- | :-: | :-: |
 | `%NDTime%` | ✅ | `test_ndtime_returns_milliseconds_now` |
 | `%RobotRunTime%` | ✅ | `test_robotruntime_reflects_set_bot_start_time` |
-| `%管理员%` `%主人%` `%主群%` | ✅ | `test_admin_main_group_resolved_from_extras`、`test_admin_main_group_empty_when_unconfigured` |
+| `%管理员%` `%主人%` | ✅ | `test_admin_resolved_from_extras`、`test_admin_empty_when_unconfigured` |
 | `±ptt=URL±` voice | ✅ | `test_voice_sigil_emits_voice_segment` |
 | `±fimg=URL±` flash image | ✅ | `test_flash_image_sigil_emits_image_with_extras` |
 | `±rep msgid±` reply | ✅ | `test_reply_sigil_emits_reply_segment` |
@@ -325,7 +317,7 @@ tip:只有双方互相申请才能互删   # 不是赋值！是 OutputText
 | `$MD5 text$` | ✅ | `test_md5_tool_returns_hex_digest` |
 | `$JSON 包含/键$` | ✅ | `test_json_contains_and_keys_subcommands` |
 | **bracket-literal 触发器**（`[戳一戳]` `[系统]` `[退群]` 等）作为字面而非字符类 | ✅ | `test_bracket_trigger_matches_full_literal`、`test_bracket_trigger_does_not_match_inner_char` |
-| WebUI ⇄ QQ 身份桥（`scope_id` 默认 = 合成 `webui:<account>`，避开 `main_group`） | ✅ | `test_webui_default_scope_avoids_main_group`、`test_webui_explicit_scope_id_can_target_main_group`、`test_webui_explicit_scope_id_overrides_default`、`test_webui_ws_input_accepts_scope_id_frame` |
+| WebUI ⇄ QQ 身份桥（`scope_id` 默认 = 合成 DM ``%群号%==0``） | ✅ | `test_webui_default_scope_is_dm_with_group_id_zero`、`test_webui_explicit_scope_id_can_target_main_group`、`test_webui_explicit_scope_id_overrides_default`、`test_webui_ws_input_accepts_scope_id_frame` |
 
 ### P2 待办（部分已完成 — 见下）
 

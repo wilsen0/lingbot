@@ -12,23 +12,12 @@
           v-for="b in bots"
           :key="b.id"
           class="set__bot"
-          :class="{ 'is-pulsing': pulsingId === b.id }"
         >
           <span class="set__bot-dot" :class="b.online ? 'on' : 'off'" aria-hidden="true" />
           <div class="set__bot-info">
             <p class="set__bot-name font-display">{{ b.name || b.id }}</p>
             <p class="set__bot-meta font-mono">{{ b.platform }} · {{ b.id }}</p>
           </div>
-          <button
-            v-if="auth.canWrite"
-            class="set__bot-action tap"
-            :disabled="reloading === b.id"
-            :aria-label="`重载 ${b.name || b.id}（热加载规则）`"
-            @click="reload(b.id)"
-          >
-            <DecoBellLoader v-if="reloading === b.id" size="sm" />
-            <span v-else class="font-display">重载</span>
-          </button>
         </li>
       </ul>
       <UiEmptyState v-else variant="compact">暂无 bot 接入</UiEmptyState>
@@ -215,23 +204,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import axios from "axios";
 
 import { logout as apiLogout, getHealth } from "@/api/client";
-import { hotReload, listBots, type BotInfo } from "@/api/bots";
+import { listBots, type BotInfo } from "@/api/bots";
 import UiEmptyState from "@/components/UiEmptyState.vue";
 import UiSwitch from "@/components/UiSwitch.vue";
 import { confirmDestructive } from "@/composables/useConfirm";
-import { useStageBus } from "@/composables/useStageBus";
-import { toast } from "@/composables/useToast";
-import DecoBellLoader from "@/decor/DecoBellLoader.vue";
 import { useAuthStore } from "@/store/auth";
 import { usePrefsStore, type DecorLevel, type ThemeMode } from "@/store/prefs";
 
 const prefs = usePrefsStore();
 const auth = useAuthStore();
 const router = useRouter();
-const stage = useStageBus();
 
 const serverVersion = ref<string | null>(null);
 const serverTime = ref<string | null>(null);
@@ -261,8 +245,6 @@ const decors: { value: DecorLevel; label: string; hint: string; aria: string }[]
 ];
 
 const bots = ref<BotInfo[]>([]);
-const reloading = ref<string | null>(null);
-const pulsingId = ref<string | null>(null);
 
 function formatServerTime(iso: string): string {
   try {
@@ -287,41 +269,6 @@ onMounted(async () => {
     /* noop */
   }
 });
-
-async function reload(botId: string) {
-  reloading.value = botId;
-  try {
-    const r = await hotReload(botId);
-    const n = typeof r.reloaded === "number" ? r.reloaded : 0;
-    const files = typeof r.files === "number" ? r.files : 0;
-    const applied = r.applied !== false;
-    const errors = Array.isArray(r.errors) ? r.errors : [];
-    if (!applied) {
-      const head = errors.length > 0 ? String(errors[0]) : "见 server 日志";
-      toast.error("更新被拒", `保留旧规则 · ${head}`);
-    } else if (errors.length) {
-      toast.warn("部分更新", `${n} 处理器 / ${files} 文件 · ${errors.length} 处错误`);
-    } else {
-      toast.success("已重载", `${n} 处理器 / ${files} 文件`);
-      // 让卡片金光脉冲一下
-      pulsingId.value = botId;
-      stage.ringBell();
-      setTimeout(() => {
-        pulsingId.value = null;
-      }, 1200);
-    }
-  } catch (e) {
-    if (axios.isAxiosError(e) && e.response?.status === 403) {
-      toast.error("无权限", "需 bot_admin 角色");
-    } else if (axios.isAxiosError(e) && e.response?.status === 503) {
-      toast.error("热加载未配置", "请在 linling run 模式下使用");
-    } else {
-      toast.error("更新失败", String((e as Error).message));
-    }
-  } finally {
-    reloading.value = null;
-  }
-}
 
 async function onLogout() {
   const ok = await confirmDestructive("退出登录", "退出后需要重新登录。", "退出");
@@ -427,16 +374,7 @@ async function onLogout() {
   padding: 16px 4px;
   min-height: 60px;
   position: relative;
-  transition:
-    box-shadow var(--dur-slow) ease,
-    background var(--dur-slow) ease;
   border-radius: var(--radius-seal);
-}
-.set__bot.is-pulsing {
-  background: rgb(var(--color-bell) / 0.12);
-  box-shadow:
-    0 0 0 1px rgb(var(--color-bell) / 0.35),
-    0 0 24px rgb(var(--color-bell) / 0.25);
 }
 .set__bot + .set__bot::before {
   content: "";
@@ -476,36 +414,6 @@ async function onLogout() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.set__bot-action {
-  min-width: 56px;
-  min-height: 44px;
-  border: 1px solid rgb(var(--color-thread) / 0.12);
-  background: rgb(var(--color-thread) / 0.06);
-  color: rgb(var(--color-thread));
-  padding: 0 14px;
-  cursor: pointer;
-  font-size: 14px;
-  letter-spacing: 0.08em;
-  border-radius: var(--radius-seal);
-  transition:
-    color var(--dur-fast) ease,
-    transform var(--dur-tap) var(--ease-tap),
-    background var(--dur-base) ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.set__bot-action:hover:not(:disabled) {
-  color: rgb(var(--color-sorrow));
-  background: rgb(var(--color-thread) / 0.08);
-}
-.set__bot-action:active:not(:disabled) {
-  transform: scale(0.94);
-}
-.set__bot-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* ===== themes ===== */

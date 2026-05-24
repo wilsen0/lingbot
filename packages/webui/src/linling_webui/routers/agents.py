@@ -26,11 +26,10 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input: str = Field(min_length=1, max_length=4000)
     history_key: str | None = None  # reserved: which memory window
-    # Override the scope id used to synthesise the inbound event. By
-    # default the dispatcher routes WebUI chats to the bot's
-    # ``main_group`` so rules gating on a specific group fire the
-    # same way they do on QQ. Set this to a different group id for
-    # cross-group testing, or to a DM-shaped string for personal
+    # Override the scope id used to synthesise the inbound event.
+    # When omitted the dispatcher uses a synthetic DM-shaped scope
+    # (``%群号%==0``); pass a group id to drive rules that gate on
+    # a specific group, or a different DM-shaped string for personal
     # state isolation.
     scope_id: str | None = None
 

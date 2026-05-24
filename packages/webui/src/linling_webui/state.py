@@ -94,9 +94,9 @@ class WebChatReply:
 # and expects a fully-resolved :class:`WebChatReply`. The implementation
 # (in ``linling_cli.wire_webui``) runs DSL classifier + handler first,
 # falling back to the LLM agent only when no command matched.
-# ``scope_override`` lets the caller pin a specific group id to test
-# in (defaults to the bot's configured ``main_group``); pass ``None``
-# to use the configured default.
+# ``scope_override`` lets the caller pin a specific group id when the
+# rule under test is gated to a particular group; pass ``None`` to use
+# the WebUI's default DM-shaped scope (``%群号%==0``).
 WebChatDispatcher = Callable[[str, str, str | None], Awaitable[WebChatReply]]
 
 

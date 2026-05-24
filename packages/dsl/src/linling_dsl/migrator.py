@@ -12,7 +12,6 @@ Script transforms (simple regex rewrites; no AST round-trip):
   1. `$BSH 图文.java imagettftext <TEXT>$` → `$图文 <TEXT>$`
   2. `/storage/emulated/0/QR/QRDic/data/picture/<NAME>.jpg` → `@pic:<NAME>`
   3. Hardcoded admin QQ → `%管理员%` (if admin_qq configured)
-  4. Hardcoded main group → `%主群%` (if main_group configured)
 """
 
 from __future__ import annotations
@@ -37,9 +36,7 @@ class MigrationConfig:
     out_dir: Path
     bot_id: str = "linling"
     admin_placeholder: str = "%管理员%"
-    main_group_placeholder: str = "%主群%"
     admin_qq: str = ""
-    main_group: str = ""
 
 
 @dataclass
@@ -130,16 +127,6 @@ def migrate_script(source: str, config: MigrationConfig) -> tuple[str, list[str]
             warnings.append(
                 f"replaced {admin_n} occurrences of admin QQ "
                 f"'{config.admin_qq}' → {config.admin_placeholder}"
-            )
-
-    # 4. Main group → placeholder
-    if config.main_group:
-        pattern = re.compile(rf"(?<!\d){re.escape(config.main_group)}(?!\d)")
-        result, grp_n = pattern.subn(config.main_group_placeholder, result)
-        if grp_n:
-            warnings.append(
-                f"replaced {grp_n} occurrences of main group "
-                f"'{config.main_group}' → {config.main_group_placeholder}"
             )
 
     return result, warnings
@@ -391,7 +378,6 @@ _BOT_YAML_TEMPLATE = """# linling bot config (migrated from QRDic)
 bot_id: "{bot_id}"
 name: "{bot_id}"
 admin_users: [{admin}]
-main_group: "{main_group}"
 
 storage:
   kv: "sqlite:///./data/kv.db"
@@ -461,7 +447,6 @@ async def migrate(config: MigrationConfig) -> MigrationReport:
     bot_yaml = _BOT_YAML_TEMPLATE.format(
         bot_id=config.bot_id,
         admin=admin,
-        main_group=config.main_group,
     )
     (out / "bot.yaml").write_text(bot_yaml, encoding="utf-8")
 

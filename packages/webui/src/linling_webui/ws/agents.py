@@ -88,7 +88,7 @@ async def _dispatch_via_chat(
     client doesn't need to know which path served the message.
 
     ``scope_id`` lets the client pin a specific group id to test
-    rules in (defaults to the bot's configured ``main_group`` when
+    rules in (defaults to a synthetic DM scope ``%群号%==0`` when
     omitted).
 
     The ``done`` frame additionally carries a structured ``segments``
@@ -201,7 +201,7 @@ async def agent_stream(ws: WebSocket, name: str, token: str = Query(default=""))
                     continue
                 # Optional per-frame scope override — a future Chat.vue
                 # group picker can stuff a string here. Empty / missing
-                # → dispatcher uses the bot's ``main_group`` default.
+                # → dispatcher falls back to its synthetic DM scope.
                 raw_scope = msg.get("scope_id")
                 scope_id = str(raw_scope).strip() if isinstance(raw_scope, str) else None
                 if not scope_id:

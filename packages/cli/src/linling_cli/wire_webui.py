@@ -491,10 +491,10 @@ def _build_web_chat_dispatcher(
     Identity bridging (WebUI ⇄ QQ adapter): we set the synthesised
     event's ``sender.id`` to the WebUI account name (== QQ number by
     convention; users register with their QQ as username). The
-    ``scope.id`` defaults to a per-account synthetic scope so most
-    rules behave as if the operator were chatting outside their
-    main_group; callers can override per-request via ``scope_id`` to
-    drive other test groups.
+    ``scope.id`` defaults to a per-account synthetic DM scope so
+    rules behave as if the operator were chatting one-on-one;
+    callers can override per-request via ``scope_id`` to drive
+    rules gated to a specific group.
 
     Output actions are *not* pushed to the bot's adapter sink: this
     is the WebUI's chat surface, not a group reply path. We only
@@ -515,8 +515,8 @@ def _build_web_chat_dispatcher(
     #     common — they gate ``如果:%群号%==0 返回``);
     #   * private-friendly rules either run regardless or do the
     #     inverse gate (``如果:%群号%!=0 返回``);
-    #   * a small minority short-circuit *inside* the configured
-    #     ``main_group`` because a sibling bot owns that room.
+    #   * group-specific rules gate on a literal group id
+    #     (``如果:%群号%==<id>``).
     #
     # Routing the WebUI to a synthetic ``dm`` scope with id ``"0"``
     # therefore matches a real "operator chats with the bot one-on-one"
@@ -535,9 +535,8 @@ def _build_web_chat_dispatcher(
         * No override → DM scope with id ``"0"``. ``%群号%`` resolves
           to ``0`` and ``event.is_dm`` is true, matching the QRSpeed
           private-chat convention.
-        * Override matches ``main_group`` (or any non-empty string)
-          → ``kind="group"`` and ``id=<override>`` so rules gating
-          on the group id reach the in-group branch.
+        * Override → ``kind="group"`` and ``id=<override>`` so rules
+          gating on a specific group id reach the in-group branch.
         """
         if override:
             return Scope(kind="group", id=override, platform="webui")

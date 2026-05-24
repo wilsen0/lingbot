@@ -330,7 +330,6 @@ class BotConfig(BaseSettings):
     bot_id: str = "linling"
     name: str = "linling"
     admin_users: list[str] = []
-    main_group: str = ""
 
     storage: StorageConfig = StorageConfig()
     adapters: list[AdapterConfig] = []

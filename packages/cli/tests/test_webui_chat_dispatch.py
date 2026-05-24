@@ -390,23 +390,23 @@ def test_proxy_endpoint_rejects_non_http_scheme(image_chat_app) -> None:
 
 @pytest.fixture
 def main_group_chat_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
-    """Bot with ``main_group`` configured — verifies the WebUI scope bridge.
+    """Verify the WebUI scope bridge against a group-gated handler.
 
     The DSL handler ``main_test`` early-returns unless ``%群号%`` matches
-    the configured main_group. WebUI requests should land in that group
-    by default so rules gating on it actually run for the same operator
-    on both transports.
+    a specific group ID. WebUI requests with no ``scope_id`` land in a
+    DM scope (``%群号%==0``); explicit ``scope_id=754800438`` reaches
+    the in-group branch. The fixture name is historical — predates the
+    removal of the bot-wide ``main_group`` config.
     """
     _write(
         tmp_path,
         "rules/main.ling",
-        # Trigger only fires inside the main group.
+        # Trigger only fires inside the named group.
         "main_test\n如果:%群号%==754800438\n群号正确 %群号%\n返回\n如果尾\n群号错了 %群号%\n",
     )
     bot_yaml = """\
 bot_id: chat_test_main
 name: chat_test_main
-main_group: "754800438"
 storage:
   kv: ":memory:"
 rules:
@@ -469,11 +469,11 @@ def test_webui_default_scope_is_dm_with_group_id_zero(main_group_chat_app) -> No
 
 
 def test_webui_explicit_scope_id_can_target_main_group(main_group_chat_app) -> None:
-    """An explicit ``scope_id=main_group`` in the request body still works.
+    """An explicit ``scope_id=<group>`` in the request body still works.
 
-    Operators who want to verify the "in main_group" branch can pass
-    the main_group id directly. This is the manual escape hatch for
-    rules that *only* run inside main_group.
+    Operators who want to verify a group-only handler branch can pass
+    the target group id directly. This is the manual escape hatch for
+    rules that *only* run inside a specific group.
     """
     client, token = main_group_chat_app
     r = client.post(

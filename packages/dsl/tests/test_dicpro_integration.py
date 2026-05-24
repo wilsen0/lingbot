@@ -1055,7 +1055,7 @@ o:$取中间 X %M% XfooXbarX$
 
 
 # ---------------------------------------------------------------------------
-# §20 Bot identity vars — %管理员% / %主群% / %主人% pulled from VM extras.
+# §20 Bot identity vars — %管理员% / %主人% pulled from VM extras.
 # Migrator rewrites these onto QRDic's hard-coded admin id constants;
 # bootstrap pushes the live values into ``extras``.
 # ---------------------------------------------------------------------------
@@ -1063,16 +1063,15 @@ o:$取中间 X %M% XfooXbarX$
 
 @pytest.mark.asyncio
 async def test_bot_identity_vars_resolve_from_extras(kv) -> None:
-    """``%管理员% / %主群% / %主人%`` route through the bot's extras."""
+    """``%管理员% / %主人%`` route through the bot's extras."""
     out = await _run(
-        "%管理员%/%主群%/%主人%",
+        "%管理员%/%主人%",
         kv,
         _event("x"),
         admin_users=("777", "888"),
-        main_group="55555",
     )
     # %管理员% and %主人% are aliases — both pick the *first* admin.
-    assert out == "777/55555/777"
+    assert out == "777/777"
 
 
 @pytest.mark.asyncio
@@ -1082,8 +1081,8 @@ async def test_bot_identity_vars_default_when_missing(kv) -> None:
     deployments. We avoid ``[%var%]`` brackets here because the VM
     arith pass would turn a missing-var ``[]`` into ``"0"``.
     """
-    out = await _run("(%管理员%)/(%主群%)/(%主人%)", kv, _event("x"))
-    assert out == "()/()/()"
+    out = await _run("(%管理员%)/(%主人%)", kv, _event("x"))
+    assert out == "()/()"
 
 
 # ---------------------------------------------------------------------------
@@ -3973,7 +3972,7 @@ def test_dicpro_full_file_parses_cleanly() -> None:
 # ---------------------------------------------------------------------------
 # §89 Production dicpro.txt full-execute smoke — run *every* handler
 # from the file against an empty event with all wiring (scheduler +
-# handler_lookup + admins + main_group + image_text cache) and assert
+# handler_lookup + admins + image_text cache) and assert
 # zero exceptions. A regression in the VM that crashes any one handler
 # surfaces here loud.
 # ---------------------------------------------------------------------------
@@ -3988,7 +3987,7 @@ async def test_dicpro_every_handler_executes_cleanly(kv, tmp_path) -> None:
     * 5 capture placeholders (covers ``%括号1..5%`` references),
     * a wired Scheduler + handler_lookup (so ``$调用$`` and ``$回调$``
       have the helpers they need),
-    * admin + main-group config (so ``%管理员%`` / ``%主群%`` resolve),
+    * admin config (so ``%管理员%`` resolves),
     * a tmp image-text cache (so ``$图文$`` calls land in the sandbox).
 
     The sandbox's per-handler ``max_steps``, ``timeout_ms`` and
@@ -4013,7 +4012,6 @@ async def test_dicpro_every_handler_executes_cleanly(kv, tmp_path) -> None:
         "scheduler": sched,
         "handler_lookup": handlers_by_trigger.get,
         "admin_users": ("2078123478",),
-        "main_group": "67890",
         "image_text_cache_dir": tmp_path,
     }
 
@@ -4657,7 +4655,6 @@ async def test_production_literal_triggers_route_through_full_pipeline(
             "scheduler": sched,
             "handler_lookup": handlers_by_trigger.get,
             "admin_users": ("2078123478",),
-            "main_group": "67890",
             "image_text_cache_dir": tmp_path,
         },
     )

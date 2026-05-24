@@ -48,7 +48,6 @@ from linling_dsl.vm import VM
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = REPO_ROOT / "bot" / "rules" / "main.ling"
 ADMIN_QQ = "2078123478"
-MAIN_GROUP = "754800438"
 TEST_GROUP = "999999999"
 TEST_QQ = "111122223"
 TARGET_QQ = "888899990"
@@ -127,7 +126,6 @@ def _build_vm(
 ) -> VM:
     extras: dict[str, Any] = {
         "admin_users": (ADMIN_QQ,),
-        "main_group": MAIN_GROUP,
     }
     if scheduler is not None:
         extras["scheduler"] = scheduler
