@@ -36,6 +36,7 @@ class OpenAIProvider:
         default_max_tokens: int = 1024,
         timeout: float = 60.0,
         extra_headers: dict[str, str] | None = None,
+        proxy: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -56,10 +57,16 @@ class OpenAIProvider:
         # regardless of how the operator launched the bot. Adapter /
         # tool HTTP clients still pick up proxy env on their own —
         # this only affects the LLM round trip.
+        #
+        # When an explicit ``proxy`` URL is provided (e.g. for the
+        # attention probe hitting a geo-blocked endpoint), that proxy
+        # is used while still keeping ``trust_env=False`` so the
+        # ambient proxy vars are never honoured. ``None`` means direct.
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers=self._build_headers(),
             trust_env=False,
+            proxy=proxy,
         )
 
     @property

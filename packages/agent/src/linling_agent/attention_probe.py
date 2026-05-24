@@ -217,6 +217,7 @@ class AttentionProbe:
         model: str,
         timeout: float = _DEFAULT_TIMEOUT_S,
         max_chars: int = _DEFAULT_MAX_CHARS,
+        proxy: str | None = None,
     ) -> None:
         if timeout <= 0 or timeout > 10.0:
             # Requirement 13.2: ``0 < timeout <= 10s``. We keep the
@@ -245,6 +246,7 @@ class AttentionProbe:
             timeout=timeout,
             default_temperature=_TEMPERATURE,
             default_max_tokens=_MAX_TOKENS,
+            proxy=proxy,
         )
 
     @property

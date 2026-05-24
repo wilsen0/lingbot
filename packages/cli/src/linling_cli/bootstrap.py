@@ -1284,11 +1284,17 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
         # we have no overrides so the provider's default header set
         # is unmodified.
         extra_headers = pc.extra_headers or None
+        # Proxy for the main LLM. ``OPENAI_HTTPS_PROXY`` is the
+        # unified env var; most deployments leave it empty (direct).
+        import os  # noqa: PLC0415
+
+        proxy = os.environ.get("OPENAI_HTTPS_PROXY", "").strip() or None
         return OpenAIProvider(
             model=agent_def.model,
             api_key=pc.api_key,
             base_url=pc.base_url,
             extra_headers=extra_headers,
+            proxy=proxy,
         )
     raise ValueError(f"unknown LLM provider: {kind!r}")
 
@@ -1361,15 +1367,28 @@ def _build_attention_probe(
         os.environ.get("ATTENTION_PROBE_MODEL", "").strip() or agent_def.model
     )
 
+    # Proxy resolution: ``ATTENTION_PROBE_HTTPS_PROXY`` is the
+    # dedicated knob for routing probe traffic through a forward proxy
+    # (e.g. when the probe endpoint is geo-blocked but the main LLM
+    # is direct). Falls back to ``OPENAI_HTTPS_PROXY`` so a single
+    # proxy env var covers both if desired. ``None`` = direct.
+    proxy = (
+        os.environ.get("ATTENTION_PROBE_HTTPS_PROXY", "").strip()
+        or os.environ.get("OPENAI_HTTPS_PROXY", "").strip()
+        or None
+    )
+
     probe = AttentionProbe(
         api_key=api_key,
         base_url=base_url,
         model=model,
+        proxy=proxy,
     )
     logger.info(
         "group_batch.attention_probe.configured",
         model=model,
         base_url=base_url,
+        proxy=proxy or "(direct)",
     )
     return probe
 
