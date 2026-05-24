@@ -43,4 +43,13 @@ test.describe("登录 → 对话 → 菜单导航", () => {
       timeout: 8_000,
     });
   });
+
+  test("对话消息区保留独立滚动容器", async ({ page }) => {
+    await login(page);
+    await expect(page.locator(".chat")).toBeVisible();
+    await expect(page.locator(".chat")).toHaveCSS("overflow-x", "hidden");
+    await expect(page.locator(".chat")).toHaveCSS("overflow-y", "hidden");
+    await expect(page.locator(".msg-list")).toHaveCSS("overflow-y", "auto");
+    await expect(page.locator(".msg-list")).toHaveCSS("min-height", "0px");
+  });
 });

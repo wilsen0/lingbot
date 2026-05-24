@@ -62,6 +62,7 @@ export function useKv() {
     }
 
     loadingOwn.value = true;
+    ownValues.value = {};
     const pairs = await Promise.all(
       readable.map(async (asset): Promise<[string, OwnAssetValue]> => {
         try {
@@ -94,6 +95,7 @@ export function useKv() {
     const seq = ++rankSeq;
     loadingRank.value = true;
     rankError.value = null;
+    rankRows.value = [];
     try {
       const response = await publicRankKv({
         scope: asset.scope,

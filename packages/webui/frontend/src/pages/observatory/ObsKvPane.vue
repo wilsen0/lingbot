@@ -14,28 +14,72 @@
           <span class="asset-panel__metric font-mono">{{ mineSummary }}</span>
         </header>
 
-        <ul class="mine-list" aria-label="我的资产">
-          <li
-            v-for="asset in personalAssets"
-            :key="asset.id"
-            class="mine-item"
-            :class="{
-              'is-rank': asset.visibleInRank,
-              'is-active': asset.id === selectedRankAssetId,
-            }"
-          >
-            <span class="mine-item__mark font-display" aria-hidden="true">
-              {{ assetBadge(asset) }}
-            </span>
-            <span class="mine-item__main">
-              <span class="mine-item__name">{{ asset.label }}</span>
-              <span class="mine-item__desc">{{ asset.description }}</span>
-            </span>
-            <span class="mine-item__value font-mono" :class="'is-' + ownAssetStatus(asset)">
-              {{ ownAssetLabel(asset) }}
-            </span>
-          </li>
-        </ul>
+        <details class="mine-group" open>
+          <summary class="mine-group__summary">
+            <span class="mine-group__title">已持有</span>
+            <span class="mine-group__meta">{{ heldAssets.length }} 项</span>
+            <span class="mine-group__chevron" aria-hidden="true">›</span>
+          </summary>
+
+          <UiEmptyState v-if="loadingOwn" variant="compact">正在读取资产……</UiEmptyState>
+          <UiEmptyState v-else-if="heldAssets.length === 0" variant="compact">
+            暂无已持有资产
+          </UiEmptyState>
+
+          <ul v-else class="mine-list" aria-label="已持有资产">
+            <li
+              v-for="asset in heldAssets"
+              :key="asset.id"
+              class="mine-item"
+              :class="{
+                'is-rank': asset.visibleInRank,
+                'is-active': asset.id === selectedRankAssetId,
+              }"
+            >
+              <span class="mine-item__mark font-display" aria-hidden="true">
+                {{ assetBadge(asset) }}
+              </span>
+              <span class="mine-item__main">
+                <span class="mine-item__name">{{ asset.label }}</span>
+                <span class="mine-item__desc">{{ asset.description }}</span>
+              </span>
+              <span class="mine-item__value font-mono" :class="'is-' + ownAssetStatus(asset)">
+                {{ ownAssetLabel(asset) }}
+              </span>
+            </li>
+          </ul>
+        </details>
+
+        <details class="mine-group">
+          <summary class="mine-group__summary">
+            <span class="mine-group__title">其他资产</span>
+            <span class="mine-group__meta">{{ otherAssets.length }} 项</span>
+            <span class="mine-group__chevron" aria-hidden="true">›</span>
+          </summary>
+
+          <UiEmptyState v-if="otherAssets.length === 0" variant="compact">
+            没有更多可读资产
+          </UiEmptyState>
+
+          <ul v-else class="mine-list mine-list--muted" aria-label="其他资产">
+            <li
+              v-for="asset in otherAssets"
+              :key="asset.id"
+              class="mine-item mine-item--muted"
+            >
+              <span class="mine-item__mark font-display" aria-hidden="true">
+                {{ assetBadge(asset) }}
+              </span>
+              <span class="mine-item__main">
+                <span class="mine-item__name">{{ asset.label }}</span>
+                <span class="mine-item__desc">{{ asset.description }}</span>
+              </span>
+              <span class="mine-item__value font-mono" :class="'is-' + ownAssetStatus(asset)">
+                {{ ownAssetLabel(asset) }}
+              </span>
+            </li>
+          </ul>
+        </details>
       </section>
 
       <section class="asset-panel asset-panel--stats" aria-labelledby="asset-stats-title">
@@ -132,6 +176,7 @@ const selectedRankAssetId = ref("");
 
 const loadingNs = kv.loadingNs;
 const nsError = kv.nsError;
+const loadingOwn = kv.loadingOwn;
 const loadingRank = kv.loadingRank;
 const rankError = kv.rankError;
 const rankRows = kv.rankRows;
@@ -140,6 +185,12 @@ const assets = computed(() => toAssetCards(kv.ns.value));
 const ownerKey = computed(() => auth.profile?.sub ?? "");
 
 const personalAssets = computed(() => assets.value.filter((asset) => asset.ownReadable));
+const heldAssets = computed(() =>
+  personalAssets.value.filter((asset) => kv.ownValues.value[asset.id]?.status === "held"),
+);
+const otherAssets = computed(() =>
+  personalAssets.value.filter((asset) => kv.ownValues.value[asset.id]?.status !== "held"),
+);
 const collectionAssets = computed(() =>
   assets.value
     .filter((asset) => asset.visibleInCollection)
@@ -155,8 +206,7 @@ const collectionMaxCount = computed(() => Math.max(1, ...collectionAssets.value.
 const mineSummary = computed(() => {
   if (!ownerKey.value) return "未登录";
   if (kv.loadingOwn.value) return "读取中";
-  const held = personalAssets.value.filter((asset) => kv.ownValues.value[asset.id]?.status === "held").length;
-  return `${held}/${personalAssets.value.length}`;
+  return `${heldAssets.value.length}/${personalAssets.value.length}`;
 });
 
 const collectionSummary = computed(() => `${collectionAssets.value.length} 种`);
@@ -352,6 +402,62 @@ function formatAssetValue(raw: string | number, unit?: string): string {
   gap: 8px;
 }
 
+.mine-list--muted {
+  margin-top: 6px;
+}
+
+.mine-group {
+  padding-top: 6px;
+}
+
+.mine-group + .mine-group {
+  margin-top: 10px;
+}
+
+.mine-group__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  cursor: pointer;
+  list-style: none;
+  color: rgb(var(--color-ink-soft));
+  user-select: none;
+}
+
+.mine-group__summary::-webkit-details-marker {
+  display: none;
+}
+
+.mine-group__title {
+  color: rgb(var(--color-ink));
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: var(--track-fn);
+}
+
+.mine-group__meta {
+  padding: 3px 7px;
+  border: 1px solid rgb(var(--color-ink) / 0.06);
+  border-radius: 999px;
+  background: rgb(var(--color-bg) / 0.16);
+  color: rgb(var(--color-ink-soft));
+  font-size: 11px;
+  letter-spacing: var(--track-fn);
+}
+
+.mine-group__chevron {
+  margin-left: auto;
+  color: rgb(var(--color-ink-soft));
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--dur-base) var(--ease-stand);
+}
+
+.mine-group[open] .mine-group__chevron {
+  transform: rotate(90deg);
+}
+
 .mine-item {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
@@ -376,6 +482,12 @@ function formatAssetValue(raw: string | number, unit?: string): string {
 .mine-item.is-active {
   border-color: rgb(var(--color-sorrow) / 0.22);
   background: linear-gradient(180deg, rgb(var(--color-sorrow) / 0.1), rgb(var(--color-bg) / 0.14));
+}
+
+.mine-item--muted {
+  border-color: rgb(var(--color-ink) / 0.035);
+  background: rgb(var(--color-bg) / 0.08);
+  opacity: 0.88;
 }
 
 .mine-item__mark {

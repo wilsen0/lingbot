@@ -177,7 +177,10 @@ defineExpose({
 <style scoped>
 .msg-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
   display: flex;
   justify-content: center;
   padding: var(--pad-y) var(--pad-x) calc(var(--chat-dock-h, 96px) + 24px + var(--vv-bottom, 0px));
@@ -198,6 +201,7 @@ defineExpose({
 .msg-list__center {
   width: 100%;
   max-width: 780px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding-inline: clamp(0px, 1vw, 12px);

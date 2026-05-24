@@ -210,6 +210,8 @@ onBeforeUnmount(() => {
    * shell-main 又能滚, 失去"锁住外层滚动"的意义).
    */
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   position: relative;
 }
 
