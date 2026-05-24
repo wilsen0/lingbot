@@ -546,7 +546,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/files/qrdic/{rel}": {
+    "/api/files/assets/{rel}": {
         parameters: {
             query?: never;
             header?: never;
@@ -554,17 +554,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Qrdic Asset
-         * @description Stream an image from the bot's ``QRDic/data`` tree.
+         * Get Bot Asset
+         * @description Stream an image from the bot's ``assets/`` tree.
          *
-         *     Sample request: ``GET /api/files/qrdic/picture/思思.jpg`` →
-         *     ``<bot_base_dir>/QRDic/data/picture/思思.jpg``.
+         *     Sample request: ``GET /api/files/assets/picture/思思.jpg`` →
+         *     ``<bot_base_dir>/assets/picture/思思.jpg``.
          *
-         *     The asset root is plumbed via ``app.state.runtime.qrdic_asset_root``
-         *     (set by :func:`attach_bot_to_webui`). Without a root configured we
-         *     return 404 rather than guessing — same as a missing file.
+         *     The asset root is plumbed via :func:`set_asset_root` (called by
+         *     ``attach_bot_to_webui``). Without a root configured we return 404
+         *     rather than guessing — same as a missing file.
          */
-        get: operations["get_qrdic_asset_api_files_qrdic__rel__get"];
+        get: operations["get_bot_asset_api_files_assets__rel__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1350,6 +1350,7 @@ export interface operations {
                 limit?: number;
                 kind?: string | null;
                 scope_kind?: string | null;
+                mine?: boolean;
             };
             header?: {
                 authorization?: string | null;
@@ -2167,7 +2168,7 @@ export interface operations {
             };
         };
     };
-    get_qrdic_asset_api_files_qrdic__rel__get: {
+    get_bot_asset_api_files_assets__rel__get: {
         parameters: {
             query?: never;
             header?: never;

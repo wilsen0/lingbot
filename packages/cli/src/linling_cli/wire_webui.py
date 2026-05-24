@@ -75,45 +75,40 @@ class _WebUIAuditSink:
         )
 
 
-def _install_qrdic_asset_root(bot: RunningBot) -> None:
-    """Set the ``/api/files/qrdic/...`` asset root from the bot's base dir.
+def _install_asset_root(bot: RunningBot) -> None:
+    """Set the ``/api/files/assets/...`` root from the bot's base dir.
 
-    QRDic rules emit image paths like
-    ``/storage/emulated/0/QR/QRDic/data/picture/思思.jpg``. The chat
-    pipeline strips that prefix and rewrites it to a WebUI-served URL
-    ``/api/files/qrdic/picture/思思.jpg``; the assets themselves live
-    on disk under ``<base_dir>/QRDic/data``.
+    DSL rules emit image URLs as the migrator shorthand ``@pic:NAME``.
+    The chat dispatcher (see :func:`_rewrite_image_url`) rewrites
+    those to ``/api/files/assets/picture/NAME``; the assets live on
+    disk under ``<base_dir>/assets/``.
 
-    If that directory doesn't exist (asset-less example, dev sandbox)
-    we leave the endpoint disabled. It's a soft guarantee anyway —
-    a 404 from the asset endpoint just means a broken ``<img>`` tag,
-    not a broken bot.
+    If the directory is missing (asset-less example, dev sandbox) we
+    leave the endpoint disabled. A 404 from the asset endpoint just
+    means a broken ``<img>`` tag, not a broken bot.
     """
-    from linling_webui.routers.files import set_qrdic_asset_root  # noqa: PLC0415
+    from linling_webui.routers.files import set_asset_root  # noqa: PLC0415
+
+    from linling_cli.bootstrap import _resolve_asset_root  # noqa: PLC0415
 
     base = Path(bot._base_dir) if bot._base_dir else Path.cwd()
-    candidate = base / "QRDic" / "data"
-    if not candidate.is_dir():
-        # Fall back to looking at the repo-root QRDic dir — the bot
-        # workspace at ``<repo>/bot/`` shares the repo's top-level
-        # ``QRDic/`` rather than vendoring a copy.
-        repo_candidate = base.parent / "QRDic" / "data"
-        if repo_candidate.is_dir():
-            candidate = repo_candidate
-        else:
-            logger.info(
-                "qrdic_assets.no_root",
-                bot_id=bot.config.bot_id,
-                searched=[str(base / "QRDic" / "data"), str(repo_candidate)],
-            )
-            set_qrdic_asset_root(None)
-            return
+    chosen = _resolve_asset_root(base)
+
+    if chosen is None:
+        logger.info(
+            "bot_assets.no_root",
+            bot_id=bot.config.bot_id,
+            searched=str(base / "assets"),
+        )
+        set_asset_root(None)
+        return
+
     logger.info(
-        "qrdic_assets.root_set",
+        "bot_assets.root_set",
         bot_id=bot.config.bot_id,
-        path=str(candidate),
+        path=str(chosen),
     )
-    set_qrdic_asset_root(candidate)
+    set_asset_root(chosen)
 
 
 def _install_audit_reader(state: object, bot: RunningBot) -> None:
@@ -265,13 +260,12 @@ def attach_bot_to_webui(
     # pre-set ``state.audit`` keep their reader.
     _install_audit_reader(state, bot)
 
-    # Wire the QRDic asset root so ``/api/files/qrdic/...`` can serve
-    # legacy ``/storage/emulated/0/QR/QRDic/data/picture/X.jpg``
-    # references that DSL rules emit. The conventional location is
-    # ``<base_dir>/QRDic/data``; if that doesn't exist we leave the
-    # endpoint disabled (asset-less deployments still work because
-    # remote ``±img=https://...±`` URLs never touched this code path).
-    _install_qrdic_asset_root(bot)
+    # Wire the bot asset root so ``/api/files/assets/...`` can serve
+    # the bundled picture sprites referenced by DSL rules via
+    # ``@pic:NAME``. Canonical location is ``<base_dir>/assets``;
+    # asset-less deployments still work because remote
+    # ``±img=https://...±`` URLs never touched this code path.
+    _install_asset_root(bot)
 
     # Route router audit emissions into the WebUI's AuditReader so the
     # ``/api/audit`` endpoint and ``/ws/rules/hits`` feed light up. We
@@ -711,8 +705,8 @@ def _collect_web_segments(actions: list[Action]) -> list[WebChatSegment]:
     Each ``Action.segments`` already follows the order the DSL emit
     statements ran in. We copy that order through, mapping
     :class:`TextSegment` and :class:`ImageSegment` to web-shaped
-    segments and rewriting QRDic legacy filesystem paths to
-    ``/api/files/qrdic/...`` URLs the browser can fetch.
+    segments and rewriting ``@pic:NAME`` shorthands to
+    ``/api/files/assets/...`` URLs the browser can fetch.
 
     Other segment kinds (``AtSegment``, ``CardSegment`` …) aren't
     representable in the web chat bubble; we drop them. The original
@@ -733,21 +727,13 @@ def _collect_web_segments(actions: list[Action]) -> list[WebChatSegment]:
     return out
 
 
-# QRDic's original Java client read images from this absolute path on
-# Android. The WebUI serves the same files via the ``/api/files/qrdic``
-# endpoint (see ``routers/files.py``) so we just need to rewrite the
-# prefix to expose them to the browser.
-_QRDIC_LEGACY_PREFIX = "/storage/emulated/0/QR/QRDic/data/"
-_WEB_ASSET_PREFIX = "/api/files/qrdic/"
-# The migrator rewrites legacy ``/storage/.../picture/X.jpg`` paths to
-# the more readable ``@pic:X`` (suffix optional) shorthand, which the
-# DSL emits verbatim. We reverse that here so the browser still gets
-# a real ``/api/files/qrdic/picture/X.jpg`` URL.
-_QRDIC_PIC_SCHEME = "@pic:"
-# Same-origin proxy for remote ``http(s)://...`` images. Strict CSP
-# (``img-src 'self'``) means the browser won't load third-party hosts
-# directly; routing them through this endpoint keeps the policy tight
-# while still rendering the images. See ``routers/files.py``.
+# DSL ``±img=...±`` URL rewrite targets. The migrator emits
+# ``@pic:NAME`` for asset references; the chat dispatcher rewrites
+# that to ``/api/files/assets/picture/NAME`` so the browser fetches
+# from same-origin (CSP friendly). Remote ``http(s)://`` URLs go
+# through ``/api/files/proxy?url=...`` for the same reason.
+_ASSET_SCHEME = "@pic:"
+_WEB_ASSET_PREFIX = "/api/files/assets/"
 _PROXY_PREFIX = "/api/files/proxy?url="
 
 # WebUI synthetic DM scope id. ``"0"`` is the QRSpeed convention for
@@ -769,20 +755,14 @@ _WEBUI_SESSION_LOCK_TIMEOUT_S = 20.0
 def _rewrite_image_url(raw: str) -> str:
     """Map a DSL-emitted image source to a browser-reachable URL.
 
-    * ``http://...`` / ``https://...`` — proxy through ``/api/files/proxy``
-      so strict CSP (``img-src 'self'``) can still render them, and the
-      client never talks to third-party hosts directly.
-    * ``//host/path`` — assume https, then proxy as above.
-    * ``/storage/emulated/0/QR/QRDic/data/<rel>`` — rewrite to the
-      WebUI asset endpoint.
-    * ``@pic:<name>`` (migrator output) — rewrite to
-      ``/api/files/qrdic/picture/<name>`` and append a default
-      ``.jpg`` extension if the shorthand has no suffix.
-    * Any other absolute filesystem path — drop (return empty) so the
-      bubble doesn't render a broken ``<img>`` for paths the browser
-      can't reach.
-    * Empty / ``base64://`` — currently unsupported in the web bubble;
-      drop for now.
+    * ``http://...`` / ``https://...`` / ``//host/path`` — proxy through
+      ``/api/files/proxy`` so strict CSP (``img-src 'self'``) can still
+      render them; the client never talks to third-party hosts directly.
+    * ``@pic:<name>`` — rewrite to ``/api/files/assets/picture/<name>``,
+      defaulting the extension to ``.jpg`` when the shorthand omits it.
+    * Anything else (absolute filesystem paths, ``base64://``, empty) —
+      drop (return empty) so the bubble doesn't render a broken
+      ``<img>`` for sources the browser can't reach.
     """
     if not raw:
         return ""
@@ -790,11 +770,8 @@ def _rewrite_image_url(raw: str) -> str:
         return _PROXY_PREFIX + quote("https:" + raw, safe="")
     if raw.startswith(("http://", "https://")):
         return _PROXY_PREFIX + quote(raw, safe="")
-    if raw.startswith(_QRDIC_LEGACY_PREFIX):
-        rel = raw[len(_QRDIC_LEGACY_PREFIX) :]
-        return _WEB_ASSET_PREFIX + rel
-    if raw.startswith(_QRDIC_PIC_SCHEME):
-        name = raw[len(_QRDIC_PIC_SCHEME) :]
+    if raw.startswith(_ASSET_SCHEME):
+        name = raw[len(_ASSET_SCHEME) :]
         if not name:
             return ""
         # The shorthand is ambiguous about the suffix; default to .jpg

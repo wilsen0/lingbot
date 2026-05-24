@@ -56,5 +56,9 @@ logs/
 # Allow example env
 !.env.example
 
-# Keep old project reference but don't lint it
-QRDic/data/**/*.bak
+# QRDic/ holds the legacy QRSpeed Android project as read-only
+# reference (dicpro.txt and the .properties tree) — useful for
+# investigating migration questions but never shipped. Live bot
+# assets moved to bot/assets/ in 2026-05; keep the reference tree
+# untracked so it doesn't bloat history or drift.
+QRDic/

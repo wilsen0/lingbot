@@ -230,8 +230,7 @@
 | :- | :- | :-: |
 | 文本（任意非控制行） | `OutputText`，含 `%var%` 插值 | ✅ |
 | `±img=src±` | `OutputImage` → `ImageSegment` | ✅ |
-| `±img=/storage/.../picture/X.jpg±` | 自动通过 WebUI 改写为 `/api/files/qrdic/picture/X.jpg` | ✅ |
-| `±img=@pic:X±`（migrator 短写） | 同上，自动补 `.jpg` | ✅ |
+| `±img=@pic:X±` | WebUI dispatcher 改写为 `/api/files/assets/picture/X.jpg`（无后缀默认补 `.jpg`），OneBot 适配器改写为 `file:///<base_dir>/assets/picture/X.jpg`；资产存放于 `bot/assets/picture/` | ✅ |
 | 远程 `±img=https://...±` | WebUI dispatcher 改写为 `/api/files/proxy?url=...` 走同源代理（CSP 安全） | ✅ |
 | `±ptt=URL±` | `OutputVoice` → `VoiceSegment`，**新加** | ✅ |
 | `±fimg=URL±` | `OutputFlashImage` → `ImageSegment(extras={"flash":True})`，**新加** | ✅ |

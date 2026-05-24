@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -24,7 +25,7 @@ import websockets
 from linling_core.bus import EventBus
 from linling_core.events import Action, Event, Scope, User
 from linling_core.onebot_codec import from_onebot_msg, to_onebot_msg
-from linling_core.segments import PokeSegment, TextSegment
+from linling_core.segments import ImageSegment, PokeSegment, Segment, TextSegment
 
 logger = structlog.get_logger(__name__)
 
@@ -127,11 +128,19 @@ class OneBotAdapter:
         ws_url: str = "ws://127.0.0.1:8080",
         access_token: str = "",
         bot_id: str = "",
+        asset_root: Path | None = None,
     ) -> None:
         self._bus = bus
         self._ws_url = ws_url
         self._access_token = access_token
         self._bot_id = bot_id
+        # Filesystem root for resolving DSL-emitted ``@pic:NAME``
+        # asset shorthands. Set at bootstrap time from ``<base_dir>/
+        # assets``. When ``None`` we leave the URLs untouched and let
+        # the OneBot endpoint try to fetch them itself, which produces
+        # broken images for the kinds of refs that need a local file
+        # (NapCat won't read ``@pic:`` either).
+        self._asset_root: Path | None = asset_root.resolve() if asset_root else None
         self._ws: Any = None  # websockets connection
         self._running = False
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -635,13 +644,99 @@ class OneBotAdapter:
     # Action builder
     # ------------------------------------------------------------------
 
+    # DSL rules emit image URLs as ``@pic:NAME`` (the migrator's
+    # shorthand). NapCat can't fetch that — we rewrite it to an
+    # absolute ``file://...`` path so the OneBot endpoint reads from
+    # disk directly.
+    _ASSET_SCHEME = "@pic:"
+
+    def _resolve_asset_url(self, raw: str) -> str:
+        """Map ``@pic:NAME`` to an absolute ``file://...`` path.
+
+        Returns the URL unchanged when:
+        * the string isn't a known asset shorthand,
+        * no asset root is configured, or
+        * resolution would escape the asset root (path traversal).
+        """
+        if not raw or self._asset_root is None:
+            return raw
+        if not raw.startswith(self._ASSET_SCHEME):
+            return raw
+
+        name = raw[len(self._ASSET_SCHEME) :]
+        if not name:
+            return raw
+        relpath = Path("picture") / name
+        # Default to .jpg when the shorthand omits an extension —
+        # mirrors the WebUI rewriter and matches what the migrator
+        # emits. If the requested extension doesn't exist on disk
+        # but a sibling does, walk through common alternates so
+        # ``.jpg`` → ``.svg`` promotion works transparently.
+        if "." not in relpath.name:
+            relpath = relpath.with_suffix(".jpg")
+        target = self._safe_join(relpath)
+        if target is None or not target.is_file():
+            stem = relpath.stem
+            target = None
+            for ext in (".svg", ".jpg", ".png", ".gif", ".webp", ".jpeg"):
+                alt = self._safe_join(relpath.with_name(f"{stem}{ext}"))
+                if alt is not None and alt.is_file():
+                    target = alt
+                    break
+        if target is None:
+            return raw
+        return f"file://{target}"
+
+    def _safe_join(self, rel: Path) -> Path | None:
+        """Resolve ``self._asset_root / rel`` and reject path traversal.
+
+        Returns ``None`` if ``rel`` is absolute or escapes the root.
+        """
+        root = self._asset_root
+        if root is None or rel.is_absolute():
+            return None
+        target = (root / rel).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+        return target
+
+    def _resolve_asset_segments(
+        self, segments: list[Segment]
+    ) -> list[Segment]:
+        """Return ``segments`` with image URLs rewritten in place.
+
+        Non-image segments pass through unchanged; image segments with
+        a URL we don't recognize (remote ``http(s)``, raw ``file://``,
+        ``base64://``) also pass through. Mutates a shallow copy so
+        the caller's list isn't aliased into the OneBot payload.
+        """
+        out: list[Segment] = []
+        for seg in segments:
+            if isinstance(seg, ImageSegment) and seg.url:
+                resolved = self._resolve_asset_url(seg.url)
+                if resolved != seg.url:
+                    out.append(
+                        ImageSegment(
+                            url=resolved,
+                            path=seg.path,
+                            b64=seg.b64,
+                            alt=seg.alt,
+                            extras=seg.extras,
+                        )
+                    )
+                    continue
+            out.append(seg)
+        return out
+
     def _build_action_payload(self, action: Action) -> dict[str, Any]:
         """Translate a linling Action into a OneBot API call payload."""
         kind = action.kind
         target = action.target
 
         if kind in ("reply", "send"):
-            ob_msg = to_onebot_msg(action.segments)
+            ob_msg = to_onebot_msg(self._resolve_asset_segments(action.segments))
             params: dict[str, Any] = {"message": ob_msg}
             if target.kind == "group":
                 params["message_type"] = "group"

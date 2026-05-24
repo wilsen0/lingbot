@@ -393,6 +393,16 @@
             }
           },
           {
+            "name": "mine",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Mine"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -2245,14 +2255,14 @@
         }
       }
     },
-    "/api/files/qrdic/{rel}": {
+    "/api/files/assets/{rel}": {
       "get": {
         "tags": [
           "files"
         ],
-        "summary": "Get Qrdic Asset",
-        "description": "Stream an image from the bot's ``QRDic/data`` tree.\n\nSample request: ``GET /api/files/qrdic/picture/思思.jpg`` →\n``<bot_base_dir>/QRDic/data/picture/思思.jpg``.\n\nThe asset root is plumbed via ``app.state.runtime.qrdic_asset_root``\n(set by :func:`attach_bot_to_webui`). Without a root configured we\nreturn 404 rather than guessing — same as a missing file.",
-        "operationId": "get_qrdic_asset_api_files_qrdic__rel__get",
+        "summary": "Get Bot Asset",
+        "description": "Stream an image from the bot's ``assets/`` tree.\n\nSample request: ``GET /api/files/assets/picture/思思.jpg`` →\n``<bot_base_dir>/assets/picture/思思.jpg``.\n\nThe asset root is plumbed via :func:`set_asset_root` (called by\n``attach_bot_to_webui``). Without a root configured we return 404\nrather than guessing — same as a missing file.",
+        "operationId": "get_bot_asset_api_files_assets__rel__get",
         "parameters": [
           {
             "name": "rel",

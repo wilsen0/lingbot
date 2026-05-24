@@ -198,13 +198,12 @@ def image_chat_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
     _write(
         tmp_path,
         "rules/main.ling",
-        # Trigger emits a text line, then a remote image, then a
-        # legacy-path image that must be rewritten, then a `@pic:`
-        # shorthand the migrator produces.
+        # Trigger emits a text line, a remote image, and a `@pic:`
+        # shorthand. Both image shapes need to round-trip through the
+        # web dispatcher into a URL the browser can fetch.
         "我的灵玉\n"
         "0\n"
         "±img=https://example.com/badge.png±\n"
-        "±img=/storage/emulated/0/QR/QRDic/data/picture/思思.jpg±\n"
         "±img=@pic:思思±\n",
     )
     bot_yaml = """\
@@ -217,8 +216,8 @@ rules:
 """
     cfg_path = _write(tmp_path, "bot.yaml", bot_yaml)
 
-    # Lay down a fake QRDic asset so the asset-root finder picks it up.
-    asset_dir = tmp_path / "QRDic" / "data" / "picture"
+    # Lay down a fake bundled asset so the asset-root finder picks it up.
+    asset_dir = tmp_path / "assets" / "picture"
     asset_dir.mkdir(parents=True)
     (asset_dir / "思思.jpg").write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
 
@@ -265,24 +264,22 @@ def test_image_segment_returns_remote_and_rewritten_local_urls(image_chat_app) -
     assert body["source"] == "dsl"
     segments = body["segments"]
     kinds = [s["kind"] for s in segments]
-    # Order matters: text first, then three images (remote-via-proxy,
-    # legacy path, ``@pic:`` shorthand).
-    assert kinds == ["text", "image", "image", "image"]
+    # Order matters: text first, then two images (remote-via-proxy +
+    # ``@pic:`` shorthand).
+    assert kinds == ["text", "image", "image"]
     assert "0" in segments[0]["text"]
     # Remote URLs are routed through ``/api/files/proxy`` so the
     # browser only ever fetches from same-origin (CSP friendly).
     assert segments[1]["url"].startswith("/api/files/proxy?url=")
     assert "example.com" in segments[1]["url"]
-    # Legacy /storage/... path was rewritten to the WebUI asset endpoint.
-    assert segments[2]["url"] == "/api/files/qrdic/picture/思思.jpg"
     # ``@pic:思思`` (migrator output) is rewritten with default .jpg.
-    assert segments[3]["url"] == "/api/files/qrdic/picture/思思.jpg"
+    assert segments[2]["url"] == "/api/files/assets/picture/思思.jpg"
 
 
-def test_qrdic_asset_endpoint_serves_image(image_chat_app) -> None:
+def test_asset_endpoint_serves_image(image_chat_app) -> None:
     client, token = image_chat_app
     r = client.get(
-        "/api/files/qrdic/picture/思思.jpg",
+        "/api/files/assets/picture/思思.jpg",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
@@ -290,23 +287,23 @@ def test_qrdic_asset_endpoint_serves_image(image_chat_app) -> None:
     assert r.content.startswith(b"\xff\xd8\xff\xe0")
 
 
-def test_qrdic_asset_endpoint_rejects_unknown_extension(image_chat_app, tmp_path) -> None:
+def test_asset_endpoint_rejects_unknown_extension(image_chat_app, tmp_path) -> None:
     client, token = image_chat_app
     # Drop a non-image file inside the asset root and verify it 404s
     # — the endpoint only serves whitelisted extensions.
-    fake = tmp_path / "QRDic" / "data" / "picture" / "secret.txt"
+    fake = tmp_path / "assets" / "picture" / "secret.txt"
     fake.write_text("nope", encoding="utf-8")
     r = client.get(
-        "/api/files/qrdic/picture/secret.txt",
+        "/api/files/assets/picture/secret.txt",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 404
 
 
-def test_qrdic_asset_endpoint_404s_missing_file(image_chat_app) -> None:
+def test_asset_endpoint_404s_missing_file(image_chat_app) -> None:
     client, token = image_chat_app
     r = client.get(
-        "/api/files/qrdic/picture/does-not-exist.png",
+        "/api/files/assets/picture/does-not-exist.png",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 404

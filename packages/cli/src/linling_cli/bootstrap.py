@@ -55,7 +55,9 @@ from linling_dsl.parser import parse as parse_dsl
 
 if TYPE_CHECKING:
     from linling_agent.agent_def import AgentDef
+    from linling_agent.attention_probe import AttentionProbe
     from linling_agent.llm import LLMProvider
+    from linling_core.config import AgentConfig
     from linling_core.router import ChatDispatcher
 
 logger = structlog.get_logger(__name__)
@@ -747,7 +749,7 @@ async def bootstrap_bot(
     #    the sink closure can look up adapter.send by platform without
     #    juggling late-binding references.
     bus = EventBus()
-    adapters: list[AdapterHandle] = _build_adapters(config, bus)
+    adapters: list[AdapterHandle] = _build_adapters(config, bus, base_dir=base)
     if extra_adapters:
         adapters.extend(extra_adapters)
 
@@ -1041,6 +1043,9 @@ def _build_chat_dispatcher(
             )
             if name
         )
+        attention_probe = _build_attention_probe(
+            agent_config=config.agent, agent_def=agent_def
+        )
         dispatcher = GroupBatchChatDispatcher(
             inner=dispatcher,
             config=GroupBatchConfig(
@@ -1053,9 +1058,18 @@ def _build_chat_dispatcher(
                 require_attention=config.agent.group_batch_require_attention,
                 max_hold_s=config.agent.group_batch_max_hold_s,
                 bot_names=names,
+                # Flip this on only when we also have a real probe to
+                # inject. The eligibility predicate in
+                # :meth:`GroupBatchChatDispatcher._flush_loop` AND-checks
+                # both flags, so an enabled flag without a probe — or
+                # a probe without the enabled flag — are equivalent
+                # to "no probe", but pairing them here makes the
+                # bootstrap intent explicit.
+                attention_probe_enabled=attention_probe is not None,
             ),
             conversations=conversations,
             bot_id=config.bot_id,
+            probe=attention_probe,
         )
 
     # Scope allowlist for chat-mode (LLM fallback only). DSL handlers
@@ -1279,13 +1293,100 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
     raise ValueError(f"unknown LLM provider: {kind!r}")
 
 
+def _build_attention_probe(
+    *,
+    agent_config: AgentConfig,
+    agent_def: AgentDef,
+) -> AttentionProbe | None:
+    """Resolve credentials and construct the second-stage attention probe.
+
+    Returns ``None`` (and emits exactly one ``info``-level structlog
+    record) when:
+
+    * ``agent_config.group_batch_attention_probe_enabled`` is ``False``
+      (operator opted out via ``bot.yaml``); or
+    * neither ``ATTENTION_PROBE_API_KEY`` nor ``OPENAI_API_KEY`` is set
+      (no usable credentials — auto-skip per Requirement 3).
+
+    Otherwise returns a constructed :class:`AttentionProbe` and emits
+    one ``info`` record describing the resolved model and base URL.
+
+    Credential fallback chain (Requirement 2):
+
+    * ``api_key``: ``ATTENTION_PROBE_API_KEY`` → ``OPENAI_API_KEY`` →
+      probe disabled.
+    * ``base_url``: ``ATTENTION_PROBE_BASE_URL`` → ``OPENAI_BASE_URL``
+      → ``https://api.openai.com/v1``.
+    * ``model``: ``ATTENTION_PROBE_MODEL`` → ``agent_def.model``.
+
+    The function is the only place that translates env state into a
+    probe instance; tests substitute ``os.environ`` and call this
+    helper directly to verify Requirements 2 / 3 / 14.
+    """
+    # Deferred import — same rationale as :func:`_provider_for`. The
+    # probe construction creates an httpx client; commandlines that
+    # never reach this code path keep their zero-cost startup.
+    import os  # noqa: PLC0415
+
+    from linling_agent.attention_probe import AttentionProbe  # noqa: PLC0415
+
+    if not agent_config.group_batch_attention_probe_enabled:
+        logger.info(
+            "group_batch.attention_probe.disabled",
+            reason="config_off",
+        )
+        return None
+
+    # ``or`` chains intentionally treat empty string and unset
+    # identically — that matches how
+    # :func:`linling_agent.agent_def._provider_config_from_dict`
+    # already handles ``OPENAI_API_KEY``.
+    api_key = (
+        os.environ.get("ATTENTION_PROBE_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
+    if not api_key:
+        logger.info(
+            "group_batch.attention_probe.disabled",
+            reason="no_api_key",
+        )
+        return None
+
+    base_url = (
+        os.environ.get("ATTENTION_PROBE_BASE_URL", "").strip()
+        or os.environ.get("OPENAI_BASE_URL", "").strip()
+        or "https://api.openai.com/v1"
+    )
+    model = (
+        os.environ.get("ATTENTION_PROBE_MODEL", "").strip() or agent_def.model
+    )
+
+    probe = AttentionProbe(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+    )
+    logger.info(
+        "group_batch.attention_probe.configured",
+        model=model,
+        base_url=base_url,
+    )
+    return probe
+
+
 # ---------------------------------------------------------------------------
 # Adapters & sink
 # ---------------------------------------------------------------------------
 
 
-def _build_adapters(config: BotConfig, bus: EventBus) -> list[AdapterHandle]:
+def _build_adapters(
+    config: BotConfig,
+    bus: EventBus,
+    *,
+    base_dir: Path | None = None,
+) -> list[AdapterHandle]:
     adapters: list[AdapterHandle] = []
+    asset_root = _resolve_asset_root(base_dir) if base_dir else None
     for spec in config.adapters:
         if spec.kind == "onebot":
             # Deferred: adapter packages may pull in protocol-specific
@@ -1299,6 +1400,7 @@ def _build_adapters(config: BotConfig, bus: EventBus) -> list[AdapterHandle]:
                     ws_url=spec.ws_url,
                     access_token=spec.access_token,
                     bot_id=config.bot_id,
+                    asset_root=asset_root,
                 )
             )
         elif spec.kind == "cli":
@@ -1308,6 +1410,19 @@ def _build_adapters(config: BotConfig, bus: EventBus) -> list[AdapterHandle]:
         else:
             logger.warning("bootstrap.unknown_adapter_kind", kind=spec.kind)
     return adapters
+
+
+def _resolve_asset_root(base: Path) -> Path | None:
+    """Pick the on-disk root for ``@pic:`` resolution.
+
+    The bundle lives at ``<base>/assets`` — that's the only location
+    we look. The OneBot adapter and the WebUI both call this so they
+    agree on where to find sprites; if it's missing both surfaces
+    silently disable asset rewriting (broken images render as broken,
+    which is the right failure mode for a missing bundle).
+    """
+    candidate = base / "assets"
+    return candidate if candidate.is_dir() else None
 
 
 def build_sink(

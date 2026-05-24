@@ -1,11 +1,9 @@
 """`/api/files*` — serve bot-local image assets to the WebUI.
 
-QRDic rule files reference images via the legacy filesystem path
-``/storage/emulated/0/QR/QRDic/data/picture/...``. The DSL VM emits
-those as :class:`ImageSegment` URLs verbatim, but a browser can't
-fetch ``/storage/...``. This router maps the path tail (``picture/X.jpg``,
-``image/Y.png``, etc.) to a real file under the bot's
-``<base_dir>/QRDic/data/`` tree and streams it back.
+DSL rules emit image references as the migrator shorthand
+``@pic:NAME``. The chat dispatcher rewrites that to
+``/api/files/assets/picture/NAME``; this router serves the file
+from the bot's ``<base_dir>/assets/`` tree.
 
 The same router also exposes a tightly-scoped image proxy
 (``/api/files/proxy?url=https://...``) so DSL-emitted *remote*
@@ -20,13 +18,16 @@ The same router also exposes a tightly-scoped image proxy
 
 Security model:
 
-* The asset root is fixed at attach time to ``<bot_base_dir>/QRDic``
-  (or whatever the bot config's ``storage.files`` points at when we
-  expand that). Requests are confined to that directory.
+* The asset root is fixed at attach time to ``<bot_base_dir>/assets``.
+  Requests are confined to that directory.
 * Path traversal (``..``) is rejected up-front — we resolve and
   re-check against the root after :meth:`Path.resolve`.
-* Only the well-known asset extensions (``.jpg`` / ``.png`` /
-  ``.gif`` / ``.webp`` / ``.jpeg``) are served. Anything else 404s.
+* Only well-known asset extensions (``.jpg`` / ``.png`` / ``.gif`` /
+  ``.webp`` / ``.jpeg`` / ``.svg``) are served. SVG is allowed
+  because the bundled pixel-art replacements ship as static (or
+  SMIL-animated) SVG; they're authored in-tree, served with a tight
+  MIME, and never inlined into the SPA, so the usual
+  ``<script>``-injection footgun doesn't apply.
 * No write surface — read-only.
 
 The endpoint is unauthenticated by design: in the deployments we
@@ -51,8 +52,12 @@ router = APIRouter(tags=["files"])
 
 
 # Accepted image extensions. We render images inside chat bubbles, so
-# anything fancy (svg, ico) gets 404'd to keep the surface small.
-_ALLOWED_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+# anything fancy (ico) gets 404'd to keep the surface small. SVG is
+# allowed for in-tree pixel-art replacements that ship as text — the
+# router serves them as a fixed ``image/svg+xml`` media type so the
+# browser renders them inline without any script execution risk
+# (CSP ``img-src`` already blocks <script> inside an <img>).
+_ALLOWED_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"})
 
 # MIME map for the responses; FileResponse can guess too but we set
 # it explicitly so caching and CSP behave deterministically.
@@ -62,6 +67,7 @@ _MIME_BY_EXT: dict[str, str] = {
     ".png": "image/png",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".svg": "image/svg+xml",
 }
 
 # Proxy hard limits. These are deliberately conservative — the proxy
@@ -72,26 +78,21 @@ _PROXY_ALLOWED_PREFIXES = ("image/",)
 _PROXY_REDIRECT_LIMIT = 3
 
 
-@router.get("/qrdic/{rel:path}")
-async def get_qrdic_asset(rel: str) -> Response:
-    """Stream an image from the bot's ``QRDic/data`` tree.
+@router.get("/assets/{rel:path}")
+async def get_bot_asset(rel: str) -> Response:
+    """Stream an image from the bot's ``assets/`` tree.
 
-    Sample request: ``GET /api/files/qrdic/picture/思思.jpg`` →
-    ``<bot_base_dir>/QRDic/data/picture/思思.jpg``.
+    Sample request: ``GET /api/files/assets/picture/思思.jpg`` →
+    ``<bot_base_dir>/assets/picture/思思.jpg``.
 
-    The asset root is plumbed via ``app.state.runtime.qrdic_asset_root``
-    (set by :func:`attach_bot_to_webui`). Without a root configured we
-    return 404 rather than guessing — same as a missing file.
+    The asset root is plumbed via :func:`set_asset_root` (called by
+    ``attach_bot_to_webui``). Without a root configured we return 404
+    rather than guessing — same as a missing file.
     """
 
-    # We can't easily get the request via dependency injection at the
-    # top-level decorator without expanding the signature, so reach
-    # into the active request through ``starlette.requests`` later.
-    # Simpler: read the asset root from a module-level setter wired
-    # at attach time.
     root = _ASSET_ROOT.get()
     if root is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "qrdic asset root not configured")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "asset root not configured")
 
     target = (root / rel).resolve()
     if not _is_within(target, root.resolve()):
@@ -104,8 +105,6 @@ async def get_qrdic_asset(rel: str) -> Response:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
 
     media_type = _MIME_BY_EXT.get(target.suffix.lower(), "application/octet-stream")
-    # 1 hour cache: assets rarely change, but the bot operator may
-    # refresh them out-of-band — we don't want to pin them forever.
     return FileResponse(
         target,
         media_type=media_type,
@@ -185,7 +184,7 @@ async def proxy_remote_image(
 
 
 class _AssetRoot:
-    """Process-singleton holder for the active QRDic asset root.
+    """Process-singleton holder for the active bot asset root.
 
     Avoids the FastAPI ``app.state`` indirection in the route handler
     (which would force every request to look it up). The bootstrap
@@ -206,8 +205,8 @@ class _AssetRoot:
 _ASSET_ROOT = _AssetRoot()
 
 
-def set_qrdic_asset_root(root: Path | None) -> None:
-    """Wire the on-disk root from which ``/api/files/qrdic/...`` serves.
+def set_asset_root(root: Path | None) -> None:
+    """Wire the on-disk root from which ``/api/files/assets/...`` serves.
 
     Called by :func:`attach_bot_to_webui` after the bot is bootstrapped.
     Pass ``None`` to disable serving (the endpoint will start 404'ing).

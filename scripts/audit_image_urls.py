@@ -12,9 +12,12 @@ For each unique URL we record:
 * ``size`` — bytes downloaded (HEAD-emulated by GET-first-N for hosts
   that reject HEAD).
 
-Local references — ``/storage/.../picture/X.jpg`` and ``@pic:X.jpg`` —
-get a side-table noting whether the file actually exists on disk under
-``QRDic/data/picture/``.
+Local references — ``/storage/.../picture/X.jpg`` and ``@pic:X`` —
+get a side-table noting whether the file actually exists on disk
+under ``bot/assets/picture/`` (the canonical post-2026-05 location).
+The side-table tolerates ``.jpg`` ↔ ``.svg`` promotion so the
+audit doesn't false-positive on legacy refs whose replacement art
+ships as SVG.
 
 Run:
 
@@ -35,7 +38,10 @@ import httpx
 
 REPO = Path(__file__).resolve().parents[1]
 DICPRO = REPO / "QRDic" / "dicpro.txt"
-PICTURE_DIR = REPO / "QRDic" / "data" / "picture"
+# Bundled bot assets — the canonical (post-2026-05) location. The
+# old QRDic/data/picture path is no longer checked: assets live in
+# the bot workspace now, full stop.
+PICTURE_DIR = REPO / "bot" / "assets" / "picture"
 
 _IMG_RE = re.compile(r"±img=([^±]+)±")
 _QRDIC_LEGACY_PREFIX = "/storage/emulated/0/QR/QRDic/data/"
@@ -69,15 +75,27 @@ async def _check_remote(client: httpx.AsyncClient, url: str) -> tuple[str, str, 
 
 
 def _check_local(rel: str) -> str:
-    """For ``picture/X.jpg`` style relpaths, check whether the file is on disk."""
-    if rel.startswith("picture/"):
-        candidate = PICTURE_DIR / rel[len("picture/") :]
-    else:
-        candidate = PICTURE_DIR / rel
-    # @pic shorthand may omit the suffix
-    if not candidate.exists() and "." not in candidate.name:
-        candidate = candidate.with_suffix(".jpg")
-    return "ok" if candidate.is_file() else "MISSING"
+    """For ``picture/X.jpg`` style relpaths, check whether the file exists.
+
+    The migrator's ``@pic:NAME`` shorthand can omit the extension; we
+    try ``.jpg`` (the QRDic default) and ``.svg`` (the in-tree pixel-
+    art replacements) as fallbacks before declaring it missing. The
+    DSL's WebUI rewriter applies the same default-to-``.jpg`` fallback
+    at runtime, so as long as one extension hits the disk the bot
+    renders fine.
+    """
+    name = rel[len("picture/") :] if rel.startswith("picture/") else rel
+    base = PICTURE_DIR / name
+    if base.is_file():
+        return "ok"
+    # Try alternate extensions when the shorthand omitted one, or the
+    # caller used the legacy .jpg suffix but we ship a .svg replacement.
+    stem = base.stem if "." in base.name else base.name
+    parent = base.parent
+    for ext in (".svg", ".jpg", ".png", ".gif", ".webp", ".jpeg"):
+        if (parent / f"{stem}{ext}").is_file():
+            return "ok"
+    return "MISSING"
 
 
 async def main() -> int:

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from linling_adapter_onebot.adapter import OneBotAdapter
 from linling_core.bus import EventBus
 from linling_core.events import Action, Scope
-from linling_core.segments import AtSegment, PokeSegment, TextSegment
+from linling_core.segments import AtSegment, ImageSegment, PokeSegment, TextSegment
 
 
 def _make_adapter(
@@ -13,9 +15,16 @@ def _make_adapter(
     ws_url: str = "ws://127.0.0.1:8080",
     access_token: str = "",
     bot_id: str = "test_bot",
+    asset_root: Path | None = None,
 ) -> OneBotAdapter:
     bus = EventBus()
-    return OneBotAdapter(bus, ws_url=ws_url, access_token=access_token, bot_id=bot_id)
+    return OneBotAdapter(
+        bus,
+        ws_url=ws_url,
+        access_token=access_token,
+        bot_id=bot_id,
+        asset_root=asset_root,
+    )
 
 
 class TestBuildEventFromMessage:
@@ -695,3 +704,151 @@ class TestMetaEventHandling:
             assert published == []
 
         asyncio.run(_exercise())
+
+
+class TestAssetResolution:
+    """``@pic:`` and ``/storage/...`` URLs get rewritten to ``file://...``
+    absolute paths before being sent to NapCat.
+
+    Without this, NapCat would receive the literal shorthand and either
+    bail out (image not found) or attempt an HTTP fetch on a non-URL.
+    """
+
+    def test_pic_shorthand_with_extension(self, tmp_path: Path) -> None:
+        # Stand up a fake asset bundle on disk.
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        target = asset_root / "picture" / "思思.jpg"
+        target.write_bytes(b"\xff\xd8\xff\xe0fake")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:思思.jpg")],
+        )
+        payload = adapter._build_action_payload(action)
+        msg = payload["params"]["message"]
+        assert len(msg) == 1
+        assert msg[0]["type"] == "image"
+        # file:// prefix + absolute path resolved to the real file.
+        file_field = msg[0]["data"]["file"]
+        assert file_field.startswith("file://")
+        assert file_field.endswith("/思思.jpg")
+        # And it's a real on-disk file (sanity).
+        assert Path(file_field[len("file://") :]).is_file()
+
+    def test_pic_shorthand_no_extension_defaults_to_jpg(
+        self, tmp_path: Path
+    ) -> None:
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "郫忧.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:郫忧")],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        assert file_field.endswith("/郫忧.jpg")
+
+    def test_pic_falls_back_to_svg_when_jpg_missing(
+        self, tmp_path: Path
+    ) -> None:
+        # The DSL still references ``@pic:道具宝箱.jpg`` from the legacy
+        # migration but only the .svg replacement ships on disk; the
+        # adapter promotes the extension transparently.
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "道具宝箱.svg").write_bytes(b"<svg/>")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:道具宝箱.jpg")],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        assert file_field.endswith("/道具宝箱.svg")
+
+    def test_legacy_storage_path_passes_through(self, tmp_path: Path) -> None:
+        # The migrator removed all ``/storage/...`` references from the
+        # ruleset; if a future rule re-introduces the shape we'd
+        # rather treat it as opaque (NapCat will fail-loud) than try
+        # to interpret it. Confirms the resolver doesn't accidentally
+        # rewrite paths it no longer claims to handle.
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "思思.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[
+                ImageSegment(
+                    url="/storage/emulated/0/QR/QRDic/data/picture/思思.jpg"
+                )
+            ],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        # Untouched — DSL is the source of truth, not the adapter.
+        assert file_field.startswith("/storage/")
+
+    def test_remote_url_unchanged(self, tmp_path: Path) -> None:
+        # Real http(s) URLs flow through to NapCat verbatim — it can
+        # fetch them itself and the resolver mustn't second-guess.
+        adapter = _make_adapter(asset_root=tmp_path)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="https://example.com/img.png")],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        assert file_field == "https://example.com/img.png"
+
+    def test_no_asset_root_passes_url_through(self) -> None:
+        adapter = _make_adapter()
+        assert adapter._asset_root is None
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:思思.jpg")],
+        )
+        payload = adapter._build_action_payload(action)
+        # Without a configured root we can't resolve safely; emit the
+        # shorthand verbatim so operators see the broken-image cause
+        # rather than a path that points nowhere.
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        assert file_field == "@pic:思思.jpg"
+
+    def test_path_traversal_rejected(self, tmp_path: Path) -> None:
+        # Adversarial DSL emitting ``@pic:../something`` must not
+        # escape the asset root. We pass it through unchanged so
+        # NapCat ignores it rather than accidentally serving a file.
+        asset_root = tmp_path / "assets"
+        asset_root.mkdir()
+        (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:../secret.txt")],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        # The invariant we care about: never *resolve* a traversal —
+        # if the shorthand escapes the root the adapter must not emit
+        # a ``file://`` URL pointing at the escaped target. (Passing
+        # the unresolved shorthand through is fine; NapCat treats it
+        # as a broken image, which is the safe failure mode.)
+        if file_field.startswith("file://"):
+            resolved = Path(file_field[len("file://") :]).resolve()
+            assert asset_root.resolve() in resolved.parents

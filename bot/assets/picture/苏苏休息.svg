@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  苏苏休息 — replaces s1.ax1x.com OuuuzF.png used by the patience-
+  exhausted branches in 漂流瓶 / 扔瓶子 / 御妖符 chains. Handler text:
+  "休息一下下啦!". Art: kawaii Sūsū curled up on a pillow, cheek
+  resting on her own giant white fox tail; "Z"s drift up.
+
+  Character keys (matched to canon refs): bright golden-yellow hair
+  with ahoge, golden ears with white inner fluff, big emerald eyes
+  (closed here), pink hanfu top with white V-inner + red ribbon,
+  giant white fluffy tail, golden bell on collar.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 180"
+     shape-rendering="crispEdges" image-rendering="pixelated"
+     role="img" aria-label="苏苏在休息">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#fff1e0"/>
+      <stop offset="100%" stop-color="#ffd0d6"/>
+    </linearGradient>
+    <radialGradient id="cheek" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#ff8aa6" stop-opacity=".9"/>
+      <stop offset="100%" stop-color="#ff8aa6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Backdrop -->
+  <rect width="240" height="180" fill="url(#bg)"/>
+
+  <!-- Soft floor shadow under the pillow -->
+  <ellipse cx="120" cy="158" rx="78" ry="8" fill="#e8a8b8" opacity=".45"/>
+
+  <!-- Pillow -->
+  <g>
+    <rect x="40" y="120" width="160" height="36" fill="#fff7e8"/>
+    <rect x="40" y="120" width="160" height="2"  fill="#e8c890"/>
+    <rect x="40" y="154" width="160" height="2"  fill="#c8a868"/>
+    <rect x="40" y="120" width="2"   height="36" fill="#e8c890"/>
+    <rect x="198" y="120" width="2"  height="36" fill="#c8a868"/>
+    <!-- corner tassels -->
+    <rect x="34" y="120" width="6" height="6" fill="#ff8aa6"/>
+    <rect x="200" y="120" width="6" height="6" fill="#ff8aa6"/>
+    <rect x="34" y="150" width="6" height="6" fill="#ff8aa6"/>
+    <rect x="200" y="150" width="6" height="6" fill="#ff8aa6"/>
+  </g>
+
+  <!-- ===== Big white fluffy fox tail curling around her body (signature trait) ===== -->
+  <g>
+    <!-- tail body — curls from behind hips, around the front of legs -->
+    <rect x="44" y="100" width="50" height="6"  fill="#fff8e8"/>
+    <rect x="40" y="106" width="58" height="8"  fill="#fff8e8"/>
+    <rect x="38" y="114" width="62" height="8"  fill="#fff8e8"/>
+    <rect x="40" y="122" width="58" height="6"  fill="#fff8e8"/>
+    <rect x="48" y="128" width="48" height="4"  fill="#fff8e8"/>
+    <!-- shadow accents -->
+    <rect x="38" y="106" width="2" height="16" fill="#e8d8b8"/>
+    <rect x="98" y="106" width="2" height="16" fill="#e8d8b8"/>
+    <rect x="44" y="100" width="2" height="6"  fill="#e8d8b8"/>
+    <rect x="92" y="100" width="2" height="6"  fill="#e8d8b8"/>
+    <rect x="48" y="128" width="2" height="4"  fill="#e8d8b8"/>
+    <rect x="94" y="128" width="2" height="4"  fill="#e8d8b8"/>
+    <!-- golden root where the tail meets her hip -->
+    <rect x="86" y="116" width="14" height="6" fill="#ffd84a"/>
+    <rect x="88" y="122" width="10" height="4" fill="#ffd84a"/>
+    <rect x="86" y="116" width="2"  height="6" fill="#d8a020"/>
+    <rect x="98" y="116" width="2"  height="6" fill="#d8a020"/>
+    <!-- highlight strands -->
+    <rect x="60" y="110" width="6" height="1" fill="#fff" opacity=".7"/>
+    <rect x="74" y="118" width="6" height="1" fill="#fff" opacity=".7"/>
+  </g>
+
+  <!-- ===== Body curled — pink hanfu, cheek on tail ===== -->
+  <g>
+    <!-- skirt / lower body -->
+    <rect x="100" y="118" width="62" height="14" fill="#ff8aa6"/>
+    <rect x="100" y="118" width="62" height="2"  fill="#d83a4d"/>
+    <rect x="100" y="132" width="62" height="2"  fill="#d83a4d"/>
+    <!-- pleat shading -->
+    <rect x="118" y="120" width="2" height="12" fill="#d83a4d" opacity=".5"/>
+    <rect x="138" y="120" width="2" height="12" fill="#d83a4d" opacity=".5"/>
+    <!-- white inner kimono peeking out at the hem -->
+    <rect x="100" y="132" width="62" height="3" fill="#fff"/>
+    <rect x="100" y="135" width="62" height="1" fill="#e8c890"/>
+
+    <!-- breathing rise -->
+    <animateTransform attributeName="transform" type="translate"
+                      values="0 0; 0 -1; 0 0; 0 1; 0 0"
+                      dur="3.6s" repeatCount="indefinite"/>
+  </g>
+
+  <!-- Tucked arm with sleeve hiding hand -->
+  <g>
+    <rect x="100" y="108" width="22" height="12" fill="#ff8aa6"/>
+    <rect x="100" y="108" width="22" height="2"  fill="#d83a4d"/>
+    <rect x="100" y="118" width="22" height="2"  fill="#d83a4d"/>
+    <!-- white sleeve cuff -->
+    <rect x="120" y="110" width="4" height="8" fill="#fff"/>
+    <rect x="120" y="110" width="2" height="8" fill="#e8c890"/>
+  </g>
+
+  <!-- ===== Head resting on tail (right side of pillow) ===== -->
+  <g>
+    <!-- back hair flowing onto pillow -->
+    <rect x="138" y="76" width="40" height="46" fill="#ffd84a"/>
+    <rect x="136" y="80" width="2"  height="42" fill="#d8a020"/>
+    <rect x="178" y="80" width="2"  height="42" fill="#d8a020"/>
+    <rect x="138" y="76" width="40" height="2"  fill="#d8a020"/>
+    <rect x="138" y="120" width="40" height="2" fill="#d8a020"/>
+    <!-- hair fanning over the pillow -->
+    <rect x="174" y="118" width="14" height="6" fill="#ffd84a"/>
+    <rect x="180" y="120" width="14" height="6" fill="#ffd84a"/>
+    <rect x="186" y="124" width="10" height="4" fill="#ffd84a"/>
+
+    <!-- Fox ears (FOLDED — drooping outward + downward, signature of 苏苏) -->
+    <g>
+      <!-- left ear: attaches at upper-left of head, hangs down -->
+      <rect x="138" y="80" width="2"  height="2" fill="#d8a020"/>
+      <rect x="136" y="82" width="6"  height="2" fill="#d8a020"/>
+      <rect x="134" y="84" width="10" height="2" fill="#ffd84a"/>
+      <rect x="132" y="86" width="12" height="2" fill="#ffd84a"/>
+      <rect x="132" y="88" width="10" height="2" fill="#ffd84a"/>
+      <rect x="134" y="90" width="6"  height="2" fill="#ffd84a"/>
+      <rect x="136" y="92" width="2"  height="2" fill="#d8a020"/>
+      <!-- white inner fluff -->
+      <rect x="136" y="88" width="4" height="2" fill="#fff8e8"/>
+      <rect x="138" y="90" width="2" height="2" fill="#fff8e8"/>
+      <!-- darker outer rim -->
+      <rect x="132" y="86" width="2" height="2" fill="#d8a020"/>
+      <rect x="132" y="88" width="2" height="2" fill="#d8a020"/>
+
+      <!-- right ear: mirrored to the right side -->
+      <rect x="178" y="80" width="2"  height="2" fill="#d8a020"/>
+      <rect x="176" y="82" width="6"  height="2" fill="#d8a020"/>
+      <rect x="174" y="84" width="10" height="2" fill="#ffd84a"/>
+      <rect x="174" y="86" width="12" height="2" fill="#ffd84a"/>
+      <rect x="176" y="88" width="10" height="2" fill="#ffd84a"/>
+      <rect x="178" y="90" width="6"  height="2" fill="#ffd84a"/>
+      <rect x="180" y="92" width="2"  height="2" fill="#d8a020"/>
+      <!-- white inner fluff -->
+      <rect x="178" y="88" width="4" height="2" fill="#fff8e8"/>
+      <rect x="178" y="90" width="2" height="2" fill="#fff8e8"/>
+      <!-- darker outer rim -->
+      <rect x="184" y="86" width="2" height="2" fill="#d8a020"/>
+      <rect x="184" y="88" width="2" height="2" fill="#d8a020"/>
+    </g>
+
+    <!-- (No ahoge) -->
+
+    <!-- Face / skin -->
+    <rect x="142" y="80" width="34" height="22" fill="#fff0d8"/>
+    <rect x="140" y="82" width="2"  height="18" fill="#e8c8a8"/>
+    <rect x="176" y="82" width="2"  height="18" fill="#e8c8a8"/>
+    <rect x="142" y="80" width="34" height="2"  fill="#e8c8a8"/>
+    <rect x="142" y="100" width="34" height="2" fill="#e8c8a8"/>
+
+    <!-- Hair fringe -->
+    <rect x="142" y="80" width="34" height="6" fill="#ffd84a"/>
+    <rect x="144" y="86" width="6"  height="2" fill="#ffd84a"/>
+    <rect x="156" y="86" width="4"  height="2" fill="#ffd84a"/>
+    <rect x="168" y="86" width="6"  height="2" fill="#ffd84a"/>
+    <!-- side bangs -->
+    <rect x="138" y="86" width="4" height="14" fill="#ffd84a"/>
+    <rect x="178" y="86" width="4" height="14" fill="#ffd84a"/>
+    <rect x="138" y="86" width="2" height="14" fill="#d8a020"/>
+    <rect x="180" y="86" width="2" height="14" fill="#d8a020"/>
+
+    <!-- Eyes closed (smile-curve) -->
+    <g fill="#5b3022">
+      <rect x="148" y="92" width="2" height="2"/>
+      <rect x="150" y="91" width="2" height="2"/>
+      <rect x="152" y="92" width="2" height="2"/>
+      <rect x="154" y="93" width="2" height="2"/>
+
+      <rect x="164" y="92" width="2" height="2"/>
+      <rect x="166" y="91" width="2" height="2"/>
+      <rect x="168" y="92" width="2" height="2"/>
+      <rect x="170" y="93" width="2" height="2"/>
+    </g>
+
+    <!-- Cheeks blush -->
+    <ellipse cx="148" cy="98" rx="3" ry="2" fill="url(#cheek)"/>
+    <ellipse cx="170" cy="98" rx="3" ry="2" fill="url(#cheek)"/>
+
+    <!-- Tiny smile -->
+    <rect x="157" y="98" width="2" height="2" fill="#d83a4d"/>
+    <rect x="159" y="98" width="2" height="2" fill="#d83a4d"/>
+    <rect x="161" y="97" width="2" height="2" fill="#d83a4d"/>
+
+    <!-- White V-collar peeking + red ribbon + bell -->
+    <rect x="142" y="102" width="34" height="6" fill="#fff"/>
+    <rect x="142" y="108" width="34" height="3" fill="#d83a4d"/>
+    <rect x="156" y="106" width="6"  height="6" fill="#fcd34d"/>
+    <rect x="155" y="112" width="8"  height="2" fill="#e0a92c"/>
+    <rect x="157" y="108" width="2"  height="2" fill="#fff7c4"/>
+
+    <animateTransform attributeName="transform" type="translate"
+                      values="0 0; 0 -1; 0 0"
+                      dur="3.6s" repeatCount="indefinite"/>
+  </g>
+
+  <!-- ZZZ floating up -->
+  <g font-family="monospace" font-size="20" font-weight="bold" fill="#7a8aff">
+    <text x="186" y="70">
+      Z
+      <animate attributeName="opacity" values="0;1;0" dur="3.0s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="70;40" dur="3.0s" repeatCount="indefinite"/>
+    </text>
+    <text x="200" y="60" font-size="14">
+      z
+      <animate attributeName="opacity" values="0;1;0" dur="3.0s" begin="1.0s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="60;30" dur="3.0s" begin="1.0s" repeatCount="indefinite"/>
+    </text>
+    <text x="214" y="50" font-size="10">
+      z
+      <animate attributeName="opacity" values="0;1;0" dur="3.0s" begin="2.0s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="50;25" dur="3.0s" begin="2.0s" repeatCount="indefinite"/>
+    </text>
+  </g>
+
+  <!-- (omit petals — keep the rest motion as-is per design) -->
+</svg>
