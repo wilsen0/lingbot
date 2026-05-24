@@ -198,12 +198,12 @@ const drawerOpen = ref(false);
 .page-layer-enter-from {
   opacity: 0;
   filter: blur(8px);
-  transform: translateY(10px) scale(0.985);
+  transform: translateY(10px);
 }
 .page-layer-leave-to {
   opacity: 0;
   filter: blur(4px);
-  transform: translateY(-4px) scale(1.01);
+  transform: translateY(-4px);
 }
 @media (prefers-reduced-motion: reduce) {
   .page-layer-enter-active,

@@ -176,10 +176,10 @@ async def rank(
     )
 
 
-@router.get("/{scope}/{file}/leaderboard", response_model=KvRankResponse, include_in_schema=False)
+@router.get("/leaderboard", response_model=KvRankResponse, include_in_schema=False)
 async def public_leaderboard(
-    scope: str,
-    file: str,
+    scope: str = Query(...),
+    file: str = Query(...),
     bot_id: str | None = Query(default=None),
     order: str = Query(default="desc"),
     top: int = Query(default=10, ge=1, le=100),
@@ -199,6 +199,23 @@ async def public_leaderboard(
         rows=[KvRankRow(rank=r.rank, key="", value=r.value, numeric=r.numeric) for r in rows],
         formatted="",
     )
+
+
+@router.get("/row", response_model=KvRow, include_in_schema=False)
+async def read_key_query(
+    scope: str = Query(...),
+    file: str = Query(...),
+    key: str = Query(...),
+    bot_id: str | None = Query(default=None),
+    caller: Caller = Depends(require_auth),
+    state: WebUIState = Depends(get_state),
+) -> KvRow:
+    bid = bot_id or _default_bot(caller, state)
+    store = _get_store(bid, caller, state)
+    value = await store.read(scope, file, key)
+    if value is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "key not found")
+    return KvRow(bot_id=bid, scope=scope, file=file, key=key, value=value, updated_at=int(time.time()))
 
 
 @router.get("/{scope}/{file}/{key}", response_model=KvRow)

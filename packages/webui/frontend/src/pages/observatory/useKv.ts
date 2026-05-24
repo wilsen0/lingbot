@@ -4,7 +4,7 @@ import { isAxiosError } from "axios";
 import {
   listNamespaces,
   publicRankKv,
-  readKey,
+  readKeyQuery,
   type KvNamespace,
   type KvPublicRankResponse,
 } from "@/api/kv";
@@ -29,6 +29,7 @@ export type PublicRankRow = KvPublicRankResponse["rows"][number];
 export function useKv() {
   const ns = ref<KvNamespace[]>([]);
   const loadingNs = ref(true);
+  const nsError = ref<string | null>(null);
   const ownValues = ref<Record<string, OwnAssetValue>>({});
   const loadingOwn = ref(false);
   const rankRows = ref<PublicRankRow[]>([]);
@@ -40,10 +41,12 @@ export function useKv() {
 
   async function loadNs() {
     loadingNs.value = true;
+    nsError.value = null;
     try {
       ns.value = await listNamespaces();
     } catch {
       ns.value = [];
+      nsError.value = "资产目录加载失败";
     } finally {
       loadingNs.value = false;
     }
@@ -62,7 +65,7 @@ export function useKv() {
     const pairs = await Promise.all(
       readable.map(async (asset): Promise<[string, OwnAssetValue]> => {
         try {
-          const { row } = await readKey({
+          const row = await readKeyQuery({
             scope: asset.scope,
             file: asset.file,
             key: ownerKey,
@@ -114,6 +117,7 @@ export function useKv() {
   return {
     ns,
     loadingNs,
+    nsError,
     ownValues,
     loadingOwn,
     rankRows,

@@ -60,6 +60,18 @@ export async function readKey(params: {
   return { row: r.data, etag: r.headers.etag ?? null };
 }
 
+export async function readKeyQuery(params: {
+  scope: string;
+  file: string;
+  key: string;
+  bot_id?: string;
+}): Promise<KvRow> {
+  const r = await apiClient.get<KvRow>("/kv/row", {
+    params,
+  });
+  return r.data;
+}
+
 export async function writeKey(params: {
   scope: string;
   file: string;
@@ -125,10 +137,8 @@ export async function publicRankKv(params: {
   order?: "asc" | "desc";
   top?: number;
 }): Promise<KvPublicRankResponse> {
-  const { scope, file, ...rest } = params;
-  const r = await apiClient.get<KvPublicRankResponse>(
-    `/kv/${encodeURIComponent(scope)}/${encodeURIComponent(file)}/leaderboard`,
-    { params: rest },
-  );
+  const r = await apiClient.get<KvPublicRankResponse>("/kv/leaderboard", {
+    params,
+  });
   return r.data;
 }

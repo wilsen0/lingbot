@@ -1,6 +1,7 @@
 <template>
   <div class="obs-pane asset-stage" role="tabpanel">
     <UiEmptyState v-if="loadingNs" variant="compact">正在加载资产……</UiEmptyState>
+    <UiEmptyState v-else-if="nsError" variant="compact">{{ nsError }}</UiEmptyState>
     <UiEmptyState v-else-if="assets.length === 0" variant="compact">暂无资产</UiEmptyState>
 
     <div v-else class="asset-board">
@@ -126,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onActivated, ref, watch } from "vue";
 
 import UiEmptyState from "@/components/UiEmptyState.vue";
 import { useAuthStore } from "@/store/auth";
@@ -145,6 +146,7 @@ const kv = useKv();
 const auth = useAuthStore();
 
 const loadingNs = kv.loadingNs;
+const nsError = kv.nsError;
 const loadingRank = kv.loadingRank;
 const rankError = kv.rankError;
 const rankRows = kv.rankRows;
@@ -207,6 +209,16 @@ watch(
 );
 
 watch(
+  () => auth.isAuthed,
+  (authed) => {
+    if (authed) {
+      void kv.loadNs();
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   statFilters,
   (filters) => {
     if (!filters.some((filter) => filter.key === activeCategory.value)) {
@@ -240,8 +252,10 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => {
-  kv.loadNs();
+onActivated(() => {
+  if (auth.isAuthed) {
+    void kv.loadNs();
+  }
 });
 
 function focusRank(asset: AssetCard) {

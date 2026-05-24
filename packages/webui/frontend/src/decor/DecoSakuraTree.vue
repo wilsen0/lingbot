@@ -75,10 +75,17 @@ watch(
 <style scoped>
 .deco-sakura {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100lvh;
+  min-height: 100svh;
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  contain: layout paint size;
+  transform: translateZ(0);
 }
 
 /* —— 主画 —— */
@@ -214,9 +221,8 @@ watch(
   .deco-sakura__bell {
     animation: none !important;
   }
-  /* 但允许图本身的轻微呼吸, 不让画面变静帧 */
   .deco-sakura__sky {
-    animation: deco-breathe 18s ease-in-out infinite;
+    animation: none !important;
   }
 }
 </style>

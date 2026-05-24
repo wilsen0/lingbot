@@ -116,7 +116,7 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
     inset 0 1px 0 rgb(255 255 255 / 0.1);
   padding: 7px;
   z-index: 11;
-  animation: var(--motion-fade-in-up);
+  animation: suggest-pop var(--dur-fast) var(--ease-stand) both;
   overflow: hidden;
 }
 .suggest::before {
@@ -219,6 +219,18 @@ function highlightSegments(item: TriggerSuggestion, query: string): LabelSegment
   }
   .suggest__foot {
     display: none;
+  }
+}
+
+@keyframes suggest-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 6px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0);
   }
 }
 </style>

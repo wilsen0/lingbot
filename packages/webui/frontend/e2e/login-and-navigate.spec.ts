@@ -16,7 +16,7 @@ test.describe("登录 → 对话 → 菜单导航", () => {
 
   test("菜单三项都可达", async ({ page }) => {
     await login(page);
-    await page.getByRole("button", { name: "菜单" }).click();
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
     await page.getByRole("link", { name: /观测/ }).click();
     await expect(page).toHaveURL(/观测|%E8%A7%82%E6%B5%8B/);
     await expect(page.getByRole("tab", { name: /我的/ })).toBeVisible();
@@ -24,7 +24,7 @@ test.describe("登录 → 对话 → 菜单导航", () => {
     await page.getByRole("link", { name: "回" }).click();
     await expect(page).toHaveURL(/\/$/);
 
-    await page.getByRole("button", { name: "菜单" }).click();
+    await page.getByRole("button", { name: "菜单", exact: true }).click();
     await page.getByRole("link", { name: /设/ }).click();
     await expect(page).toHaveURL(/设置|%E8%AE%BE%E7%BD%AE/);
     await expect(page.getByRole("heading", { name: "已接入" })).toBeVisible();
@@ -35,6 +35,8 @@ test.describe("登录 → 对话 → 菜单导航", () => {
     await page.getByRole("button", { name: "菜单" }).click();
     await page.getByRole("link", { name: /观测/ }).click();
     await page.getByRole("tab", { name: /资产/ }).click();
-    await expect(page.getByText("灵玉余额")).toBeVisible({ timeout: 8_000 });
+    await expect(page.locator(".asset-panel--mine").getByText("灵玉余额").first()).toBeVisible({
+      timeout: 8_000,
+    });
   });
 });

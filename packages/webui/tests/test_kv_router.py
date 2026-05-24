@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -82,12 +84,29 @@ def test_rank_desc_by_numeric_value(app_client) -> None:
     assert [(row["key"], int(row["value"])) for row in rows] == [("b", 10), ("c", 7), ("a", 3)]
 
 
+def test_read_key_query_handles_slash_scope(app_client) -> None:
+    client, _, token = app_client
+    store = client.app.state.runtime.kv_stores["susu_main"]
+    asyncio.run(store.write("啊/灵玉系", "灵玉", "e2e", "128"))
+    r = client.get(
+        "/api/kv/row?scope=%E5%95%8A%2F%E7%81%B5%E7%8E%89%E7%B3%BB&file=%E7%81%B5%E7%8E%89&key=e2e",
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["value"] == "128"
+
+
 def test_public_leaderboard_hides_keys(app_client) -> None:
     client, _, token = app_client
-    for k, v in [("alice-id", "3"), ("bob-id", "10"), ("carol-id", "7")]:
-        client.patch(f"/api/kv/rank_s/rank_f/{k}", json={"value": v}, headers=_auth(token))
+    store = client.app.state.runtime.kv_stores["susu_main"]
+    asyncio.run(store.write("啊/灵玉系", "灵玉", "alice-id", "3"))
+    asyncio.run(store.write("啊/灵玉系", "灵玉", "bob-id", "10"))
+    asyncio.run(store.write("啊/灵玉系", "灵玉", "carol-id", "7"))
 
-    r = client.get("/api/kv/rank_s/rank_f/leaderboard?order=desc&top=2", headers=_auth(token))
+    r = client.get(
+        "/api/kv/leaderboard?scope=%E5%95%8A%2F%E7%81%B5%E7%8E%89%E7%B3%BB&file=%E7%81%B5%E7%8E%89&order=desc&top=2",
+        headers=_auth(token),
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["formatted"] == ""
