@@ -74,6 +74,13 @@ def _get_store(bot_id: str, caller: Caller, state: WebUIState) -> KVStore:
     return store
 
 
+def _parse_rank_order(order: str) -> RankOrder:
+    try:
+        return RankOrder.parse(order)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
 @router.get("", response_model=list[KvNamespace])
 async def list_namespaces(
     bot_id: str | None = Query(default=None),
@@ -160,15 +167,37 @@ async def rank(
 ) -> KvRankResponse:
     bid = bot_id or _default_bot(caller, state)
     store = _get_store(bid, caller, state)
-    try:
-        order_enum = RankOrder.parse(order)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    order_enum = _parse_rank_order(order)
     rows = await store.rank_rows(scope, file, order=order_enum, top=top)
     formatted = await store.rank(scope, file, order=order_enum, top=top, sep=sep, fmt=fmt)
     return KvRankResponse(
         rows=[KvRankRow(rank=r.rank, key=r.key, value=r.value, numeric=r.numeric) for r in rows],
         formatted=formatted,
+    )
+
+
+@router.get("/{scope}/{file}/leaderboard", response_model=KvRankResponse, include_in_schema=False)
+async def public_leaderboard(
+    scope: str,
+    file: str,
+    bot_id: str | None = Query(default=None),
+    order: str = Query(default="desc"),
+    top: int = Query(default=10, ge=1, le=100),
+    caller: Caller = Depends(require_auth),
+    state: WebUIState = Depends(get_state),
+) -> KvRankResponse:
+    """Anonymous leaderboard for end-user UI.
+
+    The admin rank endpoint preserves raw keys for tooling. This route
+    intentionally blanks them before the response leaves the server.
+    """
+    bid = bot_id or _default_bot(caller, state)
+    store = _get_store(bid, caller, state)
+    order_enum = _parse_rank_order(order)
+    rows = await store.rank_rows(scope, file, order=order_enum, top=top)
+    return KvRankResponse(
+        rows=[KvRankRow(rank=r.rank, key="", value=r.value, numeric=r.numeric) for r in rows],
+        formatted="",
     )
 
 

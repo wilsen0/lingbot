@@ -169,6 +169,7 @@ uv run linling serve webui --bot bot/bot.yaml --host 0.0.0.0 --port 8787
 
 ## 文档
 
+- [技术架构 / Architecture](docs/architecture.md) — 当前真实运行的组件与数据流
 - [Requirements](.kiro/specs/linling/requirements.md)
 - [Design](.kiro/specs/linling/design.md)
 - [Tasks](.kiro/specs/linling/tasks.md)

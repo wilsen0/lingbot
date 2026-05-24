@@ -82,6 +82,23 @@ def test_rank_desc_by_numeric_value(app_client) -> None:
     assert [(row["key"], int(row["value"])) for row in rows] == [("b", 10), ("c", 7), ("a", 3)]
 
 
+def test_public_leaderboard_hides_keys(app_client) -> None:
+    client, _, token = app_client
+    for k, v in [("alice-id", "3"), ("bob-id", "10"), ("carol-id", "7")]:
+        client.patch(f"/api/kv/rank_s/rank_f/{k}", json={"value": v}, headers=_auth(token))
+
+    r = client.get("/api/kv/rank_s/rank_f/leaderboard?order=desc&top=2", headers=_auth(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["formatted"] == ""
+    assert [(row["rank"], row["key"], int(row["value"])) for row in body["rows"]] == [
+        (1, "", 10),
+        (2, "", 7),
+    ]
+    assert "bob-id" not in r.text
+    assert "carol-id" not in r.text
+
+
 def test_requires_auth(app_client) -> None:
     client, _, _token = app_client
     r = client.get("/api/kv/s/f/k")

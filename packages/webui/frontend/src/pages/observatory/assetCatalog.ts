@@ -1,13 +1,27 @@
 import type { KvNamespace } from "@/api/kv";
 
+export type AssetCategory = "currency" | "relationship" | "card" | "treasure" | "fishing";
+
 export interface AssetCard extends KvNamespace {
   id: string;
   label: string;
   kind: string;
   description: string;
   countLabel: string;
+  category: AssetCategory;
+  unit?: string;
+  rankable: boolean;
+  ownReadable: boolean;
   priority: number;
 }
+
+export const ASSET_CATEGORY_LABELS: Record<AssetCategory, string> = {
+  currency: "余额",
+  relationship: "关系",
+  card: "卡券",
+  treasure: "珍品",
+  fishing: "钓鱼",
+};
 
 const TREASURE_ITEMS = new Set([
   "个人守护",
@@ -42,6 +56,10 @@ export function describeAsset(ns: KvNamespace): AssetCard | null {
       kind: "货币",
       description: "可消费的个人余额",
       countLabel: `${ns.count} 人持有`,
+      category: "currency",
+      unit: "灵玉",
+      rankable: true,
+      ownReadable: true,
       priority: 10,
     };
   }
@@ -54,6 +72,10 @@ export function describeAsset(ns: KvNamespace): AssetCard | null {
       kind: "关系",
       description: "你和该助手的互动值",
       countLabel: `${ns.count} 人持有`,
+      category: "relationship",
+      unit: "点",
+      rankable: false,
+      ownReadable: true,
       priority: 15,
     };
   }
@@ -66,6 +88,10 @@ export function describeAsset(ns: KvNamespace): AssetCard | null {
       kind: "卡券",
       description: "可用于禁言的道具",
       countLabel: `${ns.count} 人持有`,
+      category: "card",
+      unit: "张",
+      rankable: true,
+      ownReadable: true,
       priority: 20,
     };
   }
@@ -76,8 +102,12 @@ export function describeAsset(ns: KvNamespace): AssetCard | null {
       id: path,
       label: ns.file,
       kind: ns.file === "个人守护" ? "守护" : "珍品",
-      description: ns.file === "个人守护" ? "个人守护资格" : "背包内可持有物品",
+      description: ns.file === "个人守护" ? "当前守护对象" : "背包内可持有物品",
       countLabel: `${ns.count} 人持有`,
+      category: "treasure",
+      unit: ns.file === "个人守护" ? undefined : "件",
+      rankable: ns.file !== "个人守护",
+      ownReadable: true,
       priority: 30,
     };
   }
@@ -90,6 +120,10 @@ export function describeAsset(ns: KvNamespace): AssetCard | null {
       kind: "钓鱼",
       description: ns.file === "水桶价值" ? "水桶收获价值" : "钓鱼玩法物品",
       countLabel: `${ns.count} 人持有`,
+      category: "fishing",
+      unit: ns.file === "水桶价值" ? "点" : "件",
+      rankable: true,
+      ownReadable: true,
       priority: 40,
     };
   }

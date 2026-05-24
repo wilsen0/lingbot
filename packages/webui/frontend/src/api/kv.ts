@@ -96,6 +96,11 @@ export interface KvRankResponse {
   formatted: string;
 }
 
+export interface KvPublicRankResponse {
+  rows: Array<{ rank: number; value: string; numeric: number }>;
+  formatted: string;
+}
+
 export async function rankKv(params: {
   scope: string;
   file: string;
@@ -108,6 +113,21 @@ export async function rankKv(params: {
   const { scope, file, ...rest } = params;
   const r = await apiClient.get<KvRankResponse>(
     `/kv/${encodeURIComponent(scope)}/${encodeURIComponent(file)}/rank`,
+    { params: rest },
+  );
+  return r.data;
+}
+
+export async function publicRankKv(params: {
+  scope: string;
+  file: string;
+  bot_id?: string;
+  order?: "asc" | "desc";
+  top?: number;
+}): Promise<KvPublicRankResponse> {
+  const { scope, file, ...rest } = params;
+  const r = await apiClient.get<KvPublicRankResponse>(
+    `/kv/${encodeURIComponent(scope)}/${encodeURIComponent(file)}/leaderboard`,
     { params: rest },
   );
   return r.data;
