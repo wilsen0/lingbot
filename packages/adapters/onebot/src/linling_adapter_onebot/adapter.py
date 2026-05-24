@@ -15,6 +15,7 @@ downstream consumers that prefer the structured form.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import uuid
 from pathlib import Path
@@ -62,6 +63,44 @@ _WS_PING_TIMEOUT = 20.0
 _WS_MAX_SIZE = 8 * 1024 * 1024
 _WS_MAX_QUEUE = 256
 _WS_CLOSE_TIMEOUT = 5.0
+
+
+# Per-asset upper bound for inlining as ``base64://``. Anything larger
+# is left as ``file://...`` and will only render correctly if NapCat
+# happens to share the host filesystem (e.g. native install). Picked
+# below ``_WS_MAX_SIZE`` so the JSON envelope, base64 expansion (4/3),
+# and any sibling segments still fit in one WS frame: 4 MiB of source
+# bytes encodes to ~5.5 MiB which leaves ~2 MiB of headroom — enough
+# for a typical reply / text segment alongside the image.
+_ASSET_INLINE_MAX_BYTES = 4 * 1024 * 1024
+
+# Bounded in-memory cache for base64-encoded assets. Sprite catalogue
+# is ~50 files and tends to be re-sent across messages within seconds,
+# so caching avoids repeated read+encode for every group_admin /
+# 背包 / 鱼塘商店 reply. Keyed by ``(abs_path, st_mtime_ns, st_size)``
+# so an asset edited on disk auto-invalidates without an explicit
+# bust. The cap keeps memory bounded if someone drops a huge bundle
+# in; eviction is FIFO (insertion order).
+_ASSET_CACHE_MAX_ENTRIES = 64
+
+# On-disk extensions we'll try when the migrator-emitted name doesn't
+# resolve directly. Order biases toward the SVG → raster output of
+# ``scripts/rasterize_assets.py`` (PNG / GIF) so a hand-written rule
+# referencing ``@pic:foo.jpg`` after the SVG migration still finds the
+# rasterised replacement first; ``.svg`` is last so we only fall back
+# to it when no raster exists. Mirrors the WebUI rewriter's default
+# of ``.jpg`` (set in ``_ASSET_DEFAULT_EXT``).
+_ASSET_FALLBACK_EXTS: tuple[str, ...] = (
+    ".png",
+    ".gif",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".svg",
+)
+# Default extension when the migrator shorthand omits one (``@pic:郫忧``
+# instead of ``@pic:郫忧.jpg``). Matches the migrator's own convention.
+_ASSET_DEFAULT_EXT = ".jpg"
 
 
 # QRSpeed compatibility: notice / request payloads are translated into
@@ -152,6 +191,12 @@ class OneBotAdapter:
         # the tasks could be cancelled prematurely. ``discard`` is the
         # done-callback so successful tasks free up.
         self._dispatch_tasks: set[asyncio.Task[None]] = set()
+        # ``@pic:`` → ``base64://...`` cache. Keyed by
+        # ``(abs_path, mtime_ns, size)`` so a swap-on-disk transparently
+        # invalidates without explicit busting. ``dict`` preserves
+        # insertion order so we can FIFO-evict when ``len`` exceeds
+        # ``_ASSET_CACHE_MAX_ENTRIES``.
+        self._asset_b64_cache: dict[tuple[str, int, int], str] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -554,9 +599,7 @@ class OneBotAdapter:
         )
 
     @staticmethod
-    def _build_qrspeed_raw(
-        data: dict[str, Any], status: Any, sub_type: str
-    ) -> dict[str, Any]:
+    def _build_qrspeed_raw(data: dict[str, Any], status: Any, sub_type: str) -> dict[str, Any]:
         """Stuff QRSpeed-historic field names onto the synthetic event's ``raw``.
 
         The VM's context-variable resolver pulls from here for
@@ -578,9 +621,7 @@ class OneBotAdapter:
                 "invitor_nickname",
                 "invitor_name",
             ),
-            "user_name": _first_present(
-                data, "user_nickname", "user_name", "nickname"
-            ),
+            "user_name": _first_present(data, "user_nickname", "user_name", "nickname"),
             "status": status,
             "value": data.get("value", ""),
             "request_id": data.get("flag", ""),
@@ -645,47 +686,128 @@ class OneBotAdapter:
     # ------------------------------------------------------------------
 
     # DSL rules emit image URLs as ``@pic:NAME`` (the migrator's
-    # shorthand). NapCat can't fetch that — we rewrite it to an
-    # absolute ``file://...`` path so the OneBot endpoint reads from
-    # disk directly.
+    # shorthand). NapCat can't fetch that — we read the bytes off
+    # disk and inline them as ``base64://...`` so the image renders
+    # regardless of whether NapCat shares the host filesystem (e.g.
+    # the supported Docker deployment doesn't mount ``bot/assets``).
+    # Files larger than ``_ASSET_INLINE_MAX_BYTES`` fall back to
+    # ``file://...`` — those are oversized for one WS frame anyway,
+    # and the file:// path at least works on native NapCat installs.
     _ASSET_SCHEME = "@pic:"
 
     def _resolve_asset_url(self, raw: str) -> str:
-        """Map ``@pic:NAME`` to an absolute ``file://...`` path.
+        """Map ``@pic:NAME`` to a ``base64://...`` (or ``file://...``) URL.
 
         Returns the URL unchanged when:
         * the string isn't a known asset shorthand,
         * no asset root is configured, or
         * resolution would escape the asset root (path traversal).
+
+        Encoding falls back to ``file://`` for files larger than
+        ``_ASSET_INLINE_MAX_BYTES`` so we don't blow the 8 MiB WS
+        frame cap. Read / encode failures also fall back to
+        ``file://`` so the bot stays "broken-image instead of broken
+        send" if a sprite is unreadable.
         """
-        if not raw or self._asset_root is None:
-            return raw
-        if not raw.startswith(self._ASSET_SCHEME):
+        if not raw or self._asset_root is None or not raw.startswith(self._ASSET_SCHEME):
             return raw
 
-        name = raw[len(self._ASSET_SCHEME) :]
-        if not name:
+        target = self._resolve_asset_path(raw[len(self._ASSET_SCHEME) :])
+        if target is None:
             return raw
+
+        encoded = self._encode_asset_b64(target)
+        if encoded is not None:
+            return encoded
+        # Oversized or read failure — fall back to ``file://``. NapCat
+        # in a Docker deployment will still 404 on it, but on a native
+        # install (or if the operator mounted the asset directory in)
+        # it will work, and the WS frame is guaranteed to fit.
+        return f"file://{target}"
+
+    def _resolve_asset_path(self, name: str) -> Path | None:
+        """Resolve a bare ``@pic:`` name to an on-disk path, or ``None``.
+
+        Walks the requested extension first, then a small set of
+        fallback extensions so legacy ``@pic:道具宝箱.jpg`` references
+        still find ``道具宝箱.svg`` after the SVG migration. A name
+        without an extension is treated as a request for the default
+        (``.jpg``).
+        """
+        if not name:
+            return None
         relpath = Path("picture") / name
         # Default to .jpg when the shorthand omits an extension —
         # mirrors the WebUI rewriter and matches what the migrator
-        # emits. If the requested extension doesn't exist on disk
-        # but a sibling does, walk through common alternates so
-        # ``.jpg`` → ``.svg`` promotion works transparently.
+        # emits.
         if "." not in relpath.name:
-            relpath = relpath.with_suffix(".jpg")
+            relpath = relpath.with_suffix(_ASSET_DEFAULT_EXT)
+
         target = self._safe_join(relpath)
-        if target is None or not target.is_file():
-            stem = relpath.stem
-            target = None
-            for ext in (".svg", ".jpg", ".png", ".gif", ".webp", ".jpeg"):
-                alt = self._safe_join(relpath.with_name(f"{stem}{ext}"))
-                if alt is not None and alt.is_file():
-                    target = alt
-                    break
-        if target is None:
-            return raw
-        return f"file://{target}"
+        if target is not None and target.is_file():
+            return target
+
+        # Fallback walk over sibling extensions. Skip the one we just
+        # tried so we don't re-stat the same path.
+        original_ext = relpath.suffix.lower()
+        stem = relpath.stem
+        for ext in _ASSET_FALLBACK_EXTS:
+            if ext == original_ext:
+                continue
+            alt = self._safe_join(relpath.with_name(f"{stem}{ext}"))
+            if alt is not None and alt.is_file():
+                return alt
+        return None
+
+    def _encode_asset_b64(self, target: Path) -> str | None:
+        """Read ``target`` and return its ``base64://...`` URL, or ``None``.
+
+        ``None`` is returned for over-budget files (so the caller can
+        fall back to ``file://``) and for IO errors. Cache key uses
+        ``(abs_path, st_mtime_ns, st_size)`` so an in-place edit
+        invalidates the cached encoding without the operator
+        restarting the bot. Cache size is capped; FIFO eviction.
+        """
+        try:
+            stat = target.stat()
+        except OSError as exc:
+            logger.warning(
+                "onebot_asset_stat_failed",
+                path=str(target),
+                error=type(exc).__name__,
+            )
+            return None
+        if stat.st_size > _ASSET_INLINE_MAX_BYTES:
+            logger.info(
+                "onebot_asset_too_large_for_inline",
+                path=str(target),
+                size=stat.st_size,
+                max_bytes=_ASSET_INLINE_MAX_BYTES,
+            )
+            return None
+
+        key = (str(target), stat.st_mtime_ns, stat.st_size)
+        cached = self._asset_b64_cache.get(key)
+        if cached is not None:
+            return cached
+
+        try:
+            payload = target.read_bytes()
+        except OSError as exc:
+            logger.warning(
+                "onebot_asset_read_failed",
+                path=str(target),
+                error=type(exc).__name__,
+            )
+            return None
+        encoded = "base64://" + base64.b64encode(payload).decode("ascii")
+        # FIFO evict before insert so the dict never exceeds the cap.
+        # ``next(iter(d))`` returns the oldest insertion key on a
+        # standard dict (insertion-ordered since 3.7).
+        if len(self._asset_b64_cache) >= _ASSET_CACHE_MAX_ENTRIES:
+            self._asset_b64_cache.pop(next(iter(self._asset_b64_cache)), None)
+        self._asset_b64_cache[key] = encoded
+        return encoded
 
     def _safe_join(self, rel: Path) -> Path | None:
         """Resolve ``self._asset_root / rel`` and reject path traversal.
@@ -702,9 +824,7 @@ class OneBotAdapter:
             return None
         return target
 
-    def _resolve_asset_segments(
-        self, segments: list[Segment]
-    ) -> list[Segment]:
+    def _resolve_asset_segments(self, segments: list[Segment]) -> list[Segment]:
         """Return ``segments`` with image URLs rewritten in place.
 
         Non-image segments pass through unchanged; image segments with

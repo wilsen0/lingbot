@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from linling_adapter_onebot.adapter import OneBotAdapter
 from linling_core.bus import EventBus
 from linling_core.events import Action, Scope
@@ -221,7 +222,6 @@ class TestAccessToken:
         assert headers["Authorization"] == "Bearer my_secret_token"
 
 
-
 class TestPendingFutureLifecycle:
     """Pending OneBot API call_api futures must not leak across reconnects.
 
@@ -271,7 +271,6 @@ class TestPendingFutureLifecycle:
             assert adapter._pending == {}
 
         asyncio.run(_exercise())
-
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +426,6 @@ class TestQrspeedSyntheticEvents:
         # don't always carry one (and target_id is the carrier here),
         # so we just assert the field is present and stringy.
         assert "operator_id" in ev.raw
-
 
 
 class TestQrspeedSyntheticIgnoredWhenNoHandler:
@@ -707,11 +705,15 @@ class TestMetaEventHandling:
 
 
 class TestAssetResolution:
-    """``@pic:`` and ``/storage/...`` URLs get rewritten to ``file://...``
-    absolute paths before being sent to NapCat.
+    """``@pic:`` and ``/storage/...`` URLs get rewritten to inline
+    ``base64://...`` payloads before being sent to NapCat.
 
     Without this, NapCat would receive the literal shorthand and either
     bail out (image not found) or attempt an HTTP fetch on a non-URL.
+    Inlining as base64 (rather than ``file://``) keeps images working
+    when NapCat doesn't share the host filesystem — e.g. the supported
+    Docker deployment where ``bot/assets`` isn't bind-mounted into the
+    container.
     """
 
     def test_pic_shorthand_with_extension(self, tmp_path: Path) -> None:
@@ -731,19 +733,18 @@ class TestAssetResolution:
         msg = payload["params"]["message"]
         assert len(msg) == 1
         assert msg[0]["type"] == "image"
-        # file:// prefix + absolute path resolved to the real file.
+        # base64:// inline — file bytes encoded into the URL.
         file_field = msg[0]["data"]["file"]
-        assert file_field.startswith("file://")
-        assert file_field.endswith("/思思.jpg")
-        # And it's a real on-disk file (sanity).
-        assert Path(file_field[len("file://") :]).is_file()
+        assert file_field.startswith("base64://")
+        import base64 as _b64
 
-    def test_pic_shorthand_no_extension_defaults_to_jpg(
-        self, tmp_path: Path
-    ) -> None:
+        decoded = _b64.b64decode(file_field[len("base64://") :])
+        assert decoded == b"\xff\xd8\xff\xe0fake"
+
+    def test_pic_shorthand_no_extension_defaults_to_jpg(self, tmp_path: Path) -> None:
         asset_root = tmp_path / "assets"
         (asset_root / "picture").mkdir(parents=True)
-        (asset_root / "picture" / "郫忧.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        (asset_root / "picture" / "郫忧.jpg").write_bytes(b"\xff\xd8\xff\xe0pic")
 
         adapter = _make_adapter(asset_root=asset_root)
         action = Action(
@@ -753,11 +754,12 @@ class TestAssetResolution:
         )
         payload = adapter._build_action_payload(action)
         file_field = payload["params"]["message"][0]["data"]["file"]
-        assert file_field.endswith("/郫忧.jpg")
+        assert file_field.startswith("base64://")
+        import base64 as _b64
 
-    def test_pic_falls_back_to_svg_when_jpg_missing(
-        self, tmp_path: Path
-    ) -> None:
+        assert _b64.b64decode(file_field[len("base64://") :]) == b"\xff\xd8\xff\xe0pic"
+
+    def test_pic_falls_back_to_svg_when_jpg_missing(self, tmp_path: Path) -> None:
         # The DSL still references ``@pic:道具宝箱.jpg`` from the legacy
         # migration but only the .svg replacement ships on disk; the
         # adapter promotes the extension transparently.
@@ -773,7 +775,12 @@ class TestAssetResolution:
         )
         payload = adapter._build_action_payload(action)
         file_field = payload["params"]["message"][0]["data"]["file"]
-        assert file_field.endswith("/道具宝箱.svg")
+        assert file_field.startswith("base64://")
+        import base64 as _b64
+
+        # The .svg sibling was inlined, even though the request asked
+        # for the .jpg name.
+        assert _b64.b64decode(file_field[len("base64://") :]) == b"<svg/>"
 
     def test_legacy_storage_path_passes_through(self, tmp_path: Path) -> None:
         # The migrator removed all ``/storage/...`` references from the
@@ -789,11 +796,7 @@ class TestAssetResolution:
         action = Action(
             kind="reply",
             target=Scope(kind="group", id="100", platform="onebot"),
-            segments=[
-                ImageSegment(
-                    url="/storage/emulated/0/QR/QRDic/data/picture/思思.jpg"
-                )
-            ],
+            segments=[ImageSegment(url="/storage/emulated/0/QR/QRDic/data/picture/思思.jpg")],
         )
         payload = adapter._build_action_payload(action)
         file_field = payload["params"]["message"][0]["data"]["file"]
@@ -844,11 +847,224 @@ class TestAssetResolution:
         )
         payload = adapter._build_action_payload(action)
         file_field = payload["params"]["message"][0]["data"]["file"]
-        # The invariant we care about: never *resolve* a traversal —
-        # if the shorthand escapes the root the adapter must not emit
-        # a ``file://`` URL pointing at the escaped target. (Passing
-        # the unresolved shorthand through is fine; NapCat treats it
-        # as a broken image, which is the safe failure mode.)
-        if file_field.startswith("file://"):
+        # The invariant we care about: never *leak* the escaped target.
+        # Either the resolver bails out (and emits the shorthand as-is,
+        # which NapCat treats as a broken image — safe failure mode),
+        # or it resolves to something inside the asset root. It must
+        # never inline the contents of ``secret.txt`` as base64, nor
+        # produce a ``file://`` URL pointing outside the root.
+        if file_field.startswith("base64://"):
+            import base64 as _b64
+
+            decoded = _b64.b64decode(file_field[len("base64://") :])
+            assert b"nope" not in decoded
+        elif file_field.startswith("file://"):
             resolved = Path(file_field[len("file://") :]).resolve()
             assert asset_root.resolve() in resolved.parents
+        else:
+            # Unresolved shorthand fallback — this is the actual code
+            # path today and is the safest outcome.
+            assert file_field == "@pic:../secret.txt"
+
+    def test_oversized_asset_falls_back_to_file_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Files above the inline cap stay on ``file://`` so we don't
+        blow the WS frame budget.
+
+        We monkeypatch the cap down to a tiny value so the test can
+        exercise the branch with a small fixture file (the production
+        default is 4 MiB and the bundled sprites are all <100 KiB).
+        """
+        from linling_adapter_onebot import adapter as adapter_module
+
+        monkeypatch.setattr(adapter_module, "_ASSET_INLINE_MAX_BYTES", 4)
+
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "huge.jpg").write_bytes(b"\x00" * 16)
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:huge.jpg")],
+        )
+        payload = adapter._build_action_payload(action)
+        file_field = payload["params"]["message"][0]["data"]["file"]
+        assert file_field.startswith("file://")
+        assert file_field.endswith("/huge.jpg")
+
+    def test_pic_inline_caches_repeat_lookups(self, tmp_path: Path) -> None:
+        """Re-resolving the same asset hits the in-memory cache and
+        avoids re-reading the file off disk.
+
+        We verify the cache by patching ``Path.read_bytes`` after the
+        first resolve: a second resolve that still returns the same
+        bytes proves the bytes came from the cache, not the (now
+        un-callable) disk path.
+        """
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        target = asset_root / "picture" / "思思.jpg"
+        target.write_bytes(b"\xff\xd8\xff\xe0fake")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        first = adapter._resolve_asset_url("@pic:思思.jpg")
+        assert first.startswith("base64://")
+        assert len(adapter._asset_b64_cache) == 1
+
+        # Track read_bytes calls; a cache hit must skip it entirely.
+        original_read = Path.read_bytes
+        read_calls = 0
+
+        def counting_read(self: Path) -> bytes:
+            nonlocal read_calls
+            read_calls += 1
+            return original_read(self)
+
+        Path.read_bytes = counting_read  # type: ignore[method-assign]
+        try:
+            second = adapter._resolve_asset_url("@pic:思思.jpg")
+        finally:
+            Path.read_bytes = original_read  # type: ignore[method-assign]
+
+        assert second == first
+        assert read_calls == 0  # cache hit, no disk read
+
+    def test_pic_inline_invalidates_on_disk_edit(self, tmp_path: Path) -> None:
+        """An edit on disk (mtime changes) busts the cache transparently."""
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        target = asset_root / "picture" / "思思.jpg"
+        target.write_bytes(b"\xff\xd8\xff\xe0v1")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        first = adapter._resolve_asset_url("@pic:思思.jpg")
+        import base64 as _b64
+
+        assert _b64.b64decode(first[len("base64://") :]) == b"\xff\xd8\xff\xe0v1"
+
+        # Bump mtime forward so the cache key changes (some
+        # filesystems have second-granularity mtime, so do an explicit
+        # ``os.utime`` rather than relying on a fast write to differ).
+        import os
+        import time
+
+        target.write_bytes(b"\xff\xd8\xff\xe0v2")
+        future = time.time() + 5.0
+        os.utime(target, (future, future))
+
+        second = adapter._resolve_asset_url("@pic:思思.jpg")
+        assert _b64.b64decode(second[len("base64://") :]) == b"\xff\xd8\xff\xe0v2"
+
+    def test_pic_inline_cache_evicts_oldest_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cache size is bounded; FIFO eviction drops the oldest entry."""
+        from linling_adapter_onebot import adapter as adapter_module
+
+        # Shrink the cap so the test only needs three sprite files.
+        monkeypatch.setattr(adapter_module, "_ASSET_CACHE_MAX_ENTRIES", 2)
+
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        for n, data in (("a.jpg", b"AAA"), ("b.jpg", b"BBB"), ("c.jpg", b"CCC")):
+            (asset_root / "picture" / n).write_bytes(data)
+
+        adapter = _make_adapter(asset_root=asset_root)
+        adapter._resolve_asset_url("@pic:a.jpg")
+        adapter._resolve_asset_url("@pic:b.jpg")
+        # Cache holds {a, b}.
+        assert len(adapter._asset_b64_cache) == 2
+        adapter._resolve_asset_url("@pic:c.jpg")
+        # ``c`` insertion evicts ``a`` (oldest); cache now {b, c}.
+        assert len(adapter._asset_b64_cache) == 2
+        cached_paths = {key[0].rsplit("/", 1)[-1] for key in adapter._asset_b64_cache}
+        assert cached_paths == {"b.jpg", "c.jpg"}
+
+    def test_drift_bottle_remote_https_passes_through(self, tmp_path: Path) -> None:
+        """The 漂流瓶 / 接扔瓶子 DSL stashes remote QQ-CDN URLs from
+        ``%IMG0%`` and replays them. Those are remote ``https://`` URLs,
+        not ``@pic:`` shorthands — the resolver must not touch them.
+        Mixed outbound (text + remote image, which is what
+        ``±img=@pic:捡到一个瓶子.svg±`` followed by a stashed remote
+        image becomes once both segments are flushed) must keep the
+        remote URL verbatim while inlining the local sprite.
+        """
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "捡到一个瓶子.svg").write_bytes(b"<svg/>")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[
+                TextSegment(text="捡到了一个瓶子"),
+                ImageSegment(url="@pic:捡到一个瓶子.svg"),
+                ImageSegment(url="https://multimedia.nt.qq.com.cn/download?fileid=stub"),
+            ],
+        )
+        msg = adapter._build_action_payload(action)["params"]["message"]
+        assert [m["type"] for m in msg] == ["text", "image", "image"]
+        # Local sprite is inlined.
+        assert msg[1]["data"]["file"].startswith("base64://")
+        # Remote stays verbatim — NapCat will fetch it.
+        assert msg[2]["data"]["file"] == "https://multimedia.nt.qq.com.cn/download?fileid=stub"
+
+    def test_voice_segment_url_is_not_rewritten(self, tmp_path: Path) -> None:
+        """``VoiceSegment`` URLs flow through the codec unchanged.
+
+        The resolver only knows about images. ``±ptt=`` rules using
+        host-only ``file://`` paths or ``@pic:`` shorthands would
+        still fail on the Docker NapCat deployment — but the
+        existing ruleset doesn't actually use ``±ptt=`` (the only
+        reference is dead code), and there's no historical
+        ``@ptt:`` shorthand to handle. This test pins that boundary
+        so a future change that does add audio asset support fails
+        explicitly here, not silently in production.
+        """
+        from linling_core.segments import VoiceSegment
+
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[VoiceSegment(url="@pic:speech.amr")],
+        )
+        msg = adapter._build_action_payload(action)["params"]["message"]
+        assert msg[0]["type"] == "record"
+        assert msg[0]["data"]["file"] == "@pic:speech.amr"
+
+    def test_svg_request_returns_svg_as_is(self, tmp_path: Path) -> None:
+        """``@pic:foo.svg`` resolves to the SVG file as-is.
+
+        The adapter does not second-guess what the rule asked for.
+        Whether QQ ultimately accepts an encoded SVG is a separate
+        deployment concern: rules that target QQ should reference
+        already-rasterised sprites (``.png`` / ``.gif``), produced by
+        ``scripts/rasterize_assets.py``. The WebUI surface renders
+        SVG natively, so rules that reference SVG still work there.
+        """
+        asset_root = tmp_path / "assets"
+        (asset_root / "picture").mkdir(parents=True)
+        (asset_root / "picture" / "lonely.svg").write_bytes(b"<svg/>")
+        # A raster sibling exists, but the rule explicitly asked for
+        # the SVG — we honour that and don't substitute.
+        (asset_root / "picture" / "lonely.png").write_bytes(b"\x89PNGfake")
+
+        adapter = _make_adapter(asset_root=asset_root)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="@pic:lonely.svg")],
+        )
+        msg = adapter._build_action_payload(action)["params"]["message"]
+        file_field = msg[0]["data"]["file"]
+        assert file_field.startswith("base64://")
+        import base64 as _b64
+
+        assert _b64.b64decode(file_field[len("base64://") :]) == b"<svg/>"
