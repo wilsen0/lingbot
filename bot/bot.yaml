@@ -40,7 +40,7 @@ agent:
   group_batch_max_chars: 6000
   group_batch_max_replies: 3
   group_batch_require_attention: true
-  group_batch_max_hold_s: 300
+  group_batch_max_hold_s: 60
   # 群批时窗到点仍未触发关注规则时,跑一个轻量 LLM (yes/no) 再决定要不要
   # 把这批消息交给主 LLM。关掉就回到老行为(直接丢弃)。配套的 API key /
   # base URL / model 在 .env 里设置(见 .env.example);.env 里没填 key

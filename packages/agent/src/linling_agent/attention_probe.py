@@ -1,19 +1,17 @@
-"""Lightweight second-stage attention probe for group-chat batching.
+"""Lightweight attention probe for group-chat batching.
 
-The :class:`AttentionProbe` is a single-shot yes/no LLM call invoked at
-the ``window_s`` flush boundary by :class:`GroupBatchChatDispatcher` when
-the rule-based attention detector has not fired for a buffered batch.
-The probe owns its own :class:`OpenAIProvider` instance — separate from
-the main agent's provider — so it can target a cheaper model, a
-different base URL, or a different API key without interference.
+The :class:`AttentionProbe` owns its own :class:`OpenAIProvider` instance
+— separate from the main agent's provider — so it can target a cheaper /
+faster model (e.g. Groq llama-3.1-8b) at a different base URL / API key.
 
-The module is deliberately self-contained: every cross-package call site
-goes through :class:`AttentionProbe`, and the buffered messages are
-flattened into the local :class:`_ProbeBatchInput` dataclass so this
-file has no inbound dependency on ``group_batch._BufferedMessage``.
+Primary usage: ``GroupBatchChatDispatcher._dispatch_batch_with_tools``
+calls ``probe.provider.chat(messages, tools=...)`` with the **same full
+context** (system prompt + conversation history + batch + tool schemas)
+that the main LLM would see. If the small model produces no tool_calls
+(i.e. chooses not to reply), the main LLM call is skipped entirely.
 
-See ``.kiro/specs/lightweight-attention-probe/design.md`` for the full
-design (architecture, sequence diagrams, correctness properties).
+The legacy ``judge()`` method (yes/no single-token call) is retained for
+the connectivity smoke test script but is no longer on the hot path.
 """
 
 from __future__ import annotations
@@ -215,17 +213,13 @@ class AttentionProbe:
         api_key: str,
         base_url: str,
         model: str,
-        timeout: float = _DEFAULT_TIMEOUT_S,
+        timeout: float = 30.0,
         max_chars: int = _DEFAULT_MAX_CHARS,
         proxy: str | None = None,
     ) -> None:
-        if timeout <= 0 or timeout > 10.0:
-            # Requirement 13.2: ``0 < timeout <= 10s``. We keep the
-            # check at construction time so a misconfigured probe is
-            # surfaced loudly at bootstrap rather than degrading
-            # silently on every call.
+        if timeout <= 0:
             raise ValueError(
-                f"AttentionProbe timeout must be in (0, 10] seconds; got {timeout!r}"
+                f"AttentionProbe timeout must be positive; got {timeout!r}"
             )
         if max_chars <= 0:
             raise ValueError(
@@ -245,7 +239,7 @@ class AttentionProbe:
             model=model,
             timeout=timeout,
             default_temperature=_TEMPERATURE,
-            default_max_tokens=_MAX_TOKENS,
+            default_max_tokens=1024,
             proxy=proxy,
         )
 
@@ -256,6 +250,11 @@ class AttentionProbe:
     @property
     def base_url(self) -> str:
         return self._base_url
+
+    @property
+    def provider(self) -> OpenAIProvider:
+        """Expose the underlying provider for full-context pre-flight calls."""
+        return self._provider
 
     async def aclose(self) -> None:
         """Close the underlying httpx client.
@@ -399,7 +398,7 @@ class AttentionProbe:
                 scope_id=scope_id,
                 category="malformed",
             )
-        logger.debug(
+        logger.info(
             "group_batch.attention_probe.judged",
             scope_id=scope_id,
             batch_size=len(batch),
