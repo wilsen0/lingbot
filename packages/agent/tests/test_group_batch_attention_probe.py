@@ -15,22 +15,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Callable
 
 import httpx
-import pytest
 import structlog
-from hypothesis import HealthCheck, given, settings, strategies as st
-
-from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+from linling_agent.attention_probe import _ProbeBatchInput
 from linling_agent.errors import LLMAuthError, LLMError, LLMRateLimitError
 from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig
 from linling_agent.runtime import AgentResult
 from linling_core.events import Action, Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import TextSegment, at, reply
-
 
 # ---------------------------------------------------------------------------
 # Fakes — local copies of the harness shapes used in test_group_batch.py
@@ -133,7 +130,7 @@ def _event(
     )
 
 
-async def _wait_for(condition: Callable[[], bool], *, timeout: float = 1.0) -> None:
+async def _wait_for(condition: Callable[[], bool], *, timeout: float = 1.0) -> None:  # noqa: ASYNC109
     """Poll ``condition`` until true or until ``timeout`` elapses."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
@@ -358,6 +355,7 @@ async def test_probe_runs_at_most_once_per_lifecycle() -> None:
     dispatcher = _make_dispatcher(
         inner=inner,
         probe=spy,
+        window_s=0.2,
         max_hold_s=0.4,
     )
     dispatcher.set_action_sink(lambda a: None)

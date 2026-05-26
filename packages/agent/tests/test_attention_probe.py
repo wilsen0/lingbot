@@ -12,18 +12,17 @@ hammered with hypothesis at high iteration counts.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
 import structlog
-from hypothesis import HealthCheck, given, settings, strategies as st
-
+from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import strategies as st
 from linling_agent.attention_probe import (
-    AttentionProbe,
     _NO_TOKENS,
     _YES_TOKENS,
+    AttentionProbe,
     _build_user_prompt,
     _normalise_token,
     _parse_verdict,
@@ -31,7 +30,6 @@ from linling_agent.attention_probe import (
 )
 from linling_agent.errors import LLMAuthError, LLMError, LLMRateLimitError
 from linling_agent.llm import LLMResponse, Message
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -120,7 +118,7 @@ def _batch(*texts: str) -> list[_ProbeBatchInput]:
 @settings(max_examples=500)
 @given(
     base_token=st.sampled_from(
-        sorted(_YES_TOKENS | _NO_TOKENS) + ["maybe", "idk", "perhaps", "可能"]
+        [*sorted(_YES_TOKENS | _NO_TOKENS), "maybe", "idk", "perhaps", "可能"]
     ),
     leading_ws=st.sampled_from(["", " ", "\t", "\n", "  \t \n"]),
     trailing_punct=st.sampled_from(
@@ -250,6 +248,7 @@ async def test_judge_call_shape_property(texts: list[str]) -> None:
     Every probe invocation produces exactly two messages (system + user),
     no tools, ``temperature=0.0``, ``max_tokens<=32``.
     """
+    assume(any(text.strip() for text in texts))
     fake = _FakeProvider()
     fake.queue_response("yes")
     probe = _make_probe(fake)
@@ -281,7 +280,7 @@ async def test_judge_call_shape_property(texts: list[str]) -> None:
     "exc, expected_category",
     [
         (httpx.TimeoutException("slow"), "timeout"),
-        (asyncio.TimeoutError(), "timeout"),
+        (TimeoutError(), "timeout"),
         (httpx.ConnectError("dns"), "network"),
         (LLMAuthError("forbidden"), "auth"),
         (LLMRateLimitError("slow down"), "rate_limit"),

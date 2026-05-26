@@ -1065,10 +1065,12 @@ def _build_chat_dispatcher(
                 # to "no probe", but pairing them here makes the
                 # bootstrap intent explicit.
                 attention_probe_enabled=attention_probe is not None,
+                attention_window_s=config.agent.group_batch_attention_window_s,
             ),
             conversations=conversations,
             bot_id=config.bot_id,
             probe=attention_probe,
+            kv=kv,
         )
 
     # Scope allowlist for chat-mode (LLM fallback only). DSL handlers

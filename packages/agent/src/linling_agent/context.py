@@ -301,9 +301,24 @@ class ContextManager:
 def _render_transcript(messages: list[Message]) -> str:
     lines: list[str] = []
     for m in messages:
-        if m.role not in ("user", "assistant"):
+        if m.role == "user":
+            lines.append(f"user: {m.content}")
             continue
-        lines.append(f"{m.role}: {m.content}")
+        if m.role == "assistant":
+            if m.tool_calls:
+                calls = [
+                    f"{tc.name}({tc.arguments})"
+                    for tc in m.tool_calls
+                ]
+                content = m.content or ""
+                lines.append(f"assistant tool_calls: {'; '.join(calls)} {content}".rstrip())
+            else:
+                lines.append(f"assistant: {m.content}")
+            continue
+        if m.role == "tool":
+            label = m.name or "tool"
+            suffix = f"#{m.tool_call_id}" if m.tool_call_id else ""
+            lines.append(f"tool {label}{suffix}: {m.content}")
     return "\n".join(lines)
 
 

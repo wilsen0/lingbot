@@ -273,6 +273,12 @@ class AgentConfig(BaseModel):
     # probe credentials is harmless. See
     # ``.kiro/specs/lightweight-attention-probe/`` for the full design.
     group_batch_attention_probe_enabled: bool = True
+    # Sliding "苏苏确认" attention window in seconds. When the bot
+    # successfully replies to user X in a group, X's next message in
+    # that group within this window automatically passes the attention
+    # gate. Mirrors main.ling's ``啊/%群%/苏苏确认 %QQ% %时间HHmm%``
+    # mechanism. Set to 0 to disable.
+    group_batch_attention_window_s: float = 300.0
 
     @model_validator(mode="after")
     def _validate_group_batch(self) -> AgentConfig:
@@ -288,6 +294,8 @@ class AgentConfig(BaseModel):
             raise ValueError("group_batch_max_reply_chars must be positive")
         if self.group_batch_max_hold_s <= 0:
             raise ValueError("group_batch_max_hold_s must be positive")
+        if self.group_batch_attention_window_s < 0:
+            raise ValueError("group_batch_attention_window_s must be non-negative")
         return self
 
 

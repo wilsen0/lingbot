@@ -64,6 +64,7 @@ _DEFAULT_MAX_CHARS: int = 6_000
 _MAX_TOKENS: int = 32
 _TEMPERATURE: float = 0.0
 _DEFAULT_TIMEOUT_S: float = 8.0
+_MAX_TIMEOUT_S: float = 10.0
 
 
 # Fixed system prompt. Kept short on purpose: the model only has to
@@ -213,13 +214,17 @@ class AttentionProbe:
         api_key: str,
         base_url: str,
         model: str,
-        timeout: float = 30.0,
+        timeout: float = _DEFAULT_TIMEOUT_S,
         max_chars: int = _DEFAULT_MAX_CHARS,
         proxy: str | None = None,
     ) -> None:
         if timeout <= 0:
             raise ValueError(
                 f"AttentionProbe timeout must be positive; got {timeout!r}"
+            )
+        if timeout > _MAX_TIMEOUT_S:
+            raise ValueError(
+                f"AttentionProbe timeout must be <= {_MAX_TIMEOUT_S}; got {timeout!r}"
             )
         if max_chars <= 0:
             raise ValueError(
@@ -334,7 +339,7 @@ class AttentionProbe:
                 category="rate_limit",
             )
             return False
-        except (httpx.TimeoutException, asyncio.TimeoutError):
+        except (httpx.TimeoutException, TimeoutError):
             logger.warning(
                 "group_batch.attention_probe.failed",
                 scope_id=scope_id,

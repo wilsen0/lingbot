@@ -30,8 +30,8 @@ agent:
   # - ["群号1", "群号2"] = 仅这些群号接 LLM
   # WebUI 默认走 dm 通路 (%群号%==0),所以白名单不影响 web 端聊天。
   allowed_scopes:
-    - "2986537370"
     - "271891388"
+    - "788375918"
   # 群聊 LLM 采用窗口聚合：DSL 仍实时响应，只有兜底聊天会攒一小段时间
   # 后交给 LLM 选择性回复，避免每条群消息都触发一次模型。
   group_batch_enabled: true
@@ -46,6 +46,11 @@ agent:
   # base URL / model 在 .env 里设置(见 .env.example);.env 里没填 key
   # 也没问题——bootstrap 会静默跳过。
   group_batch_attention_probe_enabled: true
+  # 苏苏确认注意力窗口(秒): 当苏苏成功回复某人时,该用户在窗口内的
+  # 下一条消息会被视为已通过规则关注门(无需再次提到苏苏/带问号等)。
+  # 跟 main.ling 的 $写 啊/%群%/苏苏确认$ 共用一个 KV 命名空间,
+  # 所以 DSL 和 LLM 路径互相可见。300 秒 = 5 分钟,设为 0 关闭。
+  group_batch_attention_window_s: 300
   group_batch_bot_names:
     - 苏苏
     - 涂山苏苏

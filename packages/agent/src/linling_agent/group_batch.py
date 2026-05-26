@@ -7,8 +7,10 @@ import json
 import re
 import time
 from collections import defaultdict, deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import count
 from typing import Any
 
 import structlog
@@ -16,7 +18,7 @@ from linling_core.events import Action, Event, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import ReplySegment, TextSegment
 
-from linling_agent.attention_probe import AttentionProbe
+from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import Message, ToolCall, ToolSchema
 
@@ -25,12 +27,162 @@ logger = structlog.get_logger(__name__)
 _TOOL_READ_BATCH = "read_batch_messages"
 _TOOL_REPLY_TO_MESSAGE = "reply_to_message"
 _TOOL_SEND_GROUP = "send_group"
-_MAX_TOOL_ROUNDS = 4
+_MAX_TOOL_ROUNDS = 8
 _MAX_READ_CALLS = 2
 _MAX_READ_MESSAGES = 5
 _BATCH_PREVIEW_CHARS = 80
+_BATCH_PROMPT_TEXT_CHARS = 500
+_BATCH_HISTORY_TEXT_CHARS = 500
 _MAX_TOOL_RESULT_CHARS = 2_500
-_MAX_SENT_MESSAGE_ECHO_CHARS = 1_000
+
+
+_ATTENTION_KV_SCOPE_PREFIX = "啊/"
+_ATTENTION_KV_FILE = "苏苏确认"
+# Threshold separating HHmm (0..2359) from unix epoch seconds.
+# HHmm fits in 4 digits; any value above this is treated as epoch.
+_HHMM_MAX = 9999
+
+
+def _parse_attention_stamp(
+    raw: str, now_epoch: float, now_hhmm_minutes: int, window_s: float
+) -> bool:
+    """Decide whether a stored "苏苏确认" stamp is still within the window.
+
+    Accepts two formats so the LLM and DSL paths can share KV state:
+
+    * Unix epoch seconds (what we write) — direct ``now - stamp <= window``.
+    * HHmm 0..2359 (what main.ling writes) — converted to minutes-of-day
+      and compared via the shorter wraparound distance, so a stamp at
+      23:58 still matches "now" at 00:03 (5 minutes apart, not 1435).
+
+    Empty / non-numeric / explicit ``"0"`` (the DSL "never written"
+    default) all return False.
+    """
+    if not raw or raw == "0":
+        return False
+    try:
+        stamped = float(raw)
+    except (TypeError, ValueError):
+        return False
+    if stamped <= 0:
+        return False
+    if stamped > _HHMM_MAX:
+        return (now_epoch - stamped) <= window_s
+    # HHmm fallback. Convert both sides to minutes-of-day and pick the
+    # shorter wraparound distance so cross-hour and cross-midnight gaps
+    # are measured correctly. main.ling's check is sloppy here; we
+    # tighten it without changing the user-visible window length.
+    try:
+        hhmm = int(stamped)
+    except (TypeError, ValueError):
+        return False
+    if not (0 <= hhmm <= 2359):
+        return False
+    stamped_minutes = (hhmm // 100) * 60 + (hhmm % 100)
+    diff = abs(now_hhmm_minutes - stamped_minutes)
+    diff = min(diff, 1440 - diff)
+    window_minutes = max(1, int(window_s // 60))
+    return diff <= window_minutes
+
+
+_NO_REPLY_TOKENS: frozenset[str] = frozenset({
+    "no_reply",
+    "no-reply",
+    "noreply",
+    "skip",
+    "none",
+    "null",
+    "不回",
+    "不回复",
+    "不用回",
+    "不用回复",
+    "不需要回",
+    "不需要回复",
+    "无需回",
+    "无需回复",
+    "不用说话",
+    "不说话",
+    "保持沉默",
+})
+
+_DONE_TOKENS: frozenset[str] = frozenset({
+    "done",
+    "reply_done",
+    "reply-done",
+    "reply done",
+    "回复好了",
+    "回复完成",
+    "回复完了",
+    "已回复",
+    "已完成",
+    "已经回复好了",
+    "已经回复完成",
+})
+
+
+def _normalize_control_text(content: str) -> str:
+    if not content:
+        return ""
+    return content.strip().strip("\"'`“”‘’").strip().lower()
+
+
+def _classify_stop_token(content: str) -> str | None:
+    normalized = _normalize_control_text(content)
+    if not normalized:
+        return None
+    if normalized in {"[]", "{}", "{\"actions\":[]}"}:
+        return "no_reply"
+    if normalized in _NO_REPLY_TOKENS:
+        return "no_reply"
+    first = normalized.split(maxsplit=1)[0].strip(",.!?，。！？:：;；")
+    if first in _NO_REPLY_TOKENS:
+        return "no_reply"
+    if any(
+        normalized.startswith(prefix)
+        for prefix in (
+            "no reply",
+            "do not reply",
+            "don't reply",
+            "不需要回复",
+            "不用回复",
+            "无需回复",
+            "不回复",
+            "保持沉默",
+        )
+    ):
+        return "no_reply"
+    if normalized in _DONE_TOKENS:
+        return "done"
+    if first in _DONE_TOKENS:
+        return "done"
+    if any(
+        normalized.startswith(prefix)
+        for prefix in (
+            "reply done",
+            "already replied",
+            "已经回复好了",
+            "已经回复完成",
+            "回复好了",
+            "回复完成",
+            "回复完了",
+        )
+    ):
+        return "done"
+    return None
+
+
+def _is_no_reply_token(content: str) -> bool:
+    """Detect whether the model's output is the 'don't reply' sentinel."""
+    return _classify_stop_token(content) == "no_reply"
+
+
+def _is_done_token(content: str) -> bool:
+    """Detect whether the model's output is the 'reply completed' sentinel."""
+    return _classify_stop_token(content) == "done"
+
+
+def _is_stop_token(content: str) -> bool:
+    return _classify_stop_token(content) is not None
 
 
 @dataclass(frozen=True)
@@ -52,6 +204,14 @@ class GroupBatchConfig:
     # ``(attention_probe_enabled=True, probe=None)`` combination never
     # occurs in practice; tests that omit both stay on the legacy path.
     attention_probe_enabled: bool = False
+    # Sliding "苏苏确认" attention window in seconds. When the bot
+    # successfully replies to a user, we stamp ``(group, user) -> now``
+    # in the KV store. Any further message from that user within
+    # ``attention_window_s`` is treated as if the rule-based
+    # attention gate fired — the bot is still "listening" to them.
+    # Mirrors the ``啊/{group}/苏苏确认`` semantics of main.ling
+    # (which uses HHmm + 5min hardcoded).
+    attention_window_s: float = 300.0
 
     def __post_init__(self) -> None:
         if self.window_s < 0:
@@ -66,6 +226,8 @@ class GroupBatchConfig:
             raise ValueError("max_reply_chars must be positive")
         if self.max_hold_s <= 0:
             raise ValueError("max_hold_s must be positive")
+        if self.attention_window_s < 0:
+            raise ValueError("attention_window_s must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -75,12 +237,15 @@ class _BufferedMessage:
     sender_name: str
     text: str
     timestamp: str
+    sent_at: float
+    received_seq: int
     mentions_bot: bool
     reply_to_bot: bool
 
 
 @dataclass(frozen=True)
 class _ToolSendRecord:
+    messages: list[Message]
     user_input: str
     assistant_output: str
 
@@ -120,11 +285,20 @@ class GroupBatchChatDispatcher:
         conversations: ConversationStore | None = None,
         bot_id: str = "linling",
         probe: AttentionProbe | None = None,
+        kv: Any = None,
     ) -> None:
         self._inner = inner
         self._cfg = config
         self._conversations = conversations
         self._bot_id = bot_id
+        # Optional KV store for the "苏苏确认" sliding-attention window.
+        # When wired, every successful ``reply_to_message`` stamps
+        # ``啊/{group}/苏苏确认`` with the target user's monotonic
+        # send timestamp, and incoming messages from that user
+        # within ``attention_window_s`` get a free attention pass.
+        # Shares the same KV namespace as main.ling's hand-written
+        # rules so the DSL and LLM paths see one another's stamps.
+        self._kv: Any = kv
         # Optional second-stage attention probe. Wired up by the
         # bootstrap when both the YAML toggle and a usable API key
         # resolve; left as ``None`` by every existing test in
@@ -139,6 +313,7 @@ class GroupBatchChatDispatcher:
         self._states: defaultdict[str, _GroupState] = defaultdict(_GroupState)
         self._dispatch_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._action_sink: Any = None
+        self._message_seq = count()
         self._closed = False
 
     @property
@@ -147,6 +322,72 @@ class GroupBatchChatDispatcher:
 
     def set_action_sink(self, sink: Any) -> None:
         self._action_sink = sink
+
+    async def _is_within_attention_window(
+        self, scope_id: str, sender_id: str
+    ) -> bool:
+        """Return True iff ``sender_id`` was recently replied to by the bot.
+
+        Reads ``啊/{scope_id}/苏苏确认`` and delegates the format check
+        to :func:`_parse_attention_stamp` (which accepts both the epoch
+        seconds we write and the HHmm form main.ling uses, so the two
+        paths share state).
+        """
+        if (
+            self._kv is None
+            or not sender_id
+            or self._cfg.attention_window_s <= 0
+        ):
+            return False
+        try:
+            raw = await self._kv.read(
+                f"{_ATTENTION_KV_SCOPE_PREFIX}{scope_id}",
+                _ATTENTION_KV_FILE,
+                sender_id,
+                default=None,
+            )
+        except Exception:
+            logger.debug(
+                "group_batch.attention_window.kv_read_failed",
+                scope_id=scope_id,
+                sender_id=sender_id,
+                exc_info=True,
+            )
+            return False
+        if not raw:
+            return False
+        now = datetime.now()
+        return _parse_attention_stamp(
+            raw,
+            now_epoch=time.time(),
+            now_hhmm_minutes=now.hour * 60 + now.minute,
+            window_s=self._cfg.attention_window_s,
+        )
+
+    async def _refresh_attention_window(
+        self, scope_id: str, sender_id: str
+    ) -> None:
+        """Stamp ``(scope, sender) -> now`` after a successful bot reply."""
+        if (
+            self._kv is None
+            or not sender_id
+            or self._cfg.attention_window_s <= 0
+        ):
+            return
+        try:
+            await self._kv.write(
+                f"{_ATTENTION_KV_SCOPE_PREFIX}{scope_id}",
+                _ATTENTION_KV_FILE,
+                sender_id,
+                str(int(time.time())),
+            )
+        except Exception:
+            logger.debug(
+                "group_batch.attention_window.kv_write_failed",
+                scope_id=scope_id,
+                sender_id=sender_id,
+                exc_info=True,
+            )
 
     async def stop(self) -> None:
         self._closed = True
@@ -174,10 +415,18 @@ class GroupBatchChatDispatcher:
 
     async def run(self, event: Event, session: Session) -> list[Action]:
         if not self._cfg.enabled or event.scope.kind != "group":
-            return await self._inner.run(event, session)
+            actions: list[Action] = await self._inner.run(event, session)
+            return actions
 
         state = self._state_for(event)
         msg = self._to_buffered(event)
+        # Check the sliding "苏苏确认" attention window BEFORE acquiring
+        # the state lock so the KV read doesn't block message ingestion.
+        # If this user is in the window, treat the batch as already
+        # rule-attended — same as if `_is_attention_candidate` had fired.
+        within_window = await self._is_within_attention_window(
+            event.scope.id, event.sender.id
+        )
         async with state.lock:
             state.messages.append(msg)
             self._trim_locked(state)
@@ -186,7 +435,7 @@ class GroupBatchChatDispatcher:
             now = time.monotonic()
             if state.first_seen_at is None:
                 state.first_seen_at = now
-            if self._is_attention_candidate(msg):
+            if within_window or self._is_attention_candidate(msg):
                 state.attention_seen = True
             state.wakeup.set()
             if state.flush_task is None:
@@ -259,6 +508,7 @@ class GroupBatchChatDispatcher:
                         template_event = state.template_event
                         session = state.last_session
                         generation = state.generation
+                        had_attention = state.attention_seen
                         self._reset_state_locked(state, cancel_task=False)
                     elif drop_ready:
                         dropped = len(state.messages)
@@ -276,6 +526,7 @@ class GroupBatchChatDispatcher:
                         template_event = None
                         session = None
                         generation = state.generation
+                        had_attention = False
                 if not batch or template_event is None or session is None:
                     try:
                         await asyncio.wait_for(state.wakeup.wait(), timeout=wait_for)
@@ -283,7 +534,7 @@ class GroupBatchChatDispatcher:
                         continue
                     continue
                 try:
-                    await self._dispatch_batch(template_event, session, batch, generation)
+                    await self._dispatch_batch(template_event, session, batch, generation, had_attention)
                 except Exception:
                     logger.exception("group_batch.flush_failed", key=key)
                 return
@@ -319,12 +570,13 @@ class GroupBatchChatDispatcher:
         session: Session,
         batch: list[_BufferedMessage],
         generation: int,
+        had_attention: bool = False,
     ) -> None:
         if self._closed:
             return
         async with self._dispatch_locks[self._state_key(event)]:
             if await self._batch_is_current(event, generation):
-                await self._dispatch_batch_locked(event, session, batch, generation)
+                await self._dispatch_batch_locked(event, session, batch, generation, had_attention)
 
     async def _dispatch_batch_locked(
         self,
@@ -332,6 +584,7 @@ class GroupBatchChatDispatcher:
         session: Session,
         batch: list[_BufferedMessage],
         generation: int,
+        had_attention: bool = False,
     ) -> None:
         batch_session = await self._batch_session(event, session)
         tool_selection = await self._dispatch_batch_with_tools(
@@ -339,6 +592,7 @@ class GroupBatchChatDispatcher:
             batch_session,
             batch,
             generation,
+            had_attention,
         )
         if tool_selection is not None:
             if tool_selection.records and await self._batch_is_current(event, generation):
@@ -369,16 +623,13 @@ class GroupBatchChatDispatcher:
             return
         if not await self._batch_is_current(event, generation):
             return
-        actions = self._actions_from_result(result.content, event, batch)
-        if not actions:
-            return
-        records: list[_ToolSendRecord] = []
-        for action in actions:
-            if not await self._batch_is_current(event, generation):
-                break
-            sent, _error = await self._send_action(action, event)
-            if sent and await self._batch_is_current(event, generation):
-                records.append(_record_from_action(action, batch))
+        records = await self._handle_plain_assistant_content(
+            result.content,
+            event=event,
+            batch=batch,
+            generation=generation,
+            sent_count=0,
+        )
         if not records:
             return
         if await self._batch_is_current(event, generation):
@@ -390,11 +641,38 @@ class GroupBatchChatDispatcher:
         session: Session,
         batch: list[_BufferedMessage],
         generation: int,
+        had_attention: bool = False,
     ) -> _ToolSelection | None:
         agent = self.agent
         provider = getattr(agent, "provider", None)
         agent_def = getattr(agent, "agent_def", None)
         if provider is None or agent_def is None:
+            if (
+                not had_attention
+                and self._probe_wired()
+                and self._probe is not None
+                and getattr(self._probe, "judge", None) is not None
+            ):
+                try:
+                    probe_has_action = await self._legacy_probe_has_action(event, batch)
+                    logger.info(
+                        "group_batch.attention_probe.judged",
+                        scope_id=event.scope.id,
+                        batch_size=len(batch),
+                        verdict=probe_has_action,
+                        model=getattr(self._probe, "model", "(legacy)"),
+                    )
+                    if not probe_has_action or not await self._batch_is_current(event, generation):
+                        return _ToolSelection(records=[])
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "group_batch.attention_probe.unexpected_failure",
+                        scope_id=event.scope.id,
+                        exc_info=True,
+                    )
+                    return _ToolSelection(records=[])
             return None
         await self._ensure_history(session, event)
         tools = _group_batch_tool_schemas()
@@ -419,17 +697,33 @@ class GroupBatchChatDispatcher:
             Message(role="user", content=user_prompt),
         ]
         messages = fit_messages_to_budget(messages, self._context_max_tokens())
-        # --- Pre-flight: use the probe (small LLM) with the same full
-        # context to decide whether to invoke the main LLM at all. ---
-        if self._probe_wired() and self._probe is not None:
+        # --- Pre-flight: probe runs only when the rule-based attention
+        # gate did NOT fire. If the rule already said "respond" (e.g.
+        # mentions_bot, question particle, bot_name in text), skip the
+        # probe entirely — re-judging with a small model that lacks
+        # full context can incorrectly veto an obvious reply.
+        #
+        # The probe sees EXACTLY the same messages the main LLM will see
+        # — same system prompt, same history, same batch, same tools,
+        # same max_tokens. Think of it as "what would the agent do if
+        # we swapped the model to Groq?". If the small model decides
+        # not to act (no tool_calls), we trust that and skip the main
+        # LLM call entirely. If the probe fails (TPM cap, network),
+        # fail-open to the main LLM. ---
+        if (
+            not had_attention
+            and self._probe_wired()
+            and self._probe is not None
+        ):
             try:
-                probe_response = await self._probe.provider.chat(
-                    messages,
+                probe_has_action = await self._probe_has_action(
+                    messages=messages,
                     tools=tools,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    event=event,
+                    batch=batch,
                 )
-                probe_has_action = bool(probe_response.message.tool_calls)
                 logger.info(
                     "group_batch.attention_probe.judged",
                     scope_id=event.scope.id,
@@ -442,16 +736,27 @@ class GroupBatchChatDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # Probe failure → fail-open, let the main LLM decide.
+                # Probe failure on a non-attention batch fails closed:
+                # direct mentions/questions already bypass the probe via
+                # had_attention, while idle chatter should not become
+                # chatty just because the cheap gate is unhealthy.
                 logger.warning(
                     "group_batch.attention_probe.failed",
                     scope_id=event.scope.id,
                     category="preflight_error",
                     exc_info=True,
                 )
+                return _ToolSelection(records=[])
         records: list[_ToolSendRecord] = []
         read_calls = 0
         total_tokens = 0
+        logger.info(
+            "group_batch.tool_selector_start",
+            scope_id=event.scope.id,
+            batch_size=len(batch),
+            had_attention=had_attention,
+            history_msgs=len(history),
+        )
         for _ in range(_MAX_TOOL_ROUNDS):
             if not await self._batch_is_current(event, generation):
                 return _ToolSelection(records=records)
@@ -474,13 +779,40 @@ class GroupBatchChatDispatcher:
             if not await self._batch_is_current(event, generation):
                 return _ToolSelection(records=records)
             if not assistant.tool_calls:
+                # No tool calls — interpret the plain content as either
+                # an explicit "no_reply" decision, a legacy JSON action
+                # payload, or a direct group send.
+                new_records = await self._handle_plain_assistant_content(
+                    assistant.content,
+                    event=event,
+                    batch=batch,
+                    generation=generation,
+                    sent_count=len(records),
+                )
+                if not new_records:
+                    stop_kind = _classify_stop_token(assistant.content or "")
+                    logger.info(
+                        "group_batch.tool_selector_no_reply",
+                        scope_id=event.scope.id,
+                        had_attention=had_attention,
+                        actions_so_far=len(records),
+                        stop_kind=stop_kind or "empty",
+                    )
+                    return _ToolSelection(records=records)
+                records.extend(new_records)
+                logger.info(
+                    "group_batch.tool_selector_text_send",
+                    scope_id=event.scope.id,
+                    had_attention=had_attention,
+                    text_preview="\n".join(r.assistant_output for r in new_records)[:200],
+                )
                 return _ToolSelection(records=records)
             messages.append(assistant)
-            sent_this_round = False
             terminal = False
             for tool_call in assistant.tool_calls:
                 tool_result, record, read_used, terminal = await self._execute_batch_tool(
                     tool_call,
+                    assistant=assistant,
                     event=event,
                     batch=batch,
                     generation=generation,
@@ -491,7 +823,6 @@ class GroupBatchChatDispatcher:
                     read_calls += 1
                 if record is not None:
                     records.append(record)
-                    sent_this_round = True
                 messages.append(
                     Message(
                         role="tool",
@@ -505,20 +836,208 @@ class GroupBatchChatDispatcher:
                 if terminal:
                     break
             messages = fit_messages_to_budget(messages, self._context_max_tokens())
-            if sent_this_round or terminal or len(records) >= self._cfg.max_replies:
+            if terminal or len(records) >= self._cfg.max_replies:
                 break
-        logger.debug(
+        logger.info(
             "group_batch.tool_selector_done",
+            scope_id=event.scope.id,
             actions=len(records),
             read_calls=read_calls,
             total_tokens=total_tokens,
+            had_attention=had_attention,
         )
         return _ToolSelection(records=records)
+
+    async def _probe_has_action(
+        self,
+        *,
+        messages: list[Message],
+        tools: list[ToolSchema],
+        temperature: float,
+        max_tokens: int | None,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> bool:
+        assert self._probe is not None
+        probe_provider = getattr(self._probe, "provider", None)
+        if probe_provider is not None:
+            response = await probe_provider.chat(
+                messages,
+                tools=tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return self._assistant_message_has_action(response.message, event, batch)
+
+        # Compatibility for older local tests / injected probes. Real
+        # bootstrap-created probes always expose ``provider`` and use
+        # the full-context path above.
+        judge = getattr(self._probe, "judge", None)
+        if judge is not None:
+            return await self._legacy_probe_has_action(event, batch)
+
+        raise RuntimeError("attention probe has neither provider nor judge")
+
+    async def _legacy_probe_has_action(
+        self,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> bool:
+        assert self._probe is not None
+        judge = self._probe.judge
+        probe_batch = [
+            _ProbeBatchInput(
+                message_id=msg.message_id,
+                sender_name=msg.sender_name,
+                timestamp=msg.timestamp,
+                text=msg.text,
+            )
+            for msg in batch
+        ]
+        return bool(await judge(probe_batch, scope_id=event.scope.id))
+
+    def _assistant_message_has_action(
+        self,
+        message: Message,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> bool:
+        tool_calls = message.tool_calls or []
+        if any(
+            tc.name in {_TOOL_READ_BATCH, _TOOL_REPLY_TO_MESSAGE, _TOOL_SEND_GROUP}
+            for tc in tool_calls
+        ):
+            return True
+        content = (message.content or "").strip()
+        if not content or _is_stop_token(content):
+            return False
+        legacy_actions = self._legacy_actions_from_content(content, event, batch)
+        if legacy_actions is not None:
+            return bool(legacy_actions)
+        return True
+
+    def _legacy_actions_from_content(
+        self,
+        content: str,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> list[Action] | None:
+        stripped = content.strip()
+        if not stripped:
+            return []
+        candidate = stripped
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
+            candidate = re.sub(r"\s*```$", "", candidate).strip()
+        if not candidate.startswith("{") or "\"actions\"" not in candidate:
+            return None
+        payload = _parse_json_object(candidate)
+        if not isinstance(payload, dict) or not isinstance(payload.get("actions"), list):
+            return None
+        return self._actions_from_result(candidate, event, batch)
+
+    async def _handle_plain_assistant_content(
+        self,
+        content: str,
+        *,
+        event: Event,
+        batch: list[_BufferedMessage],
+        generation: int,
+        sent_count: int,
+    ) -> list[_ToolSendRecord]:
+        text = (content or "").strip()
+        if not text or _is_stop_token(text):
+            return []
+        legacy_actions = self._legacy_actions_from_content(text, event, batch)
+        if legacy_actions is not None:
+            return await self._send_actions_and_records(
+                legacy_actions,
+                event=event,
+                batch=batch,
+                generation=generation,
+                sent_count=sent_count,
+            )
+        if sent_count >= self._cfg.max_replies:
+            return []
+        action = Action(
+            kind="send",
+            target=event.scope,
+            segments=[TextSegment(text=text[: self._cfg.max_reply_chars])],
+        )
+        return await self._send_actions_and_records(
+            [action],
+            event=event,
+            batch=batch,
+            generation=generation,
+            sent_count=sent_count,
+        )
+
+    async def _send_actions_and_records(
+        self,
+        actions: list[Action],
+        *,
+        event: Event,
+        batch: list[_BufferedMessage],
+        generation: int,
+        sent_count: int,
+    ) -> list[_ToolSendRecord]:
+        records: list[_ToolSendRecord] = []
+        remaining = max(0, self._cfg.max_replies - sent_count)
+        for action in actions[:remaining]:
+            if not await self._batch_is_current(event, generation):
+                break
+            sent, _error = await self._send_action(action, event)
+            if sent and await self._batch_is_current(event, generation):
+                await self._refresh_attention_for_action(action, event, batch)
+                records.append(_record_from_action(action, batch))
+        return records
+
+    async def _refresh_attention_for_action(
+        self,
+        action: Action,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> None:
+        if action.kind == "reply":
+            reply_id = next(
+                (
+                    getattr(seg, "message_id", "")
+                    for seg in action.segments
+                    if getattr(seg, "kind", "") == "reply"
+                ),
+                "",
+            )
+            msg = _message_by_id(batch).get(reply_id)
+            if msg is not None:
+                await self._refresh_attention_window(event.scope.id, msg.sender_id)
+            return
+        if action.kind == "send":
+            await self._refresh_attention_for_group_send(event, batch)
+
+    async def _refresh_attention_for_group_send(
+        self,
+        event: Event,
+        batch: list[_BufferedMessage],
+    ) -> None:
+        unique_sender_ids = _ordered_unique(
+            msg.sender_id for msg in batch if msg.sender_id
+        )
+        candidate_sender_ids = _ordered_unique(
+            msg.sender_id
+            for msg in batch
+            if msg.sender_id and self._is_attention_candidate(msg)
+        )
+        targets = candidate_sender_ids
+        if not targets and len(unique_sender_ids) == 1:
+            targets = unique_sender_ids
+        for sender_id in targets:
+            await self._refresh_attention_window(event.scope.id, sender_id)
 
     async def _execute_batch_tool(
         self,
         tool_call: ToolCall,
         *,
+        assistant: Message,
         event: Event,
         batch: list[_BufferedMessage],
         generation: int,
@@ -533,14 +1052,32 @@ class GroupBatchChatDispatcher:
                 return _tool_json({"ok": False, "error": "read limit exceeded"}), None, False, False
             return self._tool_read_batch(args, batch), None, True, False
         if tool_call.name == _TOOL_REPLY_TO_MESSAGE:
-            return await self._tool_reply_to_message(args, event, batch, generation, sent_count)
+            return await self._tool_reply_to_message(
+                args,
+                tool_call,
+                assistant,
+                event,
+                batch,
+                generation,
+                sent_count,
+            )
         if tool_call.name == _TOOL_SEND_GROUP:
-            return await self._tool_send_group(args, event, batch, generation, sent_count)
+            return await self._tool_send_group(
+                args,
+                tool_call,
+                assistant,
+                event,
+                batch,
+                generation,
+                sent_count,
+            )
         return _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}), None, False, False
 
     async def _tool_reply_to_message(
         self,
         args: dict[str, object],
+        tool_call: ToolCall,
+        assistant: Message,
         event: Event,
         batch: list[_BufferedMessage],
         generation: int,
@@ -573,19 +1110,24 @@ class GroupBatchChatDispatcher:
         sent, error = await self._send_action(action, event)
         if not sent:
             return _tool_json({"ok": False, "error": error or "send failed"}), None, False, True
+        # Refresh the "苏苏确认" attention window for the user we just
+        # replied to. This is the bot's own attention-keeping signal:
+        # if Susu just spoke to %QQ%, %QQ%'s next message in the same
+        # group gets a free pass through the attention gate even if
+        # rule patterns wouldn't fire on it.
+        await self._refresh_attention_window(event.scope.id, msg.sender_id)
         record = _ToolSendRecord(
+            messages=_tool_history_messages(
+                _message_history_line(msg),
+                assistant=assistant,
+                tool_call=tool_call,
+                tool_result="回复完成",
+            ),
             user_input=_message_history_line(msg),
-            assistant_output=f"回复 {msg.sender_name}({msg.sender_id})[{msg.message_id}]: {reply_text}",
+            assistant_output=reply_text,
         )
         return (
-            _tool_json(
-                {
-                    "ok": True,
-                    "action": _TOOL_REPLY_TO_MESSAGE,
-                    "message": _message_tool_payload(msg, text_limit=_MAX_SENT_MESSAGE_ECHO_CHARS),
-                    "reply": reply_text,
-                }
-            ),
+            "回复完成",
             record,
             False,
             False,
@@ -594,6 +1136,8 @@ class GroupBatchChatDispatcher:
     async def _tool_send_group(
         self,
         args: dict[str, object],
+        tool_call: ToolCall,
+        assistant: Message,
         event: Event,
         batch: list[_BufferedMessage],
         generation: int,
@@ -613,19 +1157,19 @@ class GroupBatchChatDispatcher:
         sent, error = await self._send_action(action, event)
         if not sent:
             return _tool_json({"ok": False, "error": error or "send failed"}), None, False, True
+        await self._refresh_attention_for_group_send(event, batch)
         record = _ToolSendRecord(
+            messages=_tool_history_messages(
+                _batch_history_summary(batch),
+                assistant=assistant,
+                tool_call=tool_call,
+                tool_result="发送完成",
+            ),
             user_input=_batch_history_summary(batch),
-            assistant_output=f"群内直接回复: {reply_text}",
+            assistant_output=reply_text,
         )
         return (
-            _tool_json(
-                {
-                    "ok": True,
-                    "action": _TOOL_SEND_GROUP,
-                    "batch_refs": _batch_refs(batch),
-                    "reply": reply_text,
-                }
-            ),
+            "发送完成",
             record,
             False,
             False,
@@ -670,6 +1214,17 @@ class GroupBatchChatDispatcher:
         event: Event,
         records: list[_ToolSendRecord],
     ) -> None:
+        record_messages = getattr(self._inner, "record_messages", None)
+        messages = [message for record in records for message in record.messages]
+        if record_messages is not None and messages:
+            async with session.lock:
+                await record_messages(
+                    session=session,
+                    scope_id=event.scope.id,
+                    sender_id="",
+                    messages=messages,
+                )
+            return
         recorder = getattr(self._inner, "record_history", None)
         if recorder is None:
             return
@@ -711,7 +1266,7 @@ class GroupBatchChatDispatcher:
         if prepare is None:
             return list(session.history)
         async with session.lock:
-            return await prepare(
+            prepared: list[Message] = await prepare(
                 session=session,
                 scope_id=event.scope.id,
                 sender_id="",
@@ -721,6 +1276,7 @@ class GroupBatchChatDispatcher:
                 allow_compaction=True,
                 commit_replacement=True,
             )
+            return prepared
 
     async def _batch_is_current(self, event: Event, generation: int) -> bool:
         state = self._states.get(self._state_key(event))
@@ -749,11 +1305,14 @@ class GroupBatchChatDispatcher:
             sender_name=event.sender.display_name or event.sender.id,
             text=_clip_text(event.text.strip(), self._cfg.max_chars),
             timestamp=_format_time(event.time),
+            sent_at=_event_sort_timestamp(event.time),
+            received_seq=next(self._message_seq),
             mentions_bot=_mentions_bot(event, self._cfg.bot_names),
             reply_to_bot=_reply_to_bot(event),
         )
 
     def _trim_locked(self, state: _GroupState) -> None:
+        state.messages = deque(_chronological_messages(state.messages))
         total_chars = sum(len(m.text) for m in state.messages)
         while len(state.messages) > self._cfg.max_messages:
             dropped = state.messages.popleft()
@@ -795,7 +1354,9 @@ class GroupBatchChatDispatcher:
         )
 
     def _build_prompt(self, batch: list[_BufferedMessage]) -> str:
-        lines = ["候选消息："]
+        lines = [
+            "候选消息（按发送时间从早到晚；sender_id 是稳定身份，sender_name 是昵称）："
+        ]
         for m in batch:
             lines.append(
                 json.dumps(
@@ -816,43 +1377,55 @@ class GroupBatchChatDispatcher:
     def _build_system_prompt(self) -> str:
         return "\n".join(
             [
-                "你是群聊里的选择性回复器，不要回复所有消息。",
-                "只输出严格 JSON；不要 Markdown、不要解释、不要代码块。",
-                "如果没有需要回应的内容，输出 {\"actions\":[]}。",
-                "可用 action：",
-                '{"type":"reply_to_message","message_id":"消息ID","text":"回复内容"}',
-                '{"type":"send_group","text":"直接发在群里的内容"}',
-                f"最多返回 {self._cfg.max_replies} 条 actions；text 必须简短。",
-                "严禁：编造 message_id、输出空 text、引用候选消息之外的内容。",
+                "你现在在群聊里，大家七嘴八舌地说着话。",
+                "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
+                "觉得没什么好说的就安静待着，不用勉强。",
+                "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                "",
+                "回复格式：想直接在群里说话就直接输出文字，不要任何前缀。",
+                "如果整批都不用回，就只输出 no_reply，不要解释。",
+                "如果已经通过 reply_to_message 精确回复完了，就输出 done / 回复好了 / 回复完成，不要再补别的内容。",
+                "如果必须引用某条消息回复，才输出严格 JSON：{\"actions\":[{\"type\":\"reply_to_message\",\"message_id\":\"对应ID\",\"text\":\"你的话\"}]}",
+                f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
             ]
         )
 
     def _build_tool_system_prompt(self) -> str:
         return "\n".join(
             [
-                "你是群聊里的选择性回复器，不要回复所有消息。",
-                "你必须通过工具行动；不需要回复时不要调用发送工具。",
-                "候选消息里只有短预览。需要完整内容时调用 read_batch_messages。",
-                "只有确认需要回应时，才调用 reply_to_message 或 send_group。",
-                f"最多发送 {self._cfg.max_replies} 条回复；回复 text 必须简短。",
-                "严禁编造 message_id，严禁引用候选消息或 read_batch_messages 之外的内容。",
+                "你现在在群聊里，大家七嘴八舌地说着话。",
+                "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
+                "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                "",
+                "回复方式（按情况选一种）：",
+                "1. 想直接在群里说话 → 直接输出文字，不要任何前缀（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
+                "2. 想引用某条消息回复（@对方+引用框）→ 调 reply_to_message 工具。",
+                "3. 候选里的 text_truncated=true 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
+                "4. 如果已经通过 reply_to_message 精确回复完了 → 输出 done / 回复好了 / 回复完成。",
+                "5. 如果整批都不用回 → 输出 no_reply。",
+                "不要输出 JSON；JSON actions 只是旧兼容格式，不是当前首选格式。",
+                "",
+                f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
             ]
         )
 
     def _build_tool_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = [
-            "群聊候选消息索引如下。先判断是否值得回复；必要时用 line/message_id 读取原文。",
+            "群聊候选消息如下，按发送时间从早到晚排列。sender_id 是稳定身份，sender_name 是昵称；先判断是否值得回复；text_truncated=true 时可用 line/message_id 读取原文。",
             "候选索引：",
         ]
         for line, msg in enumerate(batch, start=1):
+            clipped_text = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
             lines.append(
                 json.dumps(
                     {
                         "line": line,
                         "message_id": msg.message_id,
                         "time": msg.timestamp,
+                        "sender_id": msg.sender_id,
                         "sender_name": msg.sender_name,
-                        "preview": _clip_text(msg.text, _BATCH_PREVIEW_CHARS),
+                        "text": clipped_text,
+                        "text_truncated": len(clipped_text) < len(msg.text),
                         "mentions_bot": msg.mentions_bot,
                         "reply_to_bot": msg.reply_to_bot,
                     },
@@ -912,7 +1485,17 @@ class GroupBatchChatDispatcher:
 def _format_time(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
-    return value.astimezone().strftime("%H:%M:%S")
+    return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _event_sort_timestamp(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
+
+
+def _chronological_messages(messages: Iterable[_BufferedMessage]) -> list[_BufferedMessage]:
+    return sorted(messages, key=lambda msg: (msg.sent_at, msg.received_seq))
 
 
 def _mentions_bot(event: Event, bot_names: tuple[str, ...]) -> bool:
@@ -1005,7 +1588,7 @@ def _group_batch_tool_schemas() -> list[ToolSchema]:
         ),
         ToolSchema(
             name=_TOOL_REPLY_TO_MESSAGE,
-            description="回复当前批次中的某一条群消息。只有需要明确回应某人时调用。",
+            description="引用回复当前批次中的某一条群消息（带@和引用框）。只在明确想针对某条消息回应时调用；普通发言直接输出文本即可。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -1013,18 +1596,6 @@ def _group_batch_tool_schemas() -> list[ToolSchema]:
                     "text": {"type": "string", "description": "要发送的简短回复内容。"},
                 },
                 "required": ["message_id", "text"],
-                "additionalProperties": False,
-            },
-        ),
-        ToolSchema(
-            name=_TOOL_SEND_GROUP,
-            description="直接在群里发送一条不引用具体消息的回复。只在确实适合群内广播时调用。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "要发送的简短群消息。"},
-                },
-                "required": ["text"],
                 "additionalProperties": False,
             },
         ),
@@ -1103,22 +1674,81 @@ def _select_batch_messages(
     return sorted(deduped.values(), key=lambda item: item[0])
 
 
-def _message_history_line(msg: _BufferedMessage) -> str:
-    return f"{msg.sender_name}({msg.sender_id})[{msg.message_id} {msg.timestamp}]: {msg.text}"
+def _history_message_payload(
+    msg: _BufferedMessage,
+    *,
+    line: int | None = None,
+    note: str = "",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "message_id": msg.message_id,
+        "time": msg.timestamp,
+        "sender_id": msg.sender_id,
+        "sender_name": msg.sender_name,
+        "text": _clip_text(msg.text, _BATCH_HISTORY_TEXT_CHARS),
+        "mentions_bot": msg.mentions_bot,
+        "reply_to_bot": msg.reply_to_bot,
+    }
+    if line is not None:
+        payload = {"line": line, **payload}
+    if note:
+        payload["note"] = note
+    return payload
+
+
+def _message_history_line(msg: _BufferedMessage, *, note: str = "") -> str:
+    return "\n".join(
+        [
+            "群聊历史消息：",
+            json.dumps(_history_message_payload(msg, note=note), ensure_ascii=False),
+        ]
+    )
 
 
 def _batch_history_summary(batch: list[_BufferedMessage]) -> str:
-    lines = []
+    lines = ["群聊历史片段（按发送时间从早到晚；我随后在群里直接发言）："]
     for line, msg in enumerate(batch, start=1):
-        lines.append(
-            f"{line}. {msg.sender_name}({msg.sender_id})[{msg.message_id} {msg.timestamp}]: "
-            f"{_clip_text(msg.text, _BATCH_PREVIEW_CHARS)}"
-        )
+        lines.append(json.dumps(_history_message_payload(msg, line=line), ensure_ascii=False))
     return "\n".join(lines)
 
 
-def _batch_refs(batch: list[_BufferedMessage]) -> list[str]:
-    return [msg.message_id for msg in batch]
+def _assistant_tool_history_message(assistant: Message, tool_call: ToolCall) -> Message:
+    return Message(
+        role="assistant",
+        content=assistant.content or "",
+        tool_calls=[tool_call],
+        reasoning_content=assistant.reasoning_content,
+    )
+
+
+def _tool_history_messages(
+    user_content: str,
+    *,
+    assistant: Message,
+    tool_call: ToolCall,
+    tool_result: str,
+) -> list[Message]:
+    return [
+        Message(role="user", content=user_content),
+        _assistant_tool_history_message(assistant, tool_call),
+        Message(
+            role="tool",
+            content=tool_result,
+            name=tool_call.name,
+            tool_call_id=tool_call.id,
+        ),
+    ]
+
+
+def _ordered_unique(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _record_from_action(action: Action, batch: list[_BufferedMessage]) -> _ToolSendRecord:
@@ -1139,12 +1769,20 @@ def _record_from_action(action: Action, batch: list[_BufferedMessage]) -> _ToolS
     if reply_id and reply_id in message_by_id:
         msg = message_by_id[reply_id]
         return _ToolSendRecord(
+            messages=[
+                Message(role="user", content=_message_history_line(msg)),
+                Message(role="assistant", content=reply_text),
+            ],
             user_input=_message_history_line(msg),
-            assistant_output=f"回复 {msg.sender_name}({msg.sender_id})[{msg.message_id}]: {reply_text}",
+            assistant_output=reply_text,
         )
     return _ToolSendRecord(
+        messages=[
+            Message(role="user", content=_batch_history_summary(batch)),
+            Message(role="assistant", content=reply_text),
+        ],
         user_input=_batch_history_summary(batch),
-        assistant_output=f"群内直接回复: {reply_text}",
+        assistant_output=reply_text,
     )
 
 
@@ -1156,14 +1794,16 @@ def _parse_json_object(content: str) -> object | None:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     try:
-        return json.loads(text)
+        parsed: object = json.loads(text)
+        return parsed
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end <= start:
             return None
         try:
-            return json.loads(text[start : end + 1])
+            parsed_window: object = json.loads(text[start : end + 1])
+            return parsed_window
         except json.JSONDecodeError:
             logger.warning("group_batch.bad_json", preview=text[:200])
             return None

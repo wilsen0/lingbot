@@ -16,7 +16,9 @@ Schema (under ``kv`` table):
 * scope = ``__history__/<scope_id>``
 * file  = sender_id (empty string for scope-wide group memory)
 * key   = ``messages``
-* value = JSON list of ``{"role": str, "content": str}``
+* value = JSON list of message objects. ``role`` and ``content`` are
+  always present; assistant tool calls and tool results may also carry
+  ``tool_calls``, ``tool_call_id`` and ``name``.
 
 The ``__history__`` prefix is stable across versions — the KV browser
 can filter it out of user-facing listings. Bumping to a v2 schema means
@@ -27,12 +29,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
 
-from linling_agent.llm import Message
+from linling_agent.llm import Message, ToolCall
 
 if TYPE_CHECKING:
     from linling_core.storage.kv import KVStore
@@ -64,9 +65,10 @@ class KVHistoryStore:
     """Persist history JSON into a backing :class:`KVStore`.
 
     The store is bot-scoped via the KV's own ``bot_id`` column, so a
-    multi-tenant deployment is isolated automatically. We never store
-    tool-call metadata or system prompts — only the plain user /
-    assistant turns the agent needs to reconstruct context.
+    multi-tenant deployment is isolated automatically. System prompts
+    remain orchestration-only and are never stored. Valid assistant
+    tool-call blocks are preserved so a later turn can see what action
+    the model actually took.
     """
 
     def __init__(self, kv: KVStore, *, max_turns: int = 32) -> None:
@@ -77,8 +79,8 @@ class KVHistoryStore:
 
     async def load(self, scope_id: str, sender_id: str) -> list[Message]:
         raw = await self._kv.read(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _MESSAGES_KEY,
             default=None,
         )
@@ -104,38 +106,33 @@ class KVHistoryStore:
             content = item.get("content", "")
             if not isinstance(role, str) or not isinstance(content, str):
                 continue
-            # Only the two turn roles are safe to replay; tool and
-            # system messages belong to the LLM orchestration layer and
-            # are not part of user-facing history.
-            if role not in ("user", "assistant"):
+            if role not in ("user", "assistant", "tool"):
                 continue
-            messages.append(Message(role=role, content=content))
-        return messages
+            messages.append(_message_from_history_item(item, role=role, content=content))
+        return _history_messages(messages)
 
     async def save(self, scope_id: str, sender_id: str, messages: Iterable[Message]) -> None:
-        trimmed = [{"role": m.role, "content": m.content} for m in _only_turn_messages(messages)][
-            -self._max_turns * 2 :
-        ]  # *2 because turns come in user/assistant pairs
+        trimmed = [_message_to_history_item(m) for m in _trim_history_turns(messages, self._max_turns)]
         payload = json.dumps(trimmed, ensure_ascii=False)
         await self._kv.write(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _MESSAGES_KEY,
             payload,
         )
 
     async def clear(self, scope_id: str, sender_id: str) -> None:
         await self._kv.delete(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _MESSAGES_KEY,
         )
         await self.clear_summary(scope_id, sender_id)
 
     async def load_summary(self, scope_id: str, sender_id: str) -> str:
         raw = await self._kv.read(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _SUMMARY_KEY,
             default="",
         )
@@ -143,33 +140,119 @@ class KVHistoryStore:
 
     async def save_summary(self, scope_id: str, sender_id: str, summary: str) -> None:
         await self._kv.write(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _SUMMARY_KEY,
             summary,
         )
 
     async def clear_summary(self, scope_id: str, sender_id: str) -> None:
         await self._kv.delete(
-            _HISTORY_SCOPE_PREFIX + "/" + scope_id,
-            sender_id or "_group",
+            _history_scope(scope_id),
+            _history_file(sender_id),
             _SUMMARY_KEY,
         )
 
 
-def _only_turn_messages(messages: Iterable[Message]) -> list[Message]:
-    """Strip system / tool messages before persisting.
+def _message_from_history_item(item: dict[str, object], *, role: str, content: str) -> Message:
+    name = item.get("name")
+    tool_call_id = item.get("tool_call_id")
+    reasoning_content = item.get("reasoning_content")
+    return Message(
+        role=role,
+        content=content,
+        name=name if isinstance(name, str) else None,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        tool_calls=_tool_calls_from_history_item(item.get("tool_calls")),
+        reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+    )
 
-    ``replace`` is used rather than a new ``Message`` construction so any
-    future fields that may land on the dataclass (e.g. timestamps) are
-    copied verbatim.
-    """
-    out: list[Message] = []
-    for m in messages:
-        if m.role not in ("user", "assistant"):
+
+def _history_scope(scope_id: str) -> str:
+    return f"{_HISTORY_SCOPE_PREFIX}/{scope_id}"
+
+
+def _history_file(sender_id: str) -> str:
+    return sender_id or "_group"
+
+
+def _tool_calls_from_history_item(raw: object) -> list[ToolCall] | None:
+    if not isinstance(raw, list):
+        return None
+    tool_calls: list[ToolCall] = []
+    for item in raw:
+        if not isinstance(item, dict):
             continue
-        # Drop tool_call metadata from persisted copies — only the plain
-        # turn content matters for replay.
-        stripped = replace(m, tool_calls=None) if m.tool_calls else m
-        out.append(stripped)
+        call_id = item.get("id")
+        name = item.get("name")
+        arguments = item.get("arguments")
+        if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, str):
+            continue
+        tool_calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+    return tool_calls or None
+
+
+def _message_to_history_item(message: Message) -> dict[str, object]:
+    item: dict[str, object] = {"role": message.role, "content": message.content}
+    if message.name is not None:
+        item["name"] = message.name
+    if message.tool_call_id is not None:
+        item["tool_call_id"] = message.tool_call_id
+    if message.tool_calls:
+        item["tool_calls"] = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            for tc in message.tool_calls
+        ]
+    if message.reasoning_content is not None:
+        item["reasoning_content"] = message.reasoning_content
+    return item
+
+
+def _trim_history_turns(messages: Iterable[Message], max_turns: int) -> list[Message]:
+    turns: list[list[Message]] = []
+    current: list[Message] = []
+    for message in _history_messages(messages):
+        if message.role == "user":
+            if current:
+                turns.append(current)
+            current = [message]
+            continue
+        if current:
+            current.append(message)
+        else:
+            current = [message]
+    if current:
+        turns.append(current)
+    return [message for turn in turns[-max_turns:] for message in turn]
+
+
+def _history_messages(messages: Iterable[Message]) -> list[Message]:
+    """Strip system messages and orphan tool results before replay/persist."""
+    source = [m for m in messages if m.role in ("user", "assistant", "tool")]
+    out: list[Message] = []
+    i = 0
+    while i < len(source):
+        message = source[i]
+        if message.role == "assistant" and message.tool_calls:
+            expected_ids = [tc.id for tc in message.tool_calls]
+            block = [message]
+            j = i + 1
+            while j < len(source) and len(block) <= len(expected_ids):
+                candidate = source[j]
+                if candidate.role != "tool":
+                    break
+                block.append(candidate)
+                j += 1
+                if len(block) == len(expected_ids) + 1:
+                    break
+            tool_ids = [tool.tool_call_id for tool in block[1:]]
+            if tool_ids == expected_ids:
+                out.extend(block)
+            i = j
+            continue
+        if message.role == "tool":
+            i += 1
+            continue
+        out.append(message)
+        i += 1
     return out

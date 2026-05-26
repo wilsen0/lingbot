@@ -284,6 +284,27 @@ class AgentChatDispatcher:
         if self._history_store is not None:
             await self._persist_key(session, scope_id, sender_id)
 
+    async def record_messages(
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        messages: list[Message],
+    ) -> None:
+        """Append already-constructed history messages without invoking the agent.
+
+        Group batching uses this for ReAct-style records: the user
+        message contains the relevant group message(s), the assistant
+        message may carry a tool call, and the tool message records the
+        completed external action.
+        """
+        if not messages:
+            return
+        session.history.extend(messages)
+        if self._history_store is not None:
+            await self._persist_key(session, scope_id, sender_id)
+
     async def prepare_context_history(
         self,
         *,

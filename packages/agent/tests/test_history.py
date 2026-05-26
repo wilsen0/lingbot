@@ -131,10 +131,52 @@ async def test_save_strips_non_turn_roles(history, kv):
     assert [item["role"] for item in data] == ["user", "assistant"]
 
 
+async def test_save_load_preserves_tool_call_blocks(history, kv):
+    msgs = [
+        Message(role="user", content="群聊历史消息：m1"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="tc1",
+                    name="reply_to_message",
+                    arguments='{"message_id":"m1","text":"可以"}',
+                )
+            ],
+            reasoning_content="thought",
+        ),
+        Message(
+            role="tool",
+            content="回复完成",
+            name="reply_to_message",
+            tool_call_id="tc1",
+        ),
+    ]
+
+    await history.save("s1", "u1", msgs)
+    raw = await kv.read("__history__/s1", "u1", "messages")
+    data = json.loads(raw)
+    assert [item["role"] for item in data] == ["user", "assistant", "tool"]
+    assert data[1]["tool_calls"][0]["name"] == "reply_to_message"
+
+    loaded = await history.load("s1", "u1")
+    assert [message.role for message in loaded] == ["user", "assistant", "tool"]
+    assert loaded[1].tool_calls
+    assert loaded[1].tool_calls[0].arguments == '{"message_id":"m1","text":"可以"}'
+    assert loaded[1].reasoning_content == "thought"
+    assert loaded[2].tool_call_id == "tc1"
+
+
 async def test_trims_to_max_turns(kv):
     history = KVHistoryStore(kv, max_turns=2)  # keeps 4 messages
-    msgs = [Message(role="user", content=f"u{i}") for i in range(5)] + [
-        Message(role="assistant", content=f"a{i}") for i in range(5)
+    msgs = [
+        message
+        for i in range(5)
+        for message in (
+            Message(role="user", content=f"u{i}"),
+            Message(role="assistant", content=f"a{i}"),
+        )
     ]
     await history.save("s1", "u1", msgs)
     loaded = await history.load("s1", "u1")
