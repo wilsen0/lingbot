@@ -23,8 +23,9 @@ from typing import TYPE_CHECKING
 import structlog
 from linling_core.events import Action, Event
 from linling_core.pipeline import ledger_scope_keys
-from linling_core.segments import TextSegment
+from linling_core.segments import ReplySegment, TextSegment
 
+from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
 from linling_agent.context import ContextBudget, ContextManager, SummaryStore
 from linling_agent.llm import Message
 from linling_agent.runtime import AgentResult, AgentRuntime
@@ -63,6 +64,8 @@ class AgentChatDispatcher:
         ledger_store: LedgerStore | None = None,
         ledger_renderer: LedgerRenderer | None = None,
         context_budget: ContextBudget | None = None,
+        max_replies: int = 3,
+        max_reply_chars: int = 500,
     ) -> None:
         self._agent = agent
         self._empty_reply = empty_reply
@@ -73,6 +76,14 @@ class AgentChatDispatcher:
         # exactly (Requirement 1.11 / 1.12 / 11.5).
         self._ledger_store = ledger_store
         self._ledger_renderer = ledger_renderer
+        # Multi-message reply caps. The dispatcher's ``run`` parses an
+        # optional ``{"actions":[...]}`` payload from the assistant
+        # content; ``max_replies`` bounds how many segments we'll emit
+        # per turn, ``max_reply_chars`` clips each segment. Plain-text
+        # replies are unaffected — they still go out as a single
+        # message regardless of these caps.
+        self._max_replies = max(1, max_replies)
+        self._max_reply_chars = max(1, max_reply_chars)
         self._context = (
             ContextManager(
                 provider=agent.provider,
@@ -361,6 +372,20 @@ class AgentChatDispatcher:
         if result is None:
             return []
         text = result.content or self._empty_reply
+        outcome = parse_actions_envelope(text)
+        if outcome.recognised:
+            # Even an empty entry list is a structured decision — the LLM
+            # asked for nothing to be sent. Do NOT leak the raw JSON
+            # back to the user as a fallback "single message". This
+            # matches GroupBatchChatDispatcher's behaviour for
+            # ``{"actions":[]}`` (returns no actions, no plain-text
+            # fallback).
+            return _expand_actions_for_dm(
+                outcome.entries,
+                event=event,
+                max_actions=self._max_replies,
+                max_chars=self._max_reply_chars,
+            )
         return [Action(kind="reply", target=event.scope, segments=[TextSegment(text=text)])]
 
     # ---- history plumbing -------------------------------------------
@@ -510,3 +535,80 @@ class AgentChatDispatcher:
         if self._ledger_store is None:
             return
         await asyncio.wait_for(self._ledger_store.clear(scope_id, file_id), timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# Multi-message reply expansion (DM / WebUI side)
+# ---------------------------------------------------------------------------
+
+# When the agent's content parses as a JSON ``{"actions": [...]}`` envelope
+# we expand it into multiple :class:`Action` objects so a single LLM turn can
+# fan out into several outbound messages. The actual JSON parsing lives in
+# :mod:`linling_agent.actions_protocol` so the group-batch dispatcher can
+# share the same wire shape; this helper just decides how to shape each
+# normalised :class:`ParsedAction` into an :class:`Action` for the DM /
+# WebUI scope.
+#
+# Plain text — anything that isn't a recognised actions envelope — falls
+# through to the single-message path in :meth:`AgentChatDispatcher.run`.
+# Behaviour for callers/models that ignore this contract is unchanged.
+
+
+def _expand_actions_for_dm(
+    entries: list[ParsedAction],
+    *,
+    event: Event,
+    max_actions: int,
+    max_chars: int,
+) -> list[Action]:
+    """Materialise normalised actions for a DM / WebUI conversation.
+
+    DMs are 1:1, so ``message_id`` is informational — there's no incoming
+    batch to validate it against, and the OneBot adapter wraps the segment
+    list identically for ``kind="reply"`` and ``kind="send"`` in the
+    private-chat case. To keep the behaviour close to "the dispatcher's
+    historic single-message default" we emit ``kind="reply"`` for both
+    intents in DM scope. The group-batch dispatcher has its own expander
+    that honors ``message_id`` and the group-vs-DM ``kind`` split.
+
+    ``max_actions`` and ``max_chars`` mirror the group-batch
+    ``max_replies`` / ``max_reply_chars`` semantics; both must be ≥ 1.
+    Returns an empty list when there is nothing to send (the LLM asked
+    for silence via ``{"actions":[]}`` or every entry was malformed).
+    """
+    if max_actions <= 0 or max_chars <= 0:
+        return []
+    actions: list[Action] = []
+    is_group = event.scope.kind == "group"
+    for entry in entries:
+        if len(actions) >= max_actions:
+            break
+        text = entry.text[:max_chars]
+        if not text:
+            continue
+        if entry.kind == "reply" and is_group and entry.message_id:
+            # Defensive: DM dispatcher shouldn't normally see groups,
+            # but if it does (custom wiring), emit a real quote-reply.
+            actions.append(
+                Action(
+                    kind="reply",
+                    target=event.scope,
+                    segments=[
+                        ReplySegment(message_id=entry.message_id),
+                        TextSegment(text=text),
+                    ],
+                )
+            )
+            continue
+        # DM ``send`` and ``reply`` collapse to the same wire shape; we
+        # keep ``kind="reply"`` to mirror the historic single-message
+        # default of :meth:`AgentChatDispatcher.run`.
+        actions.append(
+            Action(
+                kind="reply" if not is_group else "send",
+                target=event.scope,
+                segments=[TextSegment(text=text)],
+            )
+        )
+    return actions
+

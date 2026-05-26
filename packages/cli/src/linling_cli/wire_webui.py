@@ -684,15 +684,42 @@ def _agent_result_to_reply(result: AgentResult) -> WebChatReply:
 
     Centralised so both the dispatcher-backed path and the legacy
     direct-runtime fallback shape their return value identically.
+
+    If the agent emitted a structured ``{"actions":[...]}`` envelope
+    (the same multi-message wire shape :class:`AgentChatDispatcher`
+    expands for IM transports), we surface each entry as its own
+    :class:`WebChatSegment` and join the texts with newlines for the
+    ``content`` field — that way the web user sees several short
+    bubbles' worth of text instead of a raw JSON blob, and the audit
+    row still records the model's actual reply length. Plain-text
+    replies are emitted as a single segment, matching the historic
+    behaviour exactly.
     """
+    from linling_agent.actions_protocol import parse_actions_envelope  # noqa: PLC0415
+
+    raw = result.content or ""
+    envelope = parse_actions_envelope(raw)
+    if envelope.recognised:
+        texts = [entry.text for entry in envelope.entries if entry.text]
+        joined = "\n".join(texts)
+        segments = tuple(
+            WebChatSegment(kind="text", text=text) for text in texts
+        )
+        return WebChatReply(
+            content=joined,
+            tool_calls_made=result.tool_calls_made,
+            total_tokens=result.total_tokens,
+            source="agent",
+            segments=segments,
+        )
     return WebChatReply(
-        content=result.content,
+        content=raw,
         tool_calls_made=result.tool_calls_made,
         total_tokens=result.total_tokens,
         source="agent",
         segments=(
-            (WebChatSegment(kind="text", text=result.content),)
-            if result.content
+            (WebChatSegment(kind="text", text=raw),)
+            if raw
             else ()
         ),
     )

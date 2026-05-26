@@ -18,6 +18,7 @@ from linling_core.events import Action, Event, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import ReplySegment, TextSegment
 
+from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
 from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import Message, ToolCall, ToolSchema
@@ -911,30 +912,62 @@ class GroupBatchChatDispatcher:
         content = (message.content or "").strip()
         if not content or _is_stop_token(content):
             return False
-        legacy_actions = self._legacy_actions_from_content(content, event, batch)
-        if legacy_actions is not None:
-            return bool(legacy_actions)
+        envelope = parse_actions_envelope(content)
+        if envelope.recognised:
+            # Recognised the actions wire shape — there's an action iff
+            # at least one entry survived schema normalisation. Empty
+            # envelopes (``{"actions": []}``) count as "model said
+            # nothing to do".
+            return any(_normalise_group_entry(entry, event, batch) is not None
+                       for entry in envelope.entries)
         return True
 
-    def _legacy_actions_from_content(
+    def _actions_from_envelope(
         self,
         content: str,
         event: Event,
         batch: list[_BufferedMessage],
     ) -> list[Action] | None:
-        stripped = content.strip()
-        if not stripped:
-            return []
-        candidate = stripped
-        if candidate.startswith("```"):
-            candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
-            candidate = re.sub(r"\s*```$", "", candidate).strip()
-        if not candidate.startswith("{") or "\"actions\"" not in candidate:
+        """Parse an actions envelope and shape it for the current group.
+
+        Returns ``None`` when the content is plain prose (caller falls back
+        to treating it as a single ``send_group``). Returns a (possibly
+        empty) list when the envelope was recognised; an empty list means
+        the LLM asked for nothing to be sent.
+        """
+        envelope = parse_actions_envelope(content)
+        if not envelope.recognised:
             return None
-        payload = _parse_json_object(candidate)
-        if not isinstance(payload, dict) or not isinstance(payload.get("actions"), list):
-            return None
-        return self._actions_from_result(candidate, event, batch)
+        actions: list[Action] = []
+        for entry in envelope.entries:
+            if len(actions) >= self._cfg.max_replies:
+                break
+            shaped = _normalise_group_entry(entry, event, batch)
+            if shaped is None:
+                continue
+            text = shaped.text[: self._cfg.max_reply_chars]
+            if not text:
+                continue
+            if shaped.kind == "reply":
+                actions.append(
+                    Action(
+                        kind="reply",
+                        target=event.scope,
+                        segments=[
+                            ReplySegment(message_id=shaped.message_id),
+                            TextSegment(text=text),
+                        ],
+                    )
+                )
+            else:
+                actions.append(
+                    Action(
+                        kind="send",
+                        target=event.scope,
+                        segments=[TextSegment(text=text)],
+                    )
+                )
+        return actions
 
     async def _handle_plain_assistant_content(
         self,
@@ -948,10 +981,14 @@ class GroupBatchChatDispatcher:
         text = (content or "").strip()
         if not text or _is_stop_token(text):
             return []
-        legacy_actions = self._legacy_actions_from_content(text, event, batch)
-        if legacy_actions is not None:
+        envelope_actions = self._actions_from_envelope(text, event, batch)
+        if envelope_actions is not None:
+            # Recognised actions envelope — honor it verbatim, including
+            # the empty list (which means "send nothing"). Do NOT fall
+            # through to the plain-text branch in that case, otherwise
+            # the raw JSON string would leak into a ``send_group``.
             return await self._send_actions_and_records(
-                legacy_actions,
+                envelope_actions,
                 event=event,
                 batch=batch,
                 generation=generation,
@@ -1382,10 +1419,14 @@ class GroupBatchChatDispatcher:
                 "觉得没什么好说的就安静待着，不用勉强。",
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
                 "",
-                "回复格式：想直接在群里说话就直接输出文字，不要任何前缀。",
-                "如果整批都不用回，就只输出 no_reply，不要解释。",
-                "如果已经通过 reply_to_message 精确回复完了，就输出 done / 回复好了 / 回复完成，不要再补别的内容。",
-                "如果必须引用某条消息回复，才输出严格 JSON：{\"actions\":[{\"type\":\"reply_to_message\",\"message_id\":\"对应ID\",\"text\":\"你的话\"}]}",
+                "回复格式（按情况选一种）：",
+                "A. 一句话就够 → 直接输出文字，不要任何前缀。",
+                "B. 想一次连发好几条短消息 → 输出严格 JSON：",
+                "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
+                "   按数组顺序逐条发送。type 支持 send_group（直接发）和 reply_to_message（引用回复，需要 message_id）。",
+                "C. 想引用某条消息回复 → 也可以用 B 里的 reply_to_message。",
+                "D. 如果整批都不用回 → 只输出 no_reply，不要解释。",
+                "E. 如果已经回复完了 → 输出 done / 回复好了 / 回复完成，不要再补别的内容。",
                 f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
             ]
         )
@@ -1397,13 +1438,16 @@ class GroupBatchChatDispatcher:
                 "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
                 "",
-                "回复方式（按情况选一种）：",
-                "1. 想直接在群里说话 → 直接输出文字，不要任何前缀（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
+                "回复方式（按情况选一种或自由组合）：",
+                "1. 想直接在群里说一句话 → 直接输出文字，不要任何前缀（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
                 "2. 想引用某条消息回复（@对方+引用框）→ 调 reply_to_message 工具。",
                 "3. 候选里的 text_truncated=true 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
-                "4. 如果已经通过 reply_to_message 精确回复完了 → 输出 done / 回复好了 / 回复完成。",
-                "5. 如果整批都不用回 → 输出 no_reply。",
-                "不要输出 JSON；JSON actions 只是旧兼容格式，不是当前首选格式。",
+                "4. 想一次连发好几条短消息（不打太长一段、也不想拆成多轮工具调用）→ 输出严格 JSON：",
+                "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
+                "   每个元素就是单独一条消息，按数组顺序发出去。type 支持 send_group 和 reply_to_message，与上面的工具一一对应。",
+                "5. 如果已经通过 reply_to_message 精确回复完了 → 输出 done / 回复好了 / 回复完成。",
+                "6. 如果整批都不用回 → 输出 no_reply。",
+                "JSON 与工具调用不要混用：同一轮里，要么全部用 tool call，要么整段输出就是一个 JSON。",
                 "",
                 f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
             ]
@@ -1433,48 +1477,6 @@ class GroupBatchChatDispatcher:
                 )
             )
         return "\n".join(lines)
-
-    def _actions_from_result(
-        self,
-        content: str,
-        event: Event,
-        batch: list[_BufferedMessage],
-    ) -> list[Action]:
-        payload = _parse_json_object(content)
-        if not isinstance(payload, dict):
-            return []
-        raw_actions = payload.get("actions")
-        if not isinstance(raw_actions, list):
-            return []
-        known_ids = {m.message_id for m in batch}
-        actions: list[Action] = []
-        for item in raw_actions:
-            if len(actions) >= self._cfg.max_replies:
-                break
-            if not isinstance(item, dict):
-                continue
-            typ = item.get("type")
-            text = item.get("text")
-            if not isinstance(typ, str) or not isinstance(text, str):
-                continue
-            text = text.strip()
-            if not text:
-                continue
-            text = text[: self._cfg.max_reply_chars]
-            if typ == "reply_to_message":
-                message_id = item.get("message_id")
-                if not isinstance(message_id, str) or message_id not in known_ids:
-                    continue
-                actions.append(
-                    Action(
-                        kind="reply",
-                        target=event.scope,
-                        segments=[ReplySegment(message_id=message_id), TextSegment(text=text)],
-                    )
-                )
-            elif typ == "send_group":
-                actions.append(Action(kind="send", target=event.scope, segments=[TextSegment(text=text)]))
-        return actions
 
     def _state_key(self, event_or_scope: Event | str) -> str:
         if isinstance(event_or_scope, Event):
@@ -1786,24 +1788,31 @@ def _record_from_action(action: Action, batch: list[_BufferedMessage]) -> _ToolS
     )
 
 
-def _parse_json_object(content: str) -> object | None:
-    text = content.strip()
-    if not text:
-        return None
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        parsed: object = json.loads(text)
-        return parsed
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end <= start:
+def _normalise_group_entry(
+    entry: ParsedAction,
+    event: Event,
+    batch: list[_BufferedMessage],
+) -> ParsedAction | None:
+    """Validate one parsed action against the current group batch.
+
+    Returns ``None`` for entries the group dispatcher should discard:
+
+    * ``reply`` entries pointing at a ``message_id`` we don't have in the
+      buffer — we can't quote a message we never received.
+    * (Hook for future scope-specific filtering.)
+
+    A ``send`` entry is always accepted; the caller still applies the
+    ``max_chars`` clip and ``max_replies`` cap.
+
+    The unused ``event`` parameter is reserved for future per-scope
+    policy (e.g. allowlists), kept in the signature so the call site
+    doesn't have to change when we add it.
+    """
+    _ = event  # reserved
+    if entry.kind == "reply":
+        if not entry.message_id:
             return None
-        try:
-            parsed_window: object = json.loads(text[start : end + 1])
-            return parsed_window
-        except json.JSONDecodeError:
-            logger.warning("group_batch.bad_json", preview=text[:200])
+        known_ids = {m.message_id for m in batch}
+        if entry.message_id not in known_ids:
             return None
+    return entry

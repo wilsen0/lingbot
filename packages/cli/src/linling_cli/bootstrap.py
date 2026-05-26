@@ -1031,6 +1031,8 @@ def _build_chat_dispatcher(
             summary_keep_recent_turns=config.conversation.summary_keep_recent_turns,
             summary_max_tokens=config.conversation.summary_max_tokens,
         ),
+        max_replies=config.agent.dm_max_replies,
+        max_reply_chars=config.agent.dm_max_reply_chars,
     )
     if config.agent.group_batch_enabled:
         names = tuple(

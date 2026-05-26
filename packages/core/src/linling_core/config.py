@@ -255,6 +255,16 @@ class AgentConfig(BaseModel):
     default_agent: str | None = None  # path to agent yaml
     fallback_reply: str = "Sorry, I don't have a chat brain configured."
     allowed_scopes: list[str] | None = None
+    # DM / private-chat multi-message reply caps. The chat dispatcher
+    # parses an optional ``{"actions":[...]}`` JSON wrapper from the
+    # assistant's plain text and fans it out into multiple messages —
+    # ``dm_max_replies`` bounds how many entries we'll emit per turn,
+    # ``dm_max_reply_chars`` clips each entry. Plain-text replies are
+    # unaffected (still a single message). Group chats have their own
+    # ``group_batch_max_replies`` / ``group_batch_max_reply_chars`` and
+    # are not influenced by these knobs.
+    dm_max_replies: int = 3
+    dm_max_reply_chars: int = 500
     group_batch_enabled: bool = False
     group_batch_window_s: float = 8.0
     group_batch_max_messages: int = 20
@@ -282,6 +292,10 @@ class AgentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_group_batch(self) -> AgentConfig:
+        if self.dm_max_replies <= 0:
+            raise ValueError("dm_max_replies must be positive")
+        if self.dm_max_reply_chars <= 0:
+            raise ValueError("dm_max_reply_chars must be positive")
         if self.group_batch_window_s < 0:
             raise ValueError("group_batch_window_s must be non-negative")
         if self.group_batch_max_messages <= 0:
