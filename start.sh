@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 # 不走代理：linling 连的是本机 NapCat 和 LLM 端点，过代理只会出问题
 unset all_proxy ALL_PROXY http_proxy HTTP_PROXY https_proxy HTTPS_PROXY
 # 清掉 shell 里可能残留的旧 LLM 配置,让 .env 做唯一配置来源
-unset OPENAI_API_KEY OPENAI_BASE_URL LINLING_MODEL 2>/dev/null || true
+unset OPENAI_API_KEY OPENAI_BASE_URL LLM_API_KEY LLM_BASE_URL LINLING_MODEL 2>/dev/null || true
 
 # ---- 重启检测 ----
 OLD_PID=$(pgrep -f 'linling run' || true)

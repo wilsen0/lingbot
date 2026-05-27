@@ -53,6 +53,11 @@ class _SilentChat:
         return []
 
 
+class _FailingChat:
+    async def run(self, event: Event, session: Session) -> list[Action]:
+        raise RuntimeError("upstream gateway timeout")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -183,6 +188,30 @@ async def test_audit_entry_payload_clips_long_text():
     e = audit.entries[0]
     # payload["message"] is clipped to 500 chars.
     assert len(e.payload["message"]) == 500
+
+
+async def test_audit_records_dispatcher_exception_details():
+    audit = _RecordingAudit()
+    classifier = MessageClassifier(_FakeScript())
+    router = Router(
+        classifier=classifier,
+        commands=_TraceCaptureCommand(),
+        chats=_FailingChat(),
+        sink=_no_sink,
+        conversations=ConversationStore(rate_per_second=100, burst=100),
+        audit=audit,
+    )
+
+    await router.handle(_event("hi"))
+
+    assert len(audit.entries) == 1
+    e = audit.entries[0]
+    assert e.kind == "chat"
+    assert e.outcome == "error"
+    assert e.verdict == "chat:fallback:error"
+    assert e.payload["error_dispatcher"] == "chat"
+    assert e.payload["error_type"] == "RuntimeError"
+    assert e.payload["error_message"] == "upstream gateway timeout"
 
 
 async def test_null_audit_is_default_and_never_raises():

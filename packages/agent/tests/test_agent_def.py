@@ -16,9 +16,9 @@ from linling_agent.agent_def import AgentDef, AgentProviderConfig
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Strip every ``OPENAI_*`` env var so each test starts from zero."""
+    """Strip every ``OPENAI_*`` and ``LLM_*`` env var so each test starts from zero."""
     for key in list(os.environ):
-        if key.startswith("OPENAI_"):
+        if key.startswith("OPENAI_") or key.startswith("LLM_"):
             monkeypatch.delenv(key, raising=False)
 
 

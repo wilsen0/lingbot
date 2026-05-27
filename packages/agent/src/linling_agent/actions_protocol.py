@@ -112,20 +112,30 @@ def _try_decode_envelope(content: str) -> dict[str, object] | None:
     if text.startswith("```"):
         text = _FENCE_OPEN_RE.sub("", text, count=1)
         text = _FENCE_CLOSE_RE.sub("", text, count=1).strip()
-    if not text.startswith("{") or "\"actions\"" not in text:
+    if "\"actions\"" not in text:
         return None
+
+    # Fast path for a clean JSON-only response.
     try:
         parsed: object = json.loads(text)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end <= start:
-            return None
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("actions"), list):
+        return parsed
+
+    # LLMs sometimes wrap the envelope in role-play prose despite the
+    # prompt. Scan for a standalone JSON object and accept the first
+    # one that is actually an actions envelope. ``raw_decode`` handles
+    # nested objects and braces inside JSON strings; a regex would not.
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
         try:
-            parsed = json.loads(text[start : end + 1])
+            candidate, _end = decoder.raw_decode(text, match.start())
         except json.JSONDecodeError:
-            return None
-    return parsed if isinstance(parsed, dict) else None
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get("actions"), list):
+            return candidate
+    return None
 
 
 def _normalise_entry(item: object) -> ParsedAction | None:

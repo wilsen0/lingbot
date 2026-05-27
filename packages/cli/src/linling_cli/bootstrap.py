@@ -1349,9 +1349,10 @@ def _build_attention_probe(
     # ``or`` chains intentionally treat empty string and unset
     # identically — that matches how
     # :func:`linling_agent.agent_def._provider_config_from_dict`
-    # already handles ``OPENAI_API_KEY``.
+    # already handles ``LLM_API_KEY`` / ``OPENAI_API_KEY``.
     api_key = (
         os.environ.get("ATTENTION_PROBE_API_KEY", "").strip()
+        or os.environ.get("LLM_API_KEY", "").strip()
         or os.environ.get("OPENAI_API_KEY", "").strip()
     )
     if not api_key:
@@ -1363,6 +1364,7 @@ def _build_attention_probe(
 
     base_url = (
         os.environ.get("ATTENTION_PROBE_BASE_URL", "").strip()
+        or os.environ.get("LLM_BASE_URL", "").strip()
         or os.environ.get("OPENAI_BASE_URL", "").strip()
         or "https://api.openai.com/v1"
     )

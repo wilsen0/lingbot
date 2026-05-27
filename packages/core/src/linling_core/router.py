@@ -245,6 +245,15 @@ class RouterConfig:
     cancel_noop_reply: str = "Nothing in flight to cancel."
 
 
+@dataclass(frozen=True)
+class _DispatchErrorInfo:
+    """Structured dispatcher exception metadata for audit payloads."""
+
+    dispatcher: str
+    type: str
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -360,6 +369,7 @@ class Router:
         started = time.monotonic()
         verdict = "unknown"
         outcome = "ok"
+        dispatch_error: _DispatchErrorInfo | None = None
         try:
             try:
                 await asyncio.wait_for(
@@ -376,8 +386,10 @@ class Router:
                 return True
 
             try:
-                verdict = await self._dispatch(event)
-                if verdict.endswith(":rate-limited") or verdict.endswith(":timeout"):
+                verdict, dispatch_error = await self._dispatch(event)
+                if dispatch_error is not None:
+                    outcome = "error"
+                elif verdict.endswith(":rate-limited") or verdict.endswith(":timeout"):
                     outcome = "rate-limited"
                 elif verdict.startswith("ignore:"):
                     outcome = "ignored"
@@ -397,13 +409,14 @@ class Router:
                 outcome=outcome,
                 started=started,
                 trace_id=trace_id,
+                dispatch_error=dispatch_error,
             )
             structlog.contextvars.unbind_contextvars("trace_id", "bot_id", "event_id")
             _trace_id_ctx.reset(token)
 
     # ------------------------------------------------------------------ internals
 
-    async def _dispatch(self, event: Event) -> str:
+    async def _dispatch(self, event: Event) -> tuple[str, _DispatchErrorInfo | None]:
         # Built-in ``/help`` takes precedence over the classifier so
         # operators cannot accidentally shadow it with a rule. The
         # classifier-level prefix parsing still has to agree the
@@ -411,29 +424,29 @@ class Router:
         # shouldn't override whatever the ruleset wants to do.
         if self._cfg.help_command_name and self._maybe_builtin(event, self._cfg.help_command_name):
             await self._emit_help(event)
-            return "help:builtin"
+            return "help:builtin", None
         # ``/cancel`` is handled *before* acquiring the session lock —
         # the whole point is to unblock the lock-holder.
         if self._cfg.cancel_command_name and self._maybe_builtin(
             event, self._cfg.cancel_command_name
         ):
             await self._do_cancel(event)
-            return "cancel:builtin"
+            return "cancel:builtin", None
         if self._cfg.reset_command_name and self._maybe_builtin(
             event, self._cfg.reset_command_name
         ):
             await self._do_reset(event)
-            return "reset:builtin"
+            return "reset:builtin", None
 
         intent: Intent = self._classifier.classify(event)
 
         if intent.kind == "ignore":
-            return f"ignore:{intent.reason}"
+            return f"ignore:{intent.reason}", None
 
         if intent.kind == "command" and intent.match is None:
             # Prefix present but no handler matched.
             await self._emit_text(event, self._cfg.unknown_command_reply)
-            return f"unknown-command:{intent.reason}"
+            return f"unknown-command:{intent.reason}", None
 
         # Both remaining branches need a session lock.
         key = self._conversation_key(event, intent)
@@ -449,7 +462,7 @@ class Router:
             and not session.rate_limiter.try_acquire()
         ):
             await self._emit_text(event, self._cfg.busy_session_reply)
-            return "chat:rate-limited"
+            return "chat:rate-limited", None
 
         # Per-session serialization. We don't await inside the lock
         # longer than the dispatcher needs; on timeout we bail so a stuck
@@ -459,21 +472,21 @@ class Router:
         except TimeoutError:
             logger.warning("router.session_lock_timeout", event_id=event.id, key=str(session.key))
             await self._emit_text(event, self._cfg.busy_session_reply)
-            return "session-timeout"
+            return "session-timeout", None
 
+        dispatch_error: _DispatchErrorInfo | None = None
         try:
             actions: list[Action]
-            errored = False
             if intent.kind == "command":
                 assert intent.match is not None
-                actions, errored = await self._safe(
+                actions, dispatch_error = await self._safe(
                     self._commands.run(event, intent.match, session),
                     label="command",
                     event=event,
                 )
                 verdict = f"command:{intent.reason}"
             else:  # chat
-                actions, errored = await self._safe(
+                actions, dispatch_error = await self._safe(
                     self._chats.run(event, session),
                     label="chat",
                     event=event,
@@ -482,13 +495,13 @@ class Router:
         finally:
             session.lock.release()
 
-        if errored and not actions:
+        if dispatch_error is not None and not actions:
             # Dispatcher raised and produced no actions of its own;
             # send a friendly fallback so the user knows we received
             # the message even though the handler crashed.
             await self._emit_text(event, self._cfg.error_reply)
             verdict = f"{verdict}:error"
-            return verdict
+            return verdict, dispatch_error
 
         for a in actions:
             try:
@@ -500,7 +513,7 @@ class Router:
                     {"bot_id": event.bot_id, "platform": a.target.platform},
                 )
 
-        return verdict
+        return verdict, dispatch_error
 
     async def _safe(
         self,
@@ -508,24 +521,30 @@ class Router:
         *,
         label: str,
         event: Event,
-    ) -> tuple[list[Action], bool]:
+    ) -> tuple[list[Action], _DispatchErrorInfo | None]:
         """Run a dispatcher coroutine, catching its exceptions.
 
-        Returns ``(actions, errored)`` so the caller can distinguish
+        Returns ``(actions, error)`` so the caller can distinguish
         "the dispatcher returned no actions on purpose" from "the
         dispatcher crashed". The latter triggers a friendly fallback
-        reply so the user is never silently ignored.
+        reply so the user is never silently ignored. The structured
+        error is also copied into the audit payload so operator-visible
+        rows do not require digging through stdout logs.
         """
         try:
-            return await coro, False
-        except Exception:
+            return await coro, None
+        except Exception as exc:
             logger.exception(
                 "router.dispatcher_failed",
                 event_id=event.id,
                 bot_id=event.bot_id,
                 dispatcher=label,
             )
-            return [], True
+            return [], _DispatchErrorInfo(
+                dispatcher=label,
+                type=type(exc).__name__,
+                message=str(exc),
+            )
 
     def _conversation_key(self, event: Event, intent: Intent) -> tuple[str, str, str]:
         # Group messages that are chat-intent use (bot, group, sender) so
@@ -556,6 +575,7 @@ class Router:
         outcome: str,
         started: float,
         trace_id: str,
+        dispatch_error: _DispatchErrorInfo | None = None,
     ) -> None:
         """Emit a single audit entry for the dispatch outcome.
 
@@ -599,6 +619,14 @@ class Router:
             "platform": event.platform,
             "message": event.text[:500],  # clip to avoid PII firehose
         }
+        if dispatch_error is not None:
+            payload.update(
+                {
+                    "error_dispatcher": dispatch_error.dispatcher,
+                    "error_type": dispatch_error.type,
+                    "error_message": dispatch_error.message[:500],
+                }
+            )
         try:
             self._audit.write(
                 AuditEntry(

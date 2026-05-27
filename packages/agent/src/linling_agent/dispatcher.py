@@ -372,20 +372,52 @@ class AgentChatDispatcher:
         if result is None:
             return []
         text = result.content or self._empty_reply
-        outcome = parse_actions_envelope(text)
-        if outcome.recognised:
-            # Even an empty entry list is a structured decision — the LLM
-            # asked for nothing to be sent. Do NOT leak the raw JSON
-            # back to the user as a fallback "single message". This
-            # matches GroupBatchChatDispatcher's behaviour for
-            # ``{"actions":[]}`` (returns no actions, no plain-text
-            # fallback).
-            return _expand_actions_for_dm(
-                outcome.entries,
-                event=event,
-                max_actions=self._max_replies,
-                max_chars=self._max_reply_chars,
+        try:
+            outcome = parse_actions_envelope(text)
+        except Exception:
+            # Defensive: parsing the LLM's content must never crash the
+            # dispatcher — that path turns the user's reply into the
+            # router's "Something went wrong" error_reply, which is far
+            # worse than losing the multi-message split. Log and treat
+            # the content as plain prose.
+            logger.exception(
+                "chat_dispatcher.actions_parse_failed",
+                scope_id=event.scope.id,
+                sender_id=event.sender.id,
+                content_preview=text[:200],
             )
+            outcome = None
+        if outcome is not None and outcome.recognised:
+            try:
+                expanded = _expand_actions_for_dm(
+                    outcome.entries,
+                    event=event,
+                    max_actions=self._max_replies,
+                    max_chars=self._max_reply_chars,
+                )
+            except Exception:
+                logger.exception(
+                    "chat_dispatcher.actions_expand_failed",
+                    scope_id=event.scope.id,
+                    sender_id=event.sender.id,
+                )
+                expanded = None
+            if expanded is not None:
+                if expanded:
+                    return expanded
+                # Recognised envelope but every entry was filtered out
+                # (empty texts, or all messages clipped to zero). The LLM
+                # essentially asked for silence, but emitting nothing
+                # would let the router think the dispatcher returned
+                # cleanly with no work to do — same as "no_reply".
+                # That's the right semantic: stay silent.
+                logger.info(
+                    "chat_dispatcher.actions_empty_envelope",
+                    scope_id=event.scope.id,
+                    sender_id=event.sender.id,
+                    raw_entries=len(outcome.entries),
+                )
+                return []
         return [Action(kind="reply", target=event.scope, segments=[TextSegment(text=text)])]
 
     # ---- history plumbing -------------------------------------------

@@ -79,18 +79,25 @@ def _provider_config_from_dict(data: dict[str, Any] | None) -> AgentProviderConf
     """Build an :class:`AgentProviderConfig` with env-var fallbacks.
 
     Empty strings / missing keys for ``api_key`` and ``base_url`` fall
-    back to the legacy ``OPENAI_API_KEY`` / ``OPENAI_BASE_URL``
-    environment variables so deployments that pre-date the
-    ``provider_config`` block keep working unchanged. ``extra_headers``
-    has no env fallback — the provider's built-in ``User-Agent``
-    default covers every endpoint we test against, and operators who
-    need a specific override can write it explicitly in YAML.
+    back through the chain ``LLM_*`` → legacy ``OPENAI_*`` → hardcoded
+    default. The ``LLM_*`` variables are the preferred convention (they
+    won't collide with third-party tools that export ``OPENAI_*``);
+    ``OPENAI_*`` is kept as a second fallback so old deployments work
+    unchanged. ``extra_headers`` has no env fallback — the provider's
+    built-in ``User-Agent`` default covers every endpoint we test
+    against, and operators who need a specific override can write it
+    explicitly in YAML.
     """
     raw = data or {}
 
-    api_key = raw.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+    api_key = (
+        raw.get("api_key")
+        or os.environ.get("LLM_API_KEY", "")
+        or os.environ.get("OPENAI_API_KEY", "")
+    )
     base_url = (
         raw.get("base_url")
+        or os.environ.get("LLM_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
         or _DEFAULT_OPENAI_BASE_URL
     )
