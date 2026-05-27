@@ -20,6 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from linling_core.segments import Segment, match_text, plain_text
 
 
+ACTION_DELAY_BEFORE_OPTION = "_linling_delay_before_s"
+"""Internal Action.options key: seconds to wait before sending the action."""
+
+
 class Scope(BaseModel):
     """Where a message lives / goes to.
 

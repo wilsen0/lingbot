@@ -11,6 +11,7 @@ export interface MsgSegment {
   text?: string;
   url?: string;
   alt?: string;
+  delayBeforeS?: number;
 }
 
 export type MsgRole = "user" | "assistant" | "tool";

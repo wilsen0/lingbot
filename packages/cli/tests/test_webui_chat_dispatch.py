@@ -33,18 +33,19 @@ class _FakeAgent:
         self.name = "susu"
         self.provider_name = "fake"
         self.model = "fake-1"
+        self.content = "[LLM-WAS-CALLED]"
 
     async def invoke(self, content: str, *, event=None, history=None):  # type: ignore[no-untyped-def]
         self.calls.append(content)
 
         # Match the ``AgentResult`` shape the dispatcher expects.
         class _R:
-            def __init__(self) -> None:
-                self.content = "[LLM-WAS-CALLED]"
+            def __init__(self, content: str) -> None:
+                self.content = content
                 self.tool_calls_made = 0
                 self.total_tokens = 0
 
-        return _R()
+        return _R(self.content)
 
 
 def _write(base: Path, rel: str, content: str) -> Path:
@@ -70,6 +71,9 @@ storage:
   kv: ":memory:"
 rules:
   - "rules/**/*.ling"
+agent:
+  multi_reply_delay_min_s: 2
+  multi_reply_delay_max_s: 2
 """
     cfg_path = _write(tmp_path, "bot.yaml", bot_yaml)
 
@@ -148,6 +152,31 @@ def test_non_dsl_input_falls_back_to_llm(chat_app) -> None:
     body = r.json()
     assert body["content"] == "[LLM-WAS-CALLED]"
     assert fake.calls == ["你好啊"]
+
+
+def test_webui_agent_actions_are_private_chat_segments_with_delay(chat_app) -> None:
+    client, token, fake = chat_app
+    fake.content = (
+        '{"actions":[{"type":"send","text":"第一句"},'
+        '{"type":"send","text":"第二句"},'
+        '{"type":"send","text":"第三句"}]}'
+    )
+
+    r = client.post(
+        "/api/agents/susu/chat",
+        json={"input": "发3条"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["content"] == "第一句\n第二句\n第三句"
+    assert [segment["text"] for segment in body["segments"]] == [
+        "第一句",
+        "第二句",
+        "第三句",
+    ]
+    assert [segment["delay_before_s"] for segment in body["segments"]] == [0.0, 2.0, 2.0]
 
 
 def test_ws_stream_dsl_trigger_short_circuits_llm(chat_app) -> None:

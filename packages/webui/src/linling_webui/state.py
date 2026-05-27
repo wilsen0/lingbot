@@ -68,6 +68,7 @@ class WebChatSegment:
     text: str = ""
     url: str = ""
     alt: str = ""
+    delay_before_s: float = 0.0
 
 
 @dataclass(frozen=True)

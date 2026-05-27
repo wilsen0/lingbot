@@ -734,6 +734,11 @@ export interface components {
              * @default
              */
             alt: string;
+            /**
+             * Delay Before S
+             * @default 0
+             */
+            delay_before_s: number;
         };
         /**
          * EventEnvelope

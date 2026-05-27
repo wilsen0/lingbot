@@ -119,6 +119,20 @@ bot_id: partial
         assert cfg.agent.group_batch_enabled is False
         assert cfg.agent.group_batch_require_attention is True
         assert cfg.agent.group_batch_max_hold_s == 30.0
+        assert cfg.agent.multi_reply_delay_min_s == 0.0
+        assert cfg.agent.multi_reply_delay_max_s == 0.0
+
+    def test_multi_reply_delay_config(self) -> None:
+        cfg = BotConfig.from_yaml_str(
+            """\
+agent:
+  multi_reply_delay_min_s: 2
+  multi_reply_delay_max_s: 8
+"""
+        )
+
+        assert cfg.agent.multi_reply_delay_min_s == 2
+        assert cfg.agent.multi_reply_delay_max_s == 8
 
     def test_invalid_context_budget_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="summary_max_tokens"):
@@ -135,6 +149,16 @@ conversation:
                 """\
 agent:
   group_batch_max_messages: 0
+"""
+            )
+
+    def test_invalid_multi_reply_delay_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="multi_reply_delay_max_s"):
+            BotConfig.from_yaml_str(
+                """\
+agent:
+  multi_reply_delay_min_s: 8
+  multi_reply_delay_max_s: 2
 """
             )
 

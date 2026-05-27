@@ -20,9 +20,15 @@ from pathlib import Path
 import pytest
 from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig
 from linling_agent.runtime import AgentResult
-from linling_cli.bootstrap import RunningBot, bootstrap_bot
+from linling_cli.bootstrap import RunningBot, bootstrap_bot, build_sink
 from linling_core.config import BotConfig
-from linling_core.events import Action, Event, Scope, User
+from linling_core.events import (
+    ACTION_DELAY_BEFORE_OPTION,
+    Action,
+    Event,
+    Scope,
+    User,
+)
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import TextSegment
 
@@ -54,6 +60,29 @@ class _FailingAdapter(_RecordingAdapter):
     async def send(self, action: Action) -> None:
         _ = action
         raise RuntimeError("send failed")
+
+
+@pytest.mark.asyncio
+async def test_sink_honors_action_delay_option(monkeypatch) -> None:
+    rec = _RecordingAdapter(platform="test")
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("linling_cli.bootstrap.asyncio.sleep", fake_sleep)
+    sink = build_sink([rec])
+    action = Action(
+        kind="send",
+        target=Scope(kind="group", id="g1", platform="test"),
+        segments=[TextSegment(text="later")],
+        options={ACTION_DELAY_BEFORE_OPTION: 2.5},
+    )
+
+    await sink(action)
+
+    assert sleeps == [2.5]
+    assert rec.sent == [action]
 
 
 class _BatchInner:

@@ -45,6 +45,7 @@ class ChatSegment(BaseModel):
     text: str = ""
     url: str = ""
     alt: str = ""
+    delay_before_s: float = 0.0
 
 
 class ChatResponse(BaseModel):
@@ -225,7 +226,13 @@ async def chat(
             total_tokens = reply.total_tokens
             source = reply.source
             segments = [
-                ChatSegment(kind=s.kind, text=s.text, url=s.url, alt=s.alt)
+                ChatSegment(
+                    kind=s.kind,
+                    text=s.text,
+                    url=s.url,
+                    alt=s.alt,
+                    delay_before_s=s.delay_before_s,
+                )
                 for s in reply.segments
             ]
         else:

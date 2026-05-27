@@ -25,6 +25,7 @@ from linling_core.events import Action, Event
 from linling_core.pipeline import ledger_scope_keys
 from linling_core.segments import ReplySegment, TextSegment
 
+from linling_agent.action_delay import with_random_delay_before
 from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
 from linling_agent.context import ContextBudget, ContextManager, SummaryStore
 from linling_agent.llm import Message
@@ -66,6 +67,8 @@ class AgentChatDispatcher:
         context_budget: ContextBudget | None = None,
         max_replies: int = 3,
         max_reply_chars: int = 500,
+        multi_reply_delay_min_s: float = 0.0,
+        multi_reply_delay_max_s: float = 0.0,
     ) -> None:
         self._agent = agent
         self._empty_reply = empty_reply
@@ -84,6 +87,8 @@ class AgentChatDispatcher:
         # message regardless of these caps.
         self._max_replies = max(1, max_replies)
         self._max_reply_chars = max(1, max_reply_chars)
+        self._multi_reply_delay_min_s = max(0.0, multi_reply_delay_min_s)
+        self._multi_reply_delay_max_s = max(0.0, multi_reply_delay_max_s)
         self._context = (
             ContextManager(
                 provider=agent.provider,
@@ -394,6 +399,8 @@ class AgentChatDispatcher:
                     event=event,
                     max_actions=self._max_replies,
                     max_chars=self._max_reply_chars,
+                    delay_min_s=self._multi_reply_delay_min_s,
+                    delay_max_s=self._multi_reply_delay_max_s,
                 )
             except Exception:
                 logger.exception(
@@ -592,6 +599,8 @@ def _expand_actions_for_dm(
     event: Event,
     max_actions: int,
     max_chars: int,
+    delay_min_s: float = 0.0,
+    delay_max_s: float = 0.0,
 ) -> list[Action]:
     """Materialise normalised actions for a DM / WebUI conversation.
 
@@ -621,26 +630,35 @@ def _expand_actions_for_dm(
         if entry.kind == "reply" and is_group and entry.message_id:
             # Defensive: DM dispatcher shouldn't normally see groups,
             # but if it does (custom wiring), emit a real quote-reply.
-            actions.append(
-                Action(
-                    kind="reply",
-                    target=event.scope,
-                    segments=[
-                        ReplySegment(message_id=entry.message_id),
-                        TextSegment(text=text),
-                    ],
-                )
+            action = Action(
+                kind="reply",
+                target=event.scope,
+                segments=[
+                    ReplySegment(message_id=entry.message_id),
+                    TextSegment(text=text),
+                ],
             )
+            if actions:
+                action = with_random_delay_before(
+                    action,
+                    min_s=delay_min_s,
+                    max_s=delay_max_s,
+                )
+            actions.append(action)
             continue
         # DM ``send`` and ``reply`` collapse to the same wire shape; we
         # keep ``kind="reply"`` to mirror the historic single-message
         # default of :meth:`AgentChatDispatcher.run`.
-        actions.append(
-            Action(
-                kind="reply" if not is_group else "send",
-                target=event.scope,
-                segments=[TextSegment(text=text)],
-            )
+        action = Action(
+            kind="reply" if not is_group else "send",
+            target=event.scope,
+            segments=[TextSegment(text=text)],
         )
+        if actions:
+            action = with_random_delay_before(
+                action,
+                min_s=delay_min_s,
+                max_s=delay_max_s,
+            )
+        actions.append(action)
     return actions
-

@@ -622,7 +622,11 @@ def _build_web_chat_dispatcher(
             if runtime is None:
                 return WebChatReply(content="", source="empty")
             result = await runtime.invoke(content, event=event)
-            return _agent_result_to_reply(result)
+            return _agent_result_to_reply(
+                result,
+                delay_min_s=bot.config.agent.multi_reply_delay_min_s,
+                delay_max_s=bot.config.agent.multi_reply_delay_max_s,
+            )
 
         # ``dispatch`` mutates ``session.history`` and the persistent
         # KV row, so it must run under the per-session lock — same
@@ -674,12 +678,21 @@ def _build_web_chat_dispatcher(
             # Surface an empty reply so the WS handler still emits a
             # clean ``done`` frame.
             return WebChatReply(content="", source="empty")
-        return _agent_result_to_reply(result_or_none)
+        return _agent_result_to_reply(
+            result_or_none,
+            delay_min_s=bot.config.agent.multi_reply_delay_min_s,
+            delay_max_s=bot.config.agent.multi_reply_delay_max_s,
+        )
 
     return _dispatch
 
 
-def _agent_result_to_reply(result: AgentResult) -> WebChatReply:
+def _agent_result_to_reply(
+    result: AgentResult,
+    *,
+    delay_min_s: float = 0.0,
+    delay_max_s: float = 0.0,
+) -> WebChatReply:
     """Wrap an :class:`AgentResult` in a :class:`WebChatReply`.
 
     Centralised so both the dispatcher-backed path and the legacy
@@ -695,6 +708,7 @@ def _agent_result_to_reply(result: AgentResult) -> WebChatReply:
     replies are emitted as a single segment, matching the historic
     behaviour exactly.
     """
+    from linling_agent.action_delay import random_delay_seconds  # noqa: PLC0415
     from linling_agent.actions_protocol import parse_actions_envelope  # noqa: PLC0415
 
     raw = result.content or ""
@@ -702,15 +716,21 @@ def _agent_result_to_reply(result: AgentResult) -> WebChatReply:
     if envelope.recognised:
         texts = [entry.text for entry in envelope.entries if entry.text]
         joined = "\n".join(texts)
-        segments = tuple(
-            WebChatSegment(kind="text", text=text) for text in texts
-        )
+        segments = []
+        for idx, text in enumerate(texts):
+            delay_s = 0.0
+            if idx > 0:
+                delay_s = random_delay_seconds(
+                    min_s=delay_min_s,
+                    max_s=delay_max_s,
+                ) or 0.0
+            segments.append(WebChatSegment(kind="text", text=text, delay_before_s=delay_s))
         return WebChatReply(
             content=joined,
             tool_calls_made=result.tool_calls_made,
             total_tokens=result.total_tokens,
             source="agent",
-            segments=segments,
+            segments=tuple(segments),
         )
     return WebChatReply(
         content=raw,

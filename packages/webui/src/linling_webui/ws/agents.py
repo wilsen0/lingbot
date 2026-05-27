@@ -107,7 +107,13 @@ async def _dispatch_via_chat(
                 "total_tokens": reply.total_tokens,
                 "source": reply.source,
                 "segments": [
-                    {"kind": s.kind, "text": s.text, "url": s.url, "alt": s.alt}
+                    {
+                        "kind": s.kind,
+                        "text": s.text,
+                        "url": s.url,
+                        "alt": s.alt,
+                        "delay_before_s": s.delay_before_s,
+                    }
                     for s in reply.segments
                 ],
             }

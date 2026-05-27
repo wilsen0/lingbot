@@ -183,7 +183,13 @@ def _make_rule_event(kind: str, text: str, *, eid: str) -> Event:
     if kind == "mention":
         event.segments.insert(0, at("bot1"))
     elif kind == "reply":
+        # A real reply-to-bot must carry source metadata identifying
+        # the bot as the original sender; a bare reply segment with
+        # no quoted-sender info is treated as "reply to someone else"
+        # by :func:`_reply_to_bot` to avoid every cross-user
+        # quote-reply in a busy group falsely tripping attention.
         event.segments.insert(0, reply("quoted"))
+        event.raw["reply"] = {"sender": {"user_id": "bot1"}}
     elif kind == "name":
         # Inject the bot name into the event text by rebuilding the
         # text segment. ``bot_names=("苏苏",)`` is configured below.

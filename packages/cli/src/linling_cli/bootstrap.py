@@ -35,7 +35,13 @@ from linling_core.adapters import Adapter as AdapterHandle
 from linling_core.bus import EventBus
 from linling_core.classifier import MessageClassifier
 from linling_core.config import BotConfig
-from linling_core.events import Action, Event, Scope, User
+from linling_core.events import (
+    ACTION_DELAY_BEFORE_OPTION,
+    Action,
+    Event,
+    Scope,
+    User,
+)
 from linling_core.metrics import MetricsSink, NullMetrics, set_metrics
 from linling_core.pipeline import ConversationStore, Session
 from linling_core.router import ActionSink, Router, RouterConfig
@@ -1033,6 +1039,8 @@ def _build_chat_dispatcher(
         ),
         max_replies=config.agent.dm_max_replies,
         max_reply_chars=config.agent.dm_max_reply_chars,
+        multi_reply_delay_min_s=config.agent.multi_reply_delay_min_s,
+        multi_reply_delay_max_s=config.agent.multi_reply_delay_max_s,
     )
     if config.agent.group_batch_enabled:
         names = tuple(
@@ -1056,6 +1064,8 @@ def _build_chat_dispatcher(
                 max_chars=config.agent.group_batch_max_chars,
                 max_replies=config.agent.group_batch_max_replies,
                 max_reply_chars=config.agent.group_batch_max_reply_chars,
+                multi_reply_delay_min_s=config.agent.multi_reply_delay_min_s,
+                multi_reply_delay_max_s=config.agent.multi_reply_delay_max_s,
                 require_attention=config.agent.group_batch_require_attention,
                 max_hold_s=config.agent.group_batch_max_hold_s,
                 bot_names=names,
@@ -1479,6 +1489,7 @@ def build_sink(
         adapter = adapters[0]
 
         async def _single(action: Action) -> None:
+            await _sleep_before_action(action)
             await _invoke_send(adapter, action, raise_on_error=raise_on_error)
 
         return _single
@@ -1495,9 +1506,19 @@ def build_sink(
             if raise_on_error:
                 raise RuntimeError(f"no adapter for platform: {plat}")
             return
+        await _sleep_before_action(action)
         await _invoke_send(target_adapter, action, raise_on_error=raise_on_error)
 
     return _multi
+
+
+async def _sleep_before_action(action: Action) -> None:
+    raw = action.options.get(ACTION_DELAY_BEFORE_OPTION)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return
+    delay_s = max(0.0, float(raw))
+    if delay_s > 0:
+        await asyncio.sleep(delay_s)
 
 
 def _infer_platform(adapter: AdapterHandle) -> str:

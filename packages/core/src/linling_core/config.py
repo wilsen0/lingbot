@@ -265,6 +265,10 @@ class AgentConfig(BaseModel):
     # are not influenced by these knobs.
     dm_max_replies: int = 3
     dm_max_reply_chars: int = 500
+    # Random delay inserted before the 2nd, 3rd, ... message in a
+    # multi-message assistant reply. ``0/0`` disables pacing.
+    multi_reply_delay_min_s: float = 0.0
+    multi_reply_delay_max_s: float = 0.0
     group_batch_enabled: bool = False
     group_batch_window_s: float = 8.0
     group_batch_max_messages: int = 20
@@ -296,6 +300,12 @@ class AgentConfig(BaseModel):
             raise ValueError("dm_max_replies must be positive")
         if self.dm_max_reply_chars <= 0:
             raise ValueError("dm_max_reply_chars must be positive")
+        if self.multi_reply_delay_min_s < 0:
+            raise ValueError("multi_reply_delay_min_s must be non-negative")
+        if self.multi_reply_delay_max_s < 0:
+            raise ValueError("multi_reply_delay_max_s must be non-negative")
+        if self.multi_reply_delay_max_s < self.multi_reply_delay_min_s:
+            raise ValueError("multi_reply_delay_max_s must be >= multi_reply_delay_min_s")
         if self.group_batch_window_s < 0:
             raise ValueError("group_batch_window_s must be non-negative")
         if self.group_batch_max_messages <= 0:

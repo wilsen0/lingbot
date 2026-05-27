@@ -16,7 +16,13 @@ export type AgentStreamMsg =
        *  resolved a DSL handler that emitted images / mixed content;
        *  absent for plain-text-only replies (frontend then falls
        *  back to the streamed ``delta`` text). */
-      segments?: Array<{ kind: "text" | "image"; text?: string; url?: string; alt?: string }>;
+      segments?: Array<{
+        kind: "text" | "image";
+        text?: string;
+        url?: string;
+        alt?: string;
+        delay_before_s?: number;
+      }>;
     }
   | { t: "error"; msg: string }
   | { t: "ping" };

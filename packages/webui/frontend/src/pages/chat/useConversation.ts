@@ -61,6 +61,12 @@ export function useConversation() {
     return msgIdCounter++;
   }
 
+  let delayedTimers: ReturnType<typeof setTimeout>[] = [];
+  function clearDelayedTimers() {
+    for (const timer of delayedTimers) clearTimeout(timer);
+    delayedTimers = [];
+  }
+
   // ───────────────────────── delta queue ─────────────────────────
   /**
    * 流式 delta 合并队列. 模型快速产文时会以 10–50 段/秒发 token, 直接每段
@@ -103,30 +109,32 @@ export function useConversation() {
       drain: sched.flush,
       reset() {
         sched.cancel();
+        clearDelayedTimers();
         pending = "";
         assistantId = null;
       },
-      finishAssistant(meta?: { segments?: MsgSegment[] }) {
+      finishAssistant(meta?: { segments?: MsgSegment[]; source?: string }): number {
         sched.flush();
-        if (assistantId === null) return;
+        if (assistantId === null) return 0;
         const cur = messages.value.find((m) => m.id === assistantId);
         if (cur) {
           cur.streaming = false;
-          if (meta?.segments?.length) {
-            cur.segments = meta.segments
-              .filter((s) => (s.kind === "text" && s.text) || (s.kind === "image" && s.url))
-              .map((s) => ({
-                kind: s.kind,
-                text: s.text ?? "",
-                url: s.url ?? "",
-                alt: s.alt ?? "",
-              }));
+          const segments = normaliseSegments(meta?.segments);
+          if (shouldSplitAgentTextSegments(segments, meta?.source)) {
+            const elapsedMs = replaceAssistantWithDelayedTexts(assistantId, segments);
+            assistantId = null;
+            return elapsedMs;
+          }
+          if (segments.length) {
+            cur.segments = segments;
           }
         }
         assistantId = null;
+        return 0;
       },
       abortAssistant() {
         sched.flush();
+        clearDelayedTimers();
         if (assistantId === null) return;
         const cur = messages.value.find((m) => m.id === assistantId);
         if (cur) cur.streaming = false;
@@ -139,6 +147,73 @@ export function useConversation() {
   /** tool_call.args / tool_result.result 序列化: string 直传, 否则 pretty-print。 */
   function toToolPayload(v: unknown): string {
     return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+  }
+
+  function normaliseSegments(segments?: MsgSegment[]): MsgSegment[] {
+    return (segments ?? [])
+      .filter((s) => (s.kind === "text" && s.text) || (s.kind === "image" && s.url))
+      .map((s) => {
+        const raw = s as MsgSegment & { delay_before_s?: number };
+        const delayBeforeS =
+          typeof raw.delayBeforeS === "number" ? raw.delayBeforeS : raw.delay_before_s;
+        return {
+          kind: s.kind,
+          text: s.text ?? "",
+          url: s.url ?? "",
+          alt: s.alt ?? "",
+          delayBeforeS:
+            typeof delayBeforeS === "number" && Number.isFinite(delayBeforeS)
+              ? Math.max(0, delayBeforeS)
+              : 0,
+        };
+      });
+  }
+
+  function shouldSplitAgentTextSegments(segments: MsgSegment[], source?: string): boolean {
+    return source === "agent" && segments.length > 1 && segments.every((s) => s.kind === "text");
+  }
+
+  function replaceAssistantWithDelayedTexts(assistantId: number, segments: MsgSegment[]): number {
+    const idx = messages.value.findIndex((m) => m.id === assistantId);
+    const first = segments[0];
+    const firstMsg: Msg = {
+      id: nextId(),
+      role: "assistant",
+      content: first.text ?? "",
+      streaming: false,
+    };
+    if (idx >= 0) messages.value.splice(idx, 1, firstMsg);
+    else messages.value.push(firstMsg);
+
+    let elapsedMs = 0;
+    for (const seg of segments.slice(1)) {
+      elapsedMs += Math.max(0, seg.delayBeforeS ?? 0) * 1000;
+      const msg: Msg = {
+        id: nextId(),
+        role: "assistant",
+        content: seg.text ?? "",
+        streaming: false,
+      };
+      if (elapsedMs <= 0) {
+        messages.value.push(msg);
+        continue;
+      }
+      const timer = setTimeout(() => {
+        messages.value.push(msg);
+        bumpNew();
+      }, elapsedMs);
+      delayedTimers.push(timer);
+    }
+    bumpNew();
+    return elapsedMs;
+  }
+
+  function finishTurn() {
+    streaming.value = false;
+    bell.ring();
+    stage.ringBell();
+    haptics.tap(6);
+    bumpNew();
   }
 
   function pushTool(toolName: string, payload: unknown) {
@@ -170,12 +245,15 @@ export function useConversation() {
             pushTool("↳ 卷", msg.result);
             return;
           case "done":
-            queue.finishAssistant({ segments: msg.segments });
-            streaming.value = false;
-            bell.ring();
-            stage.ringBell();
-            haptics.tap(6);
-            bumpNew();
+            {
+              const waitMs = queue.finishAssistant({ segments: msg.segments, source: msg.source });
+              if (waitMs > 0) {
+                const timer = setTimeout(finishTurn, waitMs);
+                delayedTimers.push(timer);
+              } else {
+                finishTurn();
+              }
+            }
             return;
           case "error":
             queue.abortAssistant();

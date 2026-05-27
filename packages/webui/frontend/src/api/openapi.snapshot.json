@@ -2571,6 +2571,11 @@
             "type": "string",
             "title": "Alt",
             "default": ""
+          },
+          "delay_before_s": {
+            "type": "number",
+            "title": "Delay Before S",
+            "default": 0.0
           }
         },
         "type": "object",

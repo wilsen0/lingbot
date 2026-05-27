@@ -19,7 +19,14 @@ from linling_core.classifier import (
     MessageClassifier,
 )
 from linling_core.config import AdapterConfig, BotConfig, StorageConfig
-from linling_core.events import Action, ActionKind, Event, Scope, User
+from linling_core.events import (
+    ACTION_DELAY_BEFORE_OPTION,
+    Action,
+    ActionKind,
+    Event,
+    Scope,
+    User,
+)
 from linling_core.metrics import (
     ACTIVE_SESSIONS,
     DISPATCH_DURATION_SECONDS,
@@ -76,6 +83,7 @@ from linling_core.version import __version__
 
 __all__ = [
     "DEFAULT_COMMAND_PREFIXES",
+    "ACTION_DELAY_BEFORE_OPTION",
     "Action",
     "ActionKind",
     "ActionSink",

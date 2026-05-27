@@ -18,6 +18,7 @@ from linling_core.events import Action, Event, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import ReplySegment, TextSegment
 
+from linling_agent.action_delay import with_random_delay_before
 from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
 from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
@@ -213,6 +214,8 @@ class GroupBatchConfig:
     # Mirrors the ``啊/{group}/苏苏确认`` semantics of main.ling
     # (which uses HHmm + 5min hardcoded).
     attention_window_s: float = 300.0
+    multi_reply_delay_min_s: float = 0.0
+    multi_reply_delay_max_s: float = 0.0
 
     def __post_init__(self) -> None:
         if self.window_s < 0:
@@ -229,6 +232,12 @@ class GroupBatchConfig:
             raise ValueError("max_hold_s must be positive")
         if self.attention_window_s < 0:
             raise ValueError("attention_window_s must be non-negative")
+        if self.multi_reply_delay_min_s < 0:
+            raise ValueError("multi_reply_delay_min_s must be non-negative")
+        if self.multi_reply_delay_max_s < 0:
+            raise ValueError("multi_reply_delay_max_s must be non-negative")
+        if self.multi_reply_delay_max_s < self.multi_reply_delay_min_s:
+            raise ValueError("multi_reply_delay_max_s must be >= multi_reply_delay_min_s")
 
 
 @dataclass(frozen=True)
@@ -1023,11 +1032,24 @@ class GroupBatchChatDispatcher:
         for action in actions[:remaining]:
             if not await self._batch_is_current(event, generation):
                 break
+            action = self._with_multi_reply_delay(
+                action,
+                sent_count=sent_count + len(records),
+            )
             sent, _error = await self._send_action(action, event)
             if sent and await self._batch_is_current(event, generation):
                 await self._refresh_attention_for_action(action, event, batch)
                 records.append(_record_from_action(action, batch))
         return records
+
+    def _with_multi_reply_delay(self, action: Action, *, sent_count: int) -> Action:
+        if sent_count <= 0:
+            return action
+        return with_random_delay_before(
+            action,
+            min_s=self._cfg.multi_reply_delay_min_s,
+            max_s=self._cfg.multi_reply_delay_max_s,
+        )
 
     async def _refresh_attention_for_action(
         self,
@@ -1144,6 +1166,7 @@ class GroupBatchChatDispatcher:
             target=event.scope,
             segments=[ReplySegment(message_id=message_id), TextSegment(text=reply_text)],
         )
+        action = self._with_multi_reply_delay(action, sent_count=sent_count)
         sent, error = await self._send_action(action, event)
         if not sent:
             return _tool_json({"ok": False, "error": error or "send failed"}), None, False, True
@@ -1191,6 +1214,7 @@ class GroupBatchChatDispatcher:
         if not await self._batch_is_current(event, generation):
             return _tool_json({"ok": False, "error": "stale batch"}), None, False, True
         action = Action(kind="send", target=event.scope, segments=[TextSegment(text=reply_text)])
+        action = self._with_multi_reply_delay(action, sent_count=sent_count)
         sent, error = await self._send_action(action, event)
         if not sent:
             return _tool_json({"ok": False, "error": error or "send failed"}), None, False, True
@@ -1420,14 +1444,15 @@ class GroupBatchChatDispatcher:
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
                 "",
                 "回复格式（按情况选一种）：",
-                "A. 一句话就够 → 直接输出文字，不要任何前缀。",
-                "B. 想一次连发好几条短消息 → 输出严格 JSON：",
+                "A. 一句话就够 → 直接输出一条文字，不要任何前缀，不要空行分段。",
+                "B. 只要想一次连发两条或更多短消息 → 必须输出严格 JSON：",
                 "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
                 "   按数组顺序逐条发送。type 支持 send_group（直接发）和 reply_to_message（引用回复，需要 message_id）。",
+                "   JSON 外不要掺杂文字、解释、Markdown 围栏或空行。",
                 "C. 想引用某条消息回复 → 也可以用 B 里的 reply_to_message。",
                 "D. 如果整批都不用回 → 只输出 no_reply，不要解释。",
                 "E. 如果已经回复完了 → 输出 done / 回复好了 / 回复完成，不要再补别的内容。",
-                f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
+                f"最多说 {self._cfg.max_replies} 句；多条必须走 actions JSON。",
             ]
         )
 
@@ -1439,17 +1464,18 @@ class GroupBatchChatDispatcher:
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
                 "",
                 "回复方式（按情况选一种或自由组合）：",
-                "1. 想直接在群里说一句话 → 直接输出文字，不要任何前缀（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
+                "1. 想直接在群里说一句话 → 直接输出一条文字，不要任何前缀，不要空行分段（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
                 "2. 想引用某条消息回复（@对方+引用框）→ 调 reply_to_message 工具。",
                 "3. 候选里的 text_truncated=true 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
-                "4. 想一次连发好几条短消息（不打太长一段、也不想拆成多轮工具调用）→ 输出严格 JSON：",
+                "4. 只要想一次连发两条或更多短消息（不打太长一段、也不想拆成多轮工具调用）→ 必须输出严格 JSON：",
                 "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
                 "   每个元素就是单独一条消息，按数组顺序发出去。type 支持 send_group 和 reply_to_message，与上面的工具一一对应。",
+                "   JSON 外不要掺杂文字、解释、Markdown 围栏或空行。",
                 "5. 如果已经通过 reply_to_message 精确回复完了 → 输出 done / 回复好了 / 回复完成。",
                 "6. 如果整批都不用回 → 输出 no_reply。",
                 "JSON 与工具调用不要混用：同一轮里，要么全部用 tool call，要么整段输出就是一个 JSON。",
                 "",
-                f"最多说 {self._cfg.max_replies} 句，简短自然就好。",
+                f"最多说 {self._cfg.max_replies} 句；多条必须走 actions JSON 或逐条 tool call。",
             ]
         )
 
@@ -1518,11 +1544,18 @@ def _reply_to_bot(event: Event) -> bool:
     bot_id = str(event.bot_id)
     candidates = _reply_source_candidates(event.raw)
     if not candidates:
-        # Some adapters only expose a reply segment with no quoted
-        # sender metadata. Missing metadata should not make the bot
-        # ignore a direct reply in a group, so err on the side of
-        # batching it for the LLM selector.
-        return True
+        # Standard OneBot v11 (and NapCat by default) only carries the
+        # reply segment's ``message_id`` — no quoted-sender metadata
+        # ride along on the inbound event. We can't tell who's being
+        # replied to from this alone, so defaulting to "yes, this is
+        # a reply to the bot" caused every cross-user quote-reply in
+        # a busy group to bypass the attention gate. Defaulting to
+        # ``False`` here is the safer call: a real reply to the bot
+        # almost always also @-mentions the bot (NapCat injects an
+        # implicit ``@bot`` when you long-press → reply on mobile),
+        # which the at-segment branch in :func:`_mentions_bot`
+        # already catches separately.
+        return False
     for candidate in _reply_source_candidates(event.raw):
         if _candidate_sender_id(candidate) == bot_id:
             return True

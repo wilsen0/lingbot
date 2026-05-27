@@ -1051,7 +1051,18 @@ async def test_group_batch_does_not_record_history_when_sink_missing() -> None:
     await dispatcher.stop()
 
 
-async def test_group_batch_treats_reply_segment_without_source_as_attention() -> None:
+async def test_group_batch_reply_without_source_does_not_attention() -> None:
+    """Reply segment with no quoted-sender metadata must NOT bypass the
+    attention gate.
+
+    Standard OneBot v11 (and NapCat by default) only carries the reply
+    segment's ``message_id`` — there's no ``reply``/``source``/
+    ``reply_message`` field on the inbound event. The previous default
+    of "treat missing metadata as attention" caused every cross-user
+    quote-reply in a busy group to be promoted to attention, draining
+    the LLM budget. We now default to ``False`` so unrelated cross-user
+    quote-replies stay in the dropped-batch path.
+    """
     inner = _Inner('{"actions":[]}')
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -1059,7 +1070,7 @@ async def test_group_batch_treats_reply_segment_without_source_as_attention() ->
             enabled=True,
             window_s=0,
             require_attention=True,
-            max_hold_s=1.0,
+            max_hold_s=0.05,
         ),
     )
     sent: list[Action] = []
@@ -1071,7 +1082,11 @@ async def test_group_batch_treats_reply_segment_without_source_as_attention() ->
 
     await dispatcher.run(event, session)
 
-    await _wait_for(lambda: len(inner.calls) == 1)
+    # Wait long enough for the max_hold_s to elapse; the batch should
+    # be dropped as idle (no attention) without ever reaching the
+    # inner LLM dispatcher.
+    await asyncio.sleep(0.2)
+    assert inner.calls == []
     assert sent == []
     await dispatcher.stop()
 
