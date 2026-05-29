@@ -311,6 +311,16 @@ class _BufferedMessage:
     received_seq: int
     mentions_bot: bool
     reply_to_bot: bool
+    # User ids this message @-mentioned that are NOT the bot and not
+    # ``@all``. ``plain_text`` strips every AtSegment, so without this
+    # the directional intent of "@小红 你说得对" is lost — the text the
+    # LLM sees becomes a floating "你说得对" that reads like it could be
+    # aimed at the bot. We surface these (resolved to names where the
+    # target also appears in the batch, else a neutral "某人" marker so
+    # raw QQ ids never reach the LLM) via the ``at`` field in the
+    # candidate JSON. Default ``()`` keeps the field optional for any
+    # direct ``_BufferedMessage`` construction.
+    at_user_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1430,6 +1440,7 @@ class GroupBatchChatDispatcher:
             received_seq=next(self._message_seq),
             mentions_bot=_mentions_bot(event, self._cfg.bot_names),
             reply_to_bot=_reply_to_bot(event),
+            at_user_ids=_other_at_user_ids(event),
         )
 
     def _trim_locked(self, state: _GroupState) -> None:
@@ -1478,21 +1489,21 @@ class GroupBatchChatDispatcher:
         lines = [
             "候选消息（按发送时间从早到晚；sender_id 是稳定身份，sender_name 是昵称）："
         ]
+        name_by_id = _batch_name_index(batch)
         for m in batch:
-            lines.append(
-                json.dumps(
-                    {
-                        "message_id": m.message_id,
-                        "sender_id": m.sender_id,
-                        "sender_name": m.sender_name,
-                        "time": m.timestamp,
-                        "text": m.text,
-                        "mentions_bot": m.mentions_bot,
-                        "reply_to_bot": m.reply_to_bot,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            entry = {
+                "message_id": m.message_id,
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "time": m.timestamp,
+                "text": m.text,
+                "mentions_bot": m.mentions_bot,
+                "reply_to_bot": m.reply_to_bot,
+            }
+            at_others = _render_at_targets(m.at_user_ids, name_by_id)
+            if at_others:
+                entry["at_others"] = at_others
+            lines.append(json.dumps(entry, ensure_ascii=False))
         return "\n".join(lines)
 
     def _build_system_prompt(self) -> str:
@@ -1544,24 +1555,29 @@ class GroupBatchChatDispatcher:
             "群聊候选消息如下，按发送时间从早到晚排列。sender_id 是稳定身份，sender_name 是昵称；先判断是否值得回复；text_truncated=true 时可用 line/message_id 读取原文。",
             "候选索引：",
         ]
+        name_by_id = _batch_name_index(batch)
         for line, msg in enumerate(batch, start=1):
             clipped_text = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
-            lines.append(
-                json.dumps(
-                    {
-                        "line": line,
-                        "message_id": msg.message_id,
-                        "time": msg.timestamp,
-                        "sender_id": msg.sender_id,
-                        "sender_name": msg.sender_name,
-                        "text": clipped_text,
-                        "text_truncated": len(clipped_text) < len(msg.text),
-                        "mentions_bot": msg.mentions_bot,
-                        "reply_to_bot": msg.reply_to_bot,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            entry = {
+                "line": line,
+                "message_id": msg.message_id,
+                "time": msg.timestamp,
+                "sender_id": msg.sender_id,
+                "sender_name": msg.sender_name,
+                "text": clipped_text,
+                "text_truncated": len(clipped_text) < len(msg.text),
+                "mentions_bot": msg.mentions_bot,
+                "reply_to_bot": msg.reply_to_bot,
+            }
+            at_others = _render_at_targets(msg.at_user_ids, name_by_id)
+            if at_others:
+                # Direction marker: this message @-mentioned other group
+                # members (not you). Resolved to names when the target
+                # also spoke in this batch, else "某人". Helps avoid
+                # treating an addressed-to-someone-else line as if it
+                # were aimed at the bot.
+                entry["at_others"] = at_others
+            lines.append(json.dumps(entry, ensure_ascii=False))
         return "\n".join(lines)
 
     def _state_key(self, event_or_scope: Event | str) -> str:
@@ -1596,6 +1612,73 @@ def _mentions_bot(event: Event, bot_names: tuple[str, ...]) -> bool:
             return True
     text = event.text
     return any(name and name in text for name in bot_names)
+
+
+def _other_at_user_ids(event: Event) -> tuple[str, ...]:
+    """At-segment user ids that target neither the bot nor ``@all``.
+
+    ``plain_text`` (and therefore :attr:`Event.text`) drops every
+    ``AtSegment``, so a message like "@小红 你说得对" reaches the LLM as a
+    bare "你说得对" with no addressee. That floating text reads like it
+    might be aimed at the bot. We capture the *other* targets here so the
+    batch prompt can flag "this was aimed at someone else", preserving
+    direction without re-injecting raw ``@id`` into the text stream
+    (which :attr:`Event.match_text` deliberately keeps out of LLM-visible
+    surfaces). ``@all`` is excluded — it's already treated as attention.
+    Order-preserving and de-duplicated.
+    """
+    bot_ids = {str(event.bot_id)}
+    raw_self_id = event.raw.get("self_id")
+    if raw_self_id is not None:
+        bot_ids.add(str(raw_self_id))
+    seen: set[str] = set()
+    out: list[str] = []
+    for seg in event.segments:
+        if getattr(seg, "kind", "") != "at":
+            continue
+        uid = str(getattr(seg, "user_id", ""))
+        if not uid or uid == "all" or uid in bot_ids or uid in seen:
+            continue
+        seen.add(uid)
+        out.append(uid)
+    return tuple(out)
+
+
+def _batch_name_index(batch: list[_BufferedMessage]) -> dict[str, str]:
+    """Map ``sender_id -> sender_name`` for everyone who spoke in the batch.
+
+    The only zero-cost way to turn an ``@<user_id>`` back into a human
+    name: if the mentioned user also sent a message in the same batch,
+    we already have their display name. No adapter RPC, no KV read.
+    """
+    index: dict[str, str] = {}
+    for msg in batch:
+        if msg.sender_id and msg.sender_name:
+            index.setdefault(msg.sender_id, msg.sender_name)
+    return index
+
+
+def _render_at_targets(
+    at_user_ids: tuple[str, ...], name_by_id: dict[str, str]
+) -> list[str]:
+    """Render @-target ids as names, falling back to a neutral marker.
+
+    Resolves each id against the batch-local name index. Unknown targets
+    collapse to ``"某人"`` so a raw QQ id never reaches the LLM (mirrors
+    the ``match_text`` policy of keeping ``@<id>`` off LLM-visible
+    surfaces). De-duplicates the neutral marker so three unknown @s
+    don't render as ``["某人","某人","某人"]``.
+    """
+    out: list[str] = []
+    saw_anon = False
+    for uid in at_user_ids:
+        name = name_by_id.get(uid)
+        if name:
+            out.append(name)
+        elif not saw_anon:
+            out.append("某人")
+            saw_anon = True
+    return out
 
 
 def _reply_to_bot(event: Event) -> bool:
