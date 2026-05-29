@@ -22,9 +22,9 @@ fi
 echo ""
 echo "  1) 只启动 linling (不连QQ)"
 echo "  2) 启动 linling + QQ (完整服务)"
-echo "  3) 软重连 NapCat (掉线了日常用这个——保留缓存，免扫码)"
-echo "  4) 清缓存重扫 (仅账号被风控时用——会清登录态，要重新扫码)"
-echo "  5) 启动掉线自愈看门狗 (后台常驻，掉线自动软重连)"
+echo "  3) 重启 NapCat (掉线了试这个——保留缓存，靠密码自动登录)"
+echo "  4) 清缓存重扫 (密码也救不回时用——给🔗+终端二维码)"
+echo "  5) 启动掉线自愈看门狗 (后台常驻，掉线自动重启+密码登录)"
 echo ""
 read -rp "选择 [1/2/3/4/5]: " choice
 
@@ -57,38 +57,43 @@ case "$choice" in
     exec uv run linling run bot/bot.yaml --webui
     ;;
   3)
-    echo "→ 软重连 NapCat: 保留登录缓存，走快速登录（不用扫码）..."
+    echo "→ 重启 NapCat（保留缓存，靠密码自动登录恢复）..."
     if ! docker inspect napcat >/dev/null 2>&1; then
       echo "  ✗ NapCat 容器不存在"; exit 1
     fi
+    if ! docker inspect napcat --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        | grep -qE '^NAPCAT_QUICK_PASSWORD(_MD5)?='; then
+      echo "  ⚠ 容器没配 NAPCAT_QUICK_PASSWORD。本机走移动 IP，快速登录基本无效，"
+      echo "    重启大概率还是回到扫码。建议先配密码（见 docs/deployment/napcat.md），"
+      echo "    或直接用选 4 清缓存重扫。"
+    fi
     docker restart napcat >/dev/null
-    echo "  NapCat 已重启，等它走快速登录..."
-    sleep 8
-    # 复检在线状态
+    echo "  已重启，等它登录..."
+    sleep 30
     if uv run python scripts/_napcat_online.py >/dev/null 2>&1; then
       echo "  ✓ 账号已恢复在线，直接 ./start.sh 选 2 即可"
     else
-      echo "  ⚠ 还没上线，再等十几秒看 docker logs napcat；"
-      echo "    若日志反复报「快速登录失败/历史登录记录」，才需要选 4 重扫。"
+      echo "  ⚠ 还没上线。没配密码就用选 4 重扫；配了密码再多等几十秒看 docker logs napcat。"
     fi
     ;;
   4)
-    echo "→ 清登录缓存，强制重新扫码（仅风控时用）..."
+    echo "→ 清登录缓存，强制重新扫码（风控顶不住时用）..."
     if ! docker inspect napcat >/dev/null 2>&1; then
       echo "  ✗ NapCat 容器不存在"; exit 1
     fi
     # 清掉 nt_qq* 这些登录态缓存（不动 webui/onebot 配置）
     docker exec napcat sh -c "rm -rf /app/.config/QQ/nt_qq*" >/dev/null 2>&1 || true
     docker restart napcat >/dev/null
-    echo "  NapCat 已重启，等它初始化..."
-    sleep 8
+    echo "  NapCat 已重启，等它生成二维码..."
+    sleep 12
     napcat_token=$(docker exec napcat sh -c 'cat /app/napcat/config/webui.json' 2>/dev/null \
       | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
     echo ""
-    echo "  打开下面这个链接，选「扫码登录」用手机 QQ 扫一下："
-    echo "  http://127.0.0.1:6099/webui?token=$napcat_token"
-    echo ""
-    echo "  扫完之后再跑 ./start.sh 选 2 即可。"
+    echo "  方式一 · WebUI 扫码（点链接，页面里选「扫码登录」）："
+    echo "  🔗 http://127.0.0.1:6099/webui?token=$napcat_token"
+    # 方式二 · 终端直接显示二维码 + 解码 URL
+    uv run python scripts/_napcat_qrlogin.py || true
+    echo "  手机 QQ 扫完上面任一二维码授权，再跑 ./start.sh 选 2 即可。"
     ;;
   5)
     echo "→ 启动掉线自愈看门狗（后台常驻）..."
