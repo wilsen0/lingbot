@@ -22,9 +22,11 @@ fi
 echo ""
 echo "  1) 只启动 linling (不连QQ)"
 echo "  2) 启动 linling + QQ (完整服务)"
-echo "  3) 修复 NapCat (QQ 卡在半登录态时用)"
+echo "  3) 软重连 NapCat (掉线了日常用这个——保留缓存，免扫码)"
+echo "  4) 清缓存重扫 (仅账号被风控时用——会清登录态，要重新扫码)"
+echo "  5) 启动掉线自愈看门狗 (后台常驻，掉线自动软重连)"
 echo ""
-read -rp "选择 [1/2/3]: " choice
+read -rp "选择 [1/2/3/4/5]: " choice
 
 case "$choice" in
   1)
@@ -55,7 +57,23 @@ case "$choice" in
     exec uv run linling run bot/bot.yaml --webui
     ;;
   3)
-    echo "→ 修复 NapCat: 清登录缓存，强制重新扫码..."
+    echo "→ 软重连 NapCat: 保留登录缓存，走快速登录（不用扫码）..."
+    if ! docker inspect napcat >/dev/null 2>&1; then
+      echo "  ✗ NapCat 容器不存在"; exit 1
+    fi
+    docker restart napcat >/dev/null
+    echo "  NapCat 已重启，等它走快速登录..."
+    sleep 8
+    # 复检在线状态
+    if uv run python scripts/_napcat_online.py >/dev/null 2>&1; then
+      echo "  ✓ 账号已恢复在线，直接 ./start.sh 选 2 即可"
+    else
+      echo "  ⚠ 还没上线，再等十几秒看 docker logs napcat；"
+      echo "    若日志反复报「快速登录失败/历史登录记录」，才需要选 4 重扫。"
+    fi
+    ;;
+  4)
+    echo "→ 清登录缓存，强制重新扫码（仅风控时用）..."
     if ! docker inspect napcat >/dev/null 2>&1; then
       echo "  ✗ NapCat 容器不存在"; exit 1
     fi
@@ -71,6 +89,13 @@ case "$choice" in
     echo "  http://127.0.0.1:6099/webui?token=$napcat_token"
     echo ""
     echo "  扫完之后再跑 ./start.sh 选 2 即可。"
+    ;;
+  5)
+    echo "→ 启动掉线自愈看门狗（后台常驻）..."
+    if ! docker inspect napcat >/dev/null 2>&1; then
+      echo "  ✗ NapCat 容器不存在"; exit 1
+    fi
+    exec ./scripts/napcat_watchdog.sh --loop
     ;;
   *)
     echo "无效选择"; exit 1

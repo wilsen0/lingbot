@@ -212,10 +212,58 @@ docker logs --tail 200 -f napcat
 
 ### 重启 NapCat（账号掉线 / 配置改了）
 
+**账号掉线时优先用「软重连」——保留登录缓存，走快速登录，不用扫码：**
+
 ```bash
 docker restart napcat
 # linling 那边的 ws 客户端会自动重连
+# 也可以直接 ./start.sh 选 3（软重连 + 自动复检在线状态）
 ```
+
+> ⚠️ 掉线**不要**第一反应去清 `nt_qq*` 缓存。清缓存会销毁「快速登录」凭证，
+> 导致每次都被迫重新扫码。清缓存只在账号被风控、软重连反复失败时才用
+> （见下面「强制下线再上线」/`start.sh` 选 4）。
+
+### 掉线自愈看门狗（推荐常驻）
+
+`scripts/napcat_watchdog.sh` 会定时用 OneBot `get_status` 检测账号是否在线，
+离线就自动 `docker restart napcat` 走快速登录恢复，**不清缓存、不需扫码**。
+
+```bash
+# 后台常驻（默认每 120s 检查一次）
+./scripts/napcat_watchdog.sh --loop
+# 或 ./start.sh 选 5
+
+# 调轮询间隔
+WATCH_INTERVAL=60 ./scripts/napcat_watchdog.sh --loop
+
+# 或挂 cron（每 2 分钟检查一次）
+*/2 * * * * /home/wilsen/apps/apps/linling/scripts/napcat_watchdog.sh >> /tmp/napcat_watchdog.log 2>&1
+```
+
+连续 `NAPCAT_MAX_RESTARTS`（默认 3）次软重启仍恢复不了，看门狗会停手并提示
+人工扫码——这通常意味着快速登录凭证已失效，得走 `start.sh` 选 4 重扫。
+
+### 免扫码自愈（配密码回退）
+
+被踢下线后，光靠重启走的是「快速登录」，凭证一旦失效仍要扫码。给容器配上
+登录密码后，NapCat 能在快速登录失败时**用密码自动重登**，配合看门狗做到全程
+零干预。给 `napcat` 容器加环境变量（明文或 MD5 二选一）后重建容器：
+
+```bash
+docker run -d --name napcat --restart always \
+  -e ACCOUNT=<你的QQ号> \
+  -e WS_ENABLE=true \
+  -e NAPCAT_QUICK_PASSWORD='<你的QQ密码>' \
+  -e TZ=Asia/Shanghai \
+  -p 127.0.0.1:3001:3001 -p 127.0.0.1:6099:6099 \
+  -v ~/.napcat/QQ:/app/.config/QQ \
+  -v ~/.napcat/config:/app/napcat/config \
+  mlikiowa/napcat-docker:latest
+```
+
+> 密码写在容器 env 里有泄露风险，注意 `~/.bash_history` / compose 文件的权限。
+> 不想用密码也行，那就靠看门狗的快速登录兜底，偶尔需要手动扫一次。
 
 ### 升级 NapCat 镜像
 
@@ -230,6 +278,9 @@ docker stop napcat && docker rm napcat
 
 ### 强制下线再上线（账号被风控时）
 
+> ⚠️ 这是「核武器」，只在账号被风控、软重连/看门狗反复救不回来时才用。
+> 它会清掉登录缓存，**之后必须重新扫码**。日常掉线请用上面的软重连/看门狗。
+
 ```bash
 docker exec -it napcat sh -c "rm -rf /app/.config/QQ/nt_qq*"
 docker restart napcat
@@ -239,6 +290,20 @@ docker restart napcat
 > 这步会清掉登录缓存，**不要**清 `/app/napcat/config`，否则 OneBot 配置丢失。
 
 ## 五、常见问题
+
+**账号每天掉线一次，日志反复 `[KickedOffLine] [下线通知] 你的帐号当前登录已失效`**
+
+- 这是 QQ **服务端主动让登录失效**，不是本地缓存坏了。先排除最常见的一种：
+  同一个号在**另一台电脑的桌面 QQ**上登了——两个 PC 端互斥，会互相顶下线。
+  机器人号建议只在手机 QQ 上看（手机不顶 PC），别在自己电脑上登它。
+- 排除多端冲突后，剩下的多是协议端定期被服务端要求重新鉴权（服务器 IP 上的
+  注入式 QQ 比较容易触发）。**正确处理是软重连，不是清缓存**：
+  `docker restart napcat`（或 `./start.sh` 选 3），走快速登录免扫码恢复。
+- 想彻底不用手动管：挂 `scripts/napcat_watchdog.sh --loop`（`./start.sh` 选 5），
+  离线自动软重连；再给容器配 `NAPCAT_QUICK_PASSWORD` 就能在快速登录失效时
+  用密码自动重登，全程零干预。
+- **不要**用清 `nt_qq*` 缓存来「修复」日常掉线——那会销毁快速登录凭证，
+  导致每次都得重新扫码（日志里会看到「快速登录失败，未找到该 QQ 历史登录记录」）。
 
 **linling 一直连不上，日志只有 `onebot_ws_connecting` 没有 `_connected`**
 

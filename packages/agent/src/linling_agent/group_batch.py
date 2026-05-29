@@ -119,13 +119,67 @@ _DONE_TOKENS: frozenset[str] = frozenset({
     "已完成",
     "已经回复好了",
     "已经回复完成",
+    # --- Expanded "I'm done replying" family. The model likes to emit
+    # these as a closing acknowledgement after a precise
+    # reply_to_message tool call, and they must never leak into the
+    # group (would reveal the batching machinery). A few entries below
+    # (好了 / 好啦 / 好嘞 / 搞定 / 完事) are mildly ambiguous with a
+    # genuine one-word group reply ("好了" = "行/可以了"), so filtering
+    # them carries a small false-positive risk — but per the design
+    # call, leaking a meta "done" marker is the worse outcome, so we
+    # swallow them. The tilde-decorated variants ("好了~", "搞定了~~~")
+    # are handled by _normalize_control_text, not by separate entries.
+    "好了",
+    "好啦",
+    "好嘞",
+    "回好了",
+    "回复了",
+    "已经回复了",
+    "已经回复",
+    "回复完毕",
+    "回复完毕了",
+    "搞定",
+    "搞定了",
+    "完事",
+    "完事了",
+    "弄好了",
+    "答好了",
+    "回答好了",
+    "回答完了",
+    "回答完成",
 })
+
+# Trailing decorations the model tacks onto control tokens. Tildes
+# (ASCII ~, fullwidth ～ U+FF5E, wave dash 〜 U+301C) are by far the
+# most common ("好了~"); we strip a trailing run of them plus whitespace
+# so every token matches its decorated variant without table doubling.
+_TRAILING_DECORATIONS = "~～〜 \t\r\n"
+
+# Sentence-final mood particles that are colloquial contractions of a
+# trailing 了 (啦 = 了+啊, 咯/喽 = 了+喔, 嘞 ≈ 了). The model loves
+# these ("好啦", "回复好啦", "搞定咯"). Folding a trailing particle back
+# to 了 collapses the whole 了/啦/咯/喽/嘞 spelling family onto the
+# canonical 了-form entries already in the tables, so we don't have to
+# enumerate every word twice — and future 了-words are covered for free.
+_FINAL_PARTICLES_TO_LE = "啦咯喽嘞"
 
 
 def _normalize_control_text(content: str) -> str:
     if not content:
         return ""
-    return content.strip().strip("\"'`“”‘’").strip().lower()
+    text = content.strip().strip("\"'`“”‘’").strip()
+    # Strip trailing tildes/whitespace ("好了~", "搞定了 ~~~", "done～")
+    # so the tables don't need a separate entry per decoration.
+    text = text.rstrip(_TRAILING_DECORATIONS)
+    # Fold a trailing mood particle to 了 ("好啦"->"好了",
+    # "回复好啦"->"回复好了"), then collapse a doubled trailing 了 so
+    # the 了+啦 emphatic form ("好了啦"->"好了了"->"好了") also lands on
+    # the canonical entry.
+    if text and text[-1] in _FINAL_PARTICLES_TO_LE:
+        text = text[:-1] + "了"
+        if text.endswith("了了"):
+            text = text[:-1]
+    return text.lower()
 
 
 def _classify_stop_token(content: str) -> str | None:
@@ -164,9 +218,15 @@ def _classify_stop_token(content: str) -> str | None:
             "already replied",
             "已经回复好了",
             "已经回复完成",
+            "已经回复了",
+            "已经回复完了",
             "回复好了",
             "回复完成",
             "回复完了",
+            "回复完毕",
+            "回答好了",
+            "回答完了",
+            "回答完成",
         )
     ):
         return "done"
