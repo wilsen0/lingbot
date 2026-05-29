@@ -465,6 +465,33 @@ class TestGachaImage:
         assert rarities.count("R") == 1
         assert rarities.count("SR") == 1
 
+    async def test_parses_full_fifty_pull_egg_run(self) -> None:
+        """Every 蛋壳 in a 50-pull must parse as its own N drop.
+
+        Regression guard for the bug where 单五十次扭蛋 wrote eggs as a
+        bare ``%蛋%🍬`` (no ``\\n``, no "蛋壳" word) — the parser saw a
+        single run-on line and dropped ~44 of 50 cards. The rule was
+        aligned to the 10-pull format (``%蛋%\\n🍬蛋壳+1``); this test
+        pins that contract from the parser side so a future rule edit
+        that reintroduces the bare-🍬 form fails here.
+        """
+        from linling_tools_stdlib.gacha_image import _parse_record
+
+        # 46 eggs + 1 R + 1 SR + 2 eggs, all separated like the fixed
+        # rule writes them. 50 drops, leading sentinel ignored.
+        lines = [r"扭哇扭哇～"]
+        lines += [r"🍬蛋壳+1"] * 46
+        lines += [r"✨获得〔大飞龙〕！！", r"✨恭喜获得珍品〖思思〗！！"]
+        lines += [r"🍬蛋壳+1"] * 2
+        record = r"\n".join(lines)
+
+        drops = _parse_record(record)
+        assert len(drops) == 50
+        rarities = [d.rarity.name for d in drops]
+        assert rarities.count("N") == 48
+        assert rarities.count("R") == 1
+        assert rarities.count("SR") == 1
+
     async def test_empty_record_falls_back_to_placeholder(
         self, tmp_path: Path, ctx: ToolCtx
     ) -> None:
