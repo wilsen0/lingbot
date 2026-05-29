@@ -612,3 +612,84 @@ def test_token_bucket_rejects_bad_config():
         TokenBucket(rate=0, capacity=1)
     with pytest.raises(ValueError):
         TokenBucket(rate=1, capacity=0)
+
+
+# ---------------------------------------------------------------------------
+# Sink failure observability (regression for the 2992611516 silent-drop bug)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sink_failure_recorded_in_audit_payload():
+    """If the action sink raises, the audit row reflects the failure
+    instead of silently logging ``ok``.
+
+    Background: the OneBot adapter used to swallow NapCat-side
+    rejections (dead image URL, kicked-from-group, …) into a
+    ``status=failed`` dict that the router never inspected. Audit
+    showed ``outcome=ok`` even though the message never reached the
+    user. The adapter now raises ``OneBotSendError`` for those cases;
+    this test pins the router-side contract that the failure metadata
+    flows into the audit payload.
+    """
+    from linling_core.audit import AuditEntry
+
+    captured: list[AuditEntry] = []
+
+    class _CapturingAudit:
+        def write(self, entry):
+            captured.append(entry)
+
+    async def _failing_sink(action):
+        raise RuntimeError("napcat rejected: dead image URL")
+
+    classifier = MessageClassifier(_FakeScript(handlers=[_FakeHandler(trigger="我的背包")]))
+    commands = FakeCommandDispatcher()
+    router = Router(
+        classifier=classifier,
+        commands=commands,
+        chats=FakeChatDispatcher(),
+        sink=_failing_sink,
+        audit=_CapturingAudit(),
+    )
+    await router.handle(_event("我的背包"))
+
+    assert len(captured) == 1
+    entry = captured[0]
+    assert entry.outcome == "sink-failed"
+    assert entry.kind == "command"
+    sink_errors = entry.payload.get("sink_errors")
+    assert sink_errors and sink_errors[0]["type"] == "RuntimeError"
+    assert "napcat" in sink_errors[0]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_successful_dispatch_still_audits_ok():
+    """Symmetry check: when the sink does *not* raise, ``outcome=ok``
+    and ``payload["sink_errors"]`` is absent.
+    """
+    from linling_core.audit import AuditEntry
+
+    captured: list[AuditEntry] = []
+
+    class _CapturingAudit:
+        def write(self, entry):
+            captured.append(entry)
+
+    async def _ok_sink(action):
+        return None
+
+    classifier = MessageClassifier(_FakeScript(handlers=[_FakeHandler(trigger="我的背包")]))
+    router = Router(
+        classifier=classifier,
+        commands=FakeCommandDispatcher(),
+        chats=FakeChatDispatcher(),
+        sink=_ok_sink,
+        audit=_CapturingAudit(),
+    )
+    await router.handle(_event("我的背包"))
+
+    assert len(captured) == 1
+    entry = captured[0]
+    assert entry.outcome == "ok"
+    assert "sink_errors" not in entry.payload

@@ -392,6 +392,99 @@ class TestImageText:
 
 
 # ---------------------------------------------------------------------------
+# Gacha image (3 tests)
+# ---------------------------------------------------------------------------
+
+
+class TestGachaImage:
+    """Tests for the ``$扭蛋图$`` settlement panel renderer."""
+
+    async def test_registered_with_dsl_name(self) -> None:
+        td = registry.get("gacha_image")
+        assert td is not None
+        assert td.dsl_name == "扭蛋图"
+
+    async def test_ten_pull_with_ur_renders_png(
+        self, tmp_path: Path, ctx: ToolCtx
+    ) -> None:
+        from PIL import Image
+
+        ctx.extras["image_text_cache_dir"] = tmp_path
+        # The KV-stored %录% uses *literal* ``\n`` separators (the rule
+        # writes ``$写 ... %录%\n<line>$`` and the DSL escape pass keeps
+        # the backslash-n verbatim) — production data looks like this.
+        record = (
+            r"扭哇扭哇～\n"
+            r"🍬蛋壳+1\n"
+            r"✨获得〔小豆芽〕！！\n"
+            r"🍬蛋壳+1\n"
+            r"🍬蛋壳+1\n"
+            r"✨恭喜获得珍品〖思思〗！！\n"
+            r"🍬蛋壳+1\n"
+            r"✨获得〔大飞龙〕！！\n"
+            r"🍬蛋壳+1\n"
+            r"✨恭喜获得藏品〖郫忧〗！！\n"
+            r"🍬蛋壳+1"
+        )
+        td = registry.get("gacha_image")
+        assert td is not None
+        result = await td.fn(ctx, record=record, kind="十连", cost="488")
+        # Tool returns a ``base64://`` URL so the OneBot adapter can
+        # ship the image to NapCat without a shared filesystem.
+        assert result.startswith("base64://")
+        import base64 as _b64
+        import io
+        png = _b64.b64decode(result[len("base64://") :])
+        with Image.open(io.BytesIO(png)) as img:
+            assert img.format == "PNG"
+            # 10-pull layout is wider than tall in 10-pull mode but still
+            # comfortably > 800px on each side. Hero strip is present
+            # because the record contains a UR (郫忧) — so height ≥ 1100.
+            assert img.size[0] >= 800
+            assert img.size[1] >= 1100  # hero strip present
+
+    async def test_parses_literal_backslash_n_record(
+        self, tmp_path: Path, ctx: ToolCtx
+    ) -> None:
+        """``%录%`` round-trips through KV with literal ``\\n``; parser must accept."""
+        from linling_tools_stdlib.gacha_image import _parse_record
+
+        # 5 N + 1 R + 1 SR + 3 N — 10 drops total (leading sentinel ignored).
+        record = (
+            r"扭哇扭哇～\n"
+            r"🍬蛋壳+1\n🍬蛋壳+1\n🍬蛋壳+1\n🍬蛋壳+1\n🍬蛋壳+1\n"
+            r"✨获得〔大飞龙〕！！\n"
+            r"✨恭喜获得珍品〖思思〗！！\n"
+            r"🍬蛋壳+1\n🍬蛋壳+1\n🍬蛋壳+1"
+        )
+        drops = _parse_record(record)
+        # The leading "扭哇扭哇～" sentinel doesn't match any drop pattern.
+        assert len(drops) == 10
+        rarities = [d.rarity.name for d in drops]
+        assert rarities.count("N") == 8
+        assert rarities.count("R") == 1
+        assert rarities.count("SR") == 1
+
+    async def test_empty_record_falls_back_to_placeholder(
+        self, tmp_path: Path, ctx: ToolCtx
+    ) -> None:
+        from PIL import Image
+
+        ctx.extras["image_text_cache_dir"] = tmp_path
+        td = registry.get("gacha_image")
+        assert td is not None
+        # Empty record should still yield a sensible image (not crash).
+        result = await td.fn(ctx, record="", kind="五十连", cost="2388")
+        assert result.startswith("base64://")
+        import base64 as _b64
+        import io
+        png = _b64.b64decode(result[len("base64://") :])
+        with Image.open(io.BytesIO(png)) as img:
+            # 50-cell layout is wider than the 10-cell one (10 cols vs 5).
+            assert img.size[0] >= 1200
+
+
+# ---------------------------------------------------------------------------
 # Adapter RPC stubs (4 tests)
 # ---------------------------------------------------------------------------
 

@@ -17,16 +17,41 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 import websockets
 from linling_core.bus import EventBus
 from linling_core.events import Action, Event, Scope, User
 from linling_core.onebot_codec import from_onebot_msg, to_onebot_msg
 from linling_core.segments import ImageSegment, PokeSegment, Segment, TextSegment
+
+
+class OneBotSendError(RuntimeError):
+    """NapCat acknowledged a ``send_msg`` call but reported failure.
+
+    Raised by :meth:`OneBotAdapter.send` when the API echo returns
+    ``status != "ok"`` (or a non-zero ``retcode``). The router's sink
+    failure path catches this and increments ``SINK_FAILURES_TOTAL``
+    while writing a structured log line. We deliberately raise rather
+    than return the dict so the existing failure surface — designed
+    around exceptions — fires for retcode failures the same way it
+    does for transport-level errors. Without this, NapCat refusing
+    a message (dead image URL, kicked-from-group, sensitive content
+    filter) was silently logged as ``ok`` in audit, which is what
+    let the 2992611516 background take a week to diagnose.
+    """
+
+    def __init__(self, action: str, status: str, retcode: int, wording: str) -> None:
+        super().__init__(f"{action}: status={status} retcode={retcode} wording={wording!r}")
+        self.action = action
+        self.status = status
+        self.retcode = retcode
+        self.wording = wording
 
 logger = structlog.get_logger(__name__)
 
@@ -82,6 +107,33 @@ _ASSET_INLINE_MAX_BYTES = 4 * 1024 * 1024
 # bust. The cap keeps memory bounded if someone drops a huge bundle
 # in; eviction is FIFO (insertion order).
 _ASSET_CACHE_MAX_ENTRIES = 64
+
+# Remote-image preflight knobs. When the DSL emits an ``ImageSegment``
+# with an ``http(s)://`` URL — typically because some legacy KV value
+# stores an avatar URL — NapCat is the one that has to fetch it.
+# Several of the URL hosts in the legacy ``data.sqlite`` dataset are
+# dead (404 / 502 / DNS NXDOMAIN), and NapCat's default behaviour
+# when the fetch fails is to **drop the entire send_msg call**, not
+# just the broken image. The user perception is "我的背包 没回应"
+# — silent dispatch, no error visible to either the bot or the
+# operator. Preflight downloads the bytes ourselves; on success we
+# inline as ``base64://`` so NapCat skips the fetch entirely, on
+# failure we substitute a TextSegment so the rest of the reply still
+# delivers. Caps and timeouts are conservative — we'd rather degrade
+# to "[图片加载失败]" than block dispatch on a slow remote.
+_REMOTE_PREFLIGHT_TIMEOUT_S = 4.0
+_REMOTE_PREFLIGHT_MAX_BYTES = 4 * 1024 * 1024
+# Mirror ``_ASSET_INLINE_MAX_BYTES`` so a single oversized remote
+# image can't push the full WS frame past ``_WS_MAX_SIZE``.
+_REMOTE_PREFLIGHT_CACHE_MAX_ENTRIES = 128
+# Cache positive results for an hour, negative results for a minute —
+# brief negative TTL means a transient hiccup gets retried soon, but
+# we still hit the hot path (cached failure) after a permanent break.
+_REMOTE_PREFLIGHT_OK_TTL_S = 3600.0
+_REMOTE_PREFLIGHT_FAIL_TTL_S = 60.0
+# Default fallback text shown in place of an image we couldn't fetch.
+# Kept short and human-readable; ops can override per-bot if needed.
+_REMOTE_PREFLIGHT_FALLBACK_TEXT = "[图片加载失败]"
 
 # On-disk extensions we'll try when the migrator-emitted name doesn't
 # resolve directly. Order biases toward the SVG → raster output of
@@ -168,6 +220,8 @@ class OneBotAdapter:
         access_token: str = "",
         bot_id: str = "",
         asset_root: Path | None = None,
+        remote_image_preflight: bool = True,
+        remote_image_fallback_text: str = _REMOTE_PREFLIGHT_FALLBACK_TEXT,
     ) -> None:
         self._bus = bus
         self._ws_url = ws_url
@@ -180,6 +234,15 @@ class OneBotAdapter:
         # broken images for the kinds of refs that need a local file
         # (NapCat won't read ``@pic:`` either).
         self._asset_root: Path | None = asset_root.resolve() if asset_root else None
+        # Whether to preflight-download remote ``http(s)://`` image
+        # URLs ourselves and inline as base64. Default on so the
+        # background that motivated this option (一批用户挂着失效的
+        # 头像外链, 导致整条 我的背包 / 我的礼品 静默失败) can't
+        # repeat. Operators can disable it explicitly via bot.yaml
+        # for environments where every image URL is known-good and
+        # the per-message HEAD/GET overhead is unwanted.
+        self._remote_preflight = remote_image_preflight
+        self._remote_fallback_text = remote_image_fallback_text
         self._ws: Any = None  # websockets connection
         self._running = False
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -197,6 +260,16 @@ class OneBotAdapter:
         # insertion order so we can FIFO-evict when ``len`` exceeds
         # ``_ASSET_CACHE_MAX_ENTRIES``.
         self._asset_b64_cache: dict[tuple[str, int, int], str] = {}
+        # Remote-URL preflight cache. Value is either the
+        # ``base64://...`` payload (on success) or ``None`` (on
+        # failure); paired with an absolute monotonic-clock TTL so
+        # we can distinguish "never tried" from "recently failed".
+        # FIFO-evicted at ``_REMOTE_PREFLIGHT_CACHE_MAX_ENTRIES`` like
+        # the asset cache. The HTTP client is lazily-initialised on
+        # first use so an adapter that never sees an external URL
+        # never opens a connection pool.
+        self._remote_preflight_cache: dict[str, tuple[str | None, float]] = {}
+        self._http_client: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -255,13 +328,70 @@ class OneBotAdapter:
         self._fail_pending(ConnectionError("OneBot adapter stopped"))
         # Cancel any dispatch tasks still in flight; we're going down.
         await self._cancel_dispatch_tasks()
+        # Close the preflight HTTP client if we opened one. ``aclose``
+        # is idempotent on httpx — but guard the attribute access in
+        # case ``stop`` runs before any send.
+        client = self._http_client
+        self._http_client = None
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                logger.debug("onebot_http_client_close_failed", exc_info=True)
 
     async def send(self, action: Action) -> dict[str, Any]:
-        """Send an Action to the OneBot endpoint. Returns the API response."""
-        payload = self._build_action_payload(action)
+        """Send an Action to the OneBot endpoint.
+
+        Returns the API response dict on success. Raises
+        :class:`OneBotSendError` when NapCat acknowledges the call but
+        reports a non-ok status (dead image URL, kicked-from-group,
+        sensitive content filter, …) — the router catches this in its
+        ``sink_failed`` branch so the failure shows up in metrics and
+        the structured log instead of being audited as ``ok``. Other
+        transport-level failures (websocket dead, ``call_api`` timeout)
+        already raise — those are unchanged.
+        """
+        # Preflight remote http(s) image segments before building the
+        # OneBot payload. We do this in ``send`` (async) rather than
+        # in ``_build_action_payload`` (sync) so the rest of the
+        # encode pipeline stays free of asyncio. Returns a new Action
+        # with rewritten segments; on full failure ``segments`` is
+        # empty and we surface a sink failure instead of issuing the
+        # send_msg call (NapCat would reject an empty message anyway).
+        prepared = await self._prepare_action(action)
+        if not prepared.segments and action.kind in ("reply", "send"):
+            raise OneBotSendError(
+                action="send_msg",
+                status="preflight-empty",
+                retcode=-2,
+                wording="all segments dropped (remote preflight failed)",
+            )
+
+        payload = self._build_action_payload(prepared)
         api_action = payload.pop("action")
         params = payload.pop("params", {})
-        return await self.call_api(api_action, **params)
+        result = await self.call_api(api_action, **params)
+        # Surface NapCat-side rejections as exceptions so the router's
+        # sink-failure path runs. ``status == "ok"`` is the canonical
+        # success marker; ``retcode == 0`` is OneBot v11's; we accept
+        # either being healthy because forks vary on which they set.
+        status = str(result.get("status", "")).lower()
+        retcode_raw = result.get("retcode", 0)
+        try:
+            retcode = int(retcode_raw)
+        except (TypeError, ValueError):
+            retcode = -1
+        if status not in ("ok", "async") and retcode != 0:
+            wording = str(
+                result.get("wording")
+                or result.get("message")
+                or result.get("msg")
+                or ""
+            )
+            raise OneBotSendError(
+                action=api_action, status=status or "unknown", retcode=retcode, wording=wording
+            )
+        return result
 
     async def call_api(self, action: str, **params: Any) -> dict[str, Any]:
         """Call a raw OneBot API method.
@@ -849,6 +979,172 @@ class OneBotAdapter:
                     continue
             out.append(seg)
         return out
+
+    # ------------------------------------------------------------------
+    # Remote-URL preflight
+    # ------------------------------------------------------------------
+
+    async def _prepare_action(self, action: Action) -> Action:
+        """Return a copy of ``action`` with remote image URLs preflighted.
+
+        Steps:
+
+        1. Run the synchronous ``@pic:`` resolver — that path is
+           already short-circuited by a base64 cache and never blocks.
+        2. For any remaining ``ImageSegment`` whose URL is
+           ``http(s)://...``, attempt to download the bytes ourselves
+           (subject to a 4s timeout and a 4 MiB cap). On success we
+           inline as ``base64://`` so NapCat skips its own fetch. On
+           failure we replace the segment with a TextSegment carrying
+           ``self._remote_fallback_text`` so the rest of the reply
+           still delivers — that's the whole point: NapCat dropping
+           the entire ``send_msg`` because one image 404'd is what
+           caused the 2992611516 incident.
+
+        Other action kinds (recall, set_group_ban, …) and
+        non-image segments pass through.
+        """
+        if action.kind not in ("reply", "send"):
+            return action
+        # ``_resolve_asset_segments`` is the sync ``@pic:`` rewriter;
+        # run it first so a hybrid action (``@pic:`` + http URL) still
+        # gets local inlining without hitting the network.
+        resolved = self._resolve_asset_segments(action.segments)
+        if not self._remote_preflight:
+            return Action(
+                kind=action.kind,
+                target=action.target,
+                segments=resolved,
+                options=action.options,
+            )
+
+        rewritten: list[Segment] = []
+        had_remote_failure = False
+        for seg in resolved:
+            if (
+                isinstance(seg, ImageSegment)
+                and seg.url
+                and seg.url.lower().startswith(("http://", "https://"))
+            ):
+                inlined = await self._preflight_remote_image(seg.url)
+                if inlined is not None:
+                    rewritten.append(
+                        ImageSegment(
+                            url=inlined,
+                            path=seg.path,
+                            b64=seg.b64,
+                            alt=seg.alt,
+                            extras=seg.extras,
+                        )
+                    )
+                else:
+                    had_remote_failure = True
+                    if self._remote_fallback_text:
+                        rewritten.append(TextSegment(text=self._remote_fallback_text))
+                    # else: drop the segment outright — operator opted
+                    # into silent skip by setting an empty fallback.
+                continue
+            rewritten.append(seg)
+
+        if had_remote_failure:
+            # Audit-friendly breadcrumb so operators can grep for it.
+            logger.warning(
+                "onebot_remote_image_dropped",
+                target=action.target.id,
+                target_kind=action.target.kind,
+                segments_in=len(action.segments),
+                segments_out=len(rewritten),
+            )
+        return Action(
+            kind=action.kind,
+            target=action.target,
+            segments=rewritten,
+            options=action.options,
+        )
+
+    async def _preflight_remote_image(self, url: str) -> str | None:
+        """Download ``url`` and return its ``base64://...`` form, or ``None``.
+
+        Cached: positive results live for an hour, negative for a
+        minute. The first negative hit on a URL costs at most one HTTP
+        round-trip; subsequent hits within the negative TTL skip the
+        network entirely. ``None`` triggers the TextSegment fallback in
+        the caller.
+        """
+        now = time.monotonic()
+        cached = self._remote_preflight_cache.get(url)
+        if cached is not None:
+            value, expires = cached
+            if expires > now:
+                return value
+            # Expired entry — drop it so a fresh fetch can repopulate.
+            self._remote_preflight_cache.pop(url, None)
+
+        client = self._ensure_http_client()
+        try:
+            async with client.stream(
+                "GET", url, timeout=_REMOTE_PREFLIGHT_TIMEOUT_S
+            ) as response:
+                if response.status_code >= 400:
+                    logger.warning(
+                        "onebot_remote_image_status",
+                        url=url,
+                        status=response.status_code,
+                    )
+                    self._cache_preflight(url, None, _REMOTE_PREFLIGHT_FAIL_TTL_S)
+                    return None
+                buf = bytearray()
+                async for chunk in response.aiter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > _REMOTE_PREFLIGHT_MAX_BYTES:
+                        logger.info(
+                            "onebot_remote_image_too_large",
+                            url=url,
+                            bytes_so_far=len(buf),
+                            max_bytes=_REMOTE_PREFLIGHT_MAX_BYTES,
+                        )
+                        self._cache_preflight(url, None, _REMOTE_PREFLIGHT_FAIL_TTL_S)
+                        return None
+        except (httpx.HTTPError, TimeoutError) as exc:
+            logger.warning(
+                "onebot_remote_image_fetch_failed",
+                url=url,
+                error=type(exc).__name__,
+                detail=str(exc)[:200],
+            )
+            self._cache_preflight(url, None, _REMOTE_PREFLIGHT_FAIL_TTL_S)
+            return None
+
+        encoded = "base64://" + base64.b64encode(bytes(buf)).decode("ascii")
+        self._cache_preflight(url, encoded, _REMOTE_PREFLIGHT_OK_TTL_S)
+        return encoded
+
+    def _cache_preflight(self, url: str, value: str | None, ttl_s: float) -> None:
+        """Insert into the preflight cache, FIFO-evicting at the cap."""
+        if len(self._remote_preflight_cache) >= _REMOTE_PREFLIGHT_CACHE_MAX_ENTRIES:
+            self._remote_preflight_cache.pop(
+                next(iter(self._remote_preflight_cache)), None
+            )
+        self._remote_preflight_cache[url] = (value, time.monotonic() + ttl_s)
+
+    def _ensure_http_client(self) -> httpx.AsyncClient:
+        """Lazy-init the preflight HTTP client.
+
+        We avoid creating the connection pool until first use because
+        the CLI / unit-test paths typically never trigger a remote
+        fetch. ``follow_redirects=True`` matches what NapCat itself
+        does — image hosts often 302 to a CDN.
+        """
+        client = self._http_client
+        if client is None:
+            client = httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=_REMOTE_PREFLIGHT_TIMEOUT_S,
+                # A small connection pool — the bot is not a scraper.
+                limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+            )
+            self._http_client = client
+        return client
 
     def _build_action_payload(self, action: Action) -> dict[str, Any]:
         """Translate a linling Action into a OneBot API call payload."""

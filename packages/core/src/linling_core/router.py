@@ -254,6 +254,23 @@ class _DispatchErrorInfo:
     message: str
 
 
+@dataclass(frozen=True)
+class _SinkErrorInfo:
+    """Structured sink-failure metadata for audit payloads.
+
+    Action sinks (typically the OneBot adapter's ``send``) can fail
+    after the dispatcher has already produced its actions — e.g.
+    NapCat returning ``status=failed`` on a message containing a
+    dead image URL. We collect these per-event so the audit row's
+    payload reflects "DSL succeeded but delivery failed" instead of
+    silently logging ``ok``.
+    """
+
+    platform: str
+    type: str
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -370,6 +387,7 @@ class Router:
         verdict = "unknown"
         outcome = "ok"
         dispatch_error: _DispatchErrorInfo | None = None
+        sink_errors: list[_SinkErrorInfo] = []
         try:
             try:
                 await asyncio.wait_for(
@@ -386,9 +404,16 @@ class Router:
                 return True
 
             try:
-                verdict, dispatch_error = await self._dispatch(event)
+                verdict, dispatch_error, sink_errors = await self._dispatch(event)
                 if dispatch_error is not None:
                     outcome = "error"
+                elif sink_errors:
+                    # Dispatcher produced actions but the sink rejected
+                    # them — distinct from a dispatcher crash. We keep
+                    # the verdict (so the rule trace is still visible)
+                    # and flag outcome so dashboards can show
+                    # delivery-fail rate separately from rule errors.
+                    outcome = "sink-failed"
                 elif verdict.endswith(":rate-limited") or verdict.endswith(":timeout"):
                     outcome = "rate-limited"
                 elif verdict.startswith("ignore:"):
@@ -410,13 +435,16 @@ class Router:
                 started=started,
                 trace_id=trace_id,
                 dispatch_error=dispatch_error,
+                sink_errors=sink_errors,
             )
             structlog.contextvars.unbind_contextvars("trace_id", "bot_id", "event_id")
             _trace_id_ctx.reset(token)
 
     # ------------------------------------------------------------------ internals
 
-    async def _dispatch(self, event: Event) -> tuple[str, _DispatchErrorInfo | None]:
+    async def _dispatch(
+        self, event: Event
+    ) -> tuple[str, _DispatchErrorInfo | None, list[_SinkErrorInfo]]:
         # Built-in ``/help`` takes precedence over the classifier so
         # operators cannot accidentally shadow it with a rule. The
         # classifier-level prefix parsing still has to agree the
@@ -424,29 +452,29 @@ class Router:
         # shouldn't override whatever the ruleset wants to do.
         if self._cfg.help_command_name and self._maybe_builtin(event, self._cfg.help_command_name):
             await self._emit_help(event)
-            return "help:builtin", None
+            return "help:builtin", None, []
         # ``/cancel`` is handled *before* acquiring the session lock —
         # the whole point is to unblock the lock-holder.
         if self._cfg.cancel_command_name and self._maybe_builtin(
             event, self._cfg.cancel_command_name
         ):
             await self._do_cancel(event)
-            return "cancel:builtin", None
+            return "cancel:builtin", None, []
         if self._cfg.reset_command_name and self._maybe_builtin(
             event, self._cfg.reset_command_name
         ):
             await self._do_reset(event)
-            return "reset:builtin", None
+            return "reset:builtin", None, []
 
         intent: Intent = self._classifier.classify(event)
 
         if intent.kind == "ignore":
-            return f"ignore:{intent.reason}", None
+            return f"ignore:{intent.reason}", None, []
 
         if intent.kind == "command" and intent.match is None:
             # Prefix present but no handler matched.
             await self._emit_text(event, self._cfg.unknown_command_reply)
-            return f"unknown-command:{intent.reason}", None
+            return f"unknown-command:{intent.reason}", None, []
 
         # Both remaining branches need a session lock.
         key = self._conversation_key(event, intent)
@@ -462,7 +490,7 @@ class Router:
             and not session.rate_limiter.try_acquire()
         ):
             await self._emit_text(event, self._cfg.busy_session_reply)
-            return "chat:rate-limited", None
+            return "chat:rate-limited", None, []
 
         # Per-session serialization. We don't await inside the lock
         # longer than the dispatcher needs; on timeout we bail so a stuck
@@ -472,7 +500,7 @@ class Router:
         except TimeoutError:
             logger.warning("router.session_lock_timeout", event_id=event.id, key=str(session.key))
             await self._emit_text(event, self._cfg.busy_session_reply)
-            return "session-timeout", None
+            return "session-timeout", None, []
 
         dispatch_error: _DispatchErrorInfo | None = None
         try:
@@ -501,19 +529,32 @@ class Router:
             # the message even though the handler crashed.
             await self._emit_text(event, self._cfg.error_reply)
             verdict = f"{verdict}:error"
-            return verdict, dispatch_error
+            return verdict, dispatch_error, []
 
+        sink_errors: list[_SinkErrorInfo] = []
         for a in actions:
             try:
                 await self._sink(a)
-            except Exception:
-                logger.exception("router.sink_failed", event_id=event.id)
+            except Exception as exc:
+                logger.exception(
+                    "router.sink_failed",
+                    event_id=event.id,
+                    sink_error_type=type(exc).__name__,
+                    sink_error_detail=str(exc)[:500],
+                )
                 self._metrics.counter_inc(
                     SINK_FAILURES_TOTAL,
                     {"bot_id": event.bot_id, "platform": a.target.platform},
                 )
+                sink_errors.append(
+                    _SinkErrorInfo(
+                        platform=a.target.platform,
+                        type=type(exc).__name__,
+                        message=str(exc)[:500],
+                    )
+                )
 
-        return verdict, dispatch_error
+        return verdict, dispatch_error, sink_errors
 
     async def _safe(
         self,
@@ -576,6 +617,7 @@ class Router:
         started: float,
         trace_id: str,
         dispatch_error: _DispatchErrorInfo | None = None,
+        sink_errors: list[_SinkErrorInfo] | None = None,
     ) -> None:
         """Emit a single audit entry for the dispatch outcome.
 
@@ -627,6 +669,13 @@ class Router:
                     "error_message": dispatch_error.message[:500],
                 }
             )
+        if sink_errors:
+            # Capped serialised form so the audit row stays small even
+            # if a flapping platform produces many sub-action failures.
+            payload["sink_errors"] = [
+                {"platform": e.platform, "type": e.type, "message": e.message}
+                for e in sink_errors[:5]
+            ]
         try:
             self._audit.write(
                 AuditEntry(

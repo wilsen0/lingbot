@@ -93,6 +93,21 @@ class AdapterConfig(BaseModel):
     kind: str  # "onebot" | "cli"
     ws_url: str = "ws://127.0.0.1:8080"
     access_token: str = ""
+    remote_image_preflight: bool = True
+    """For ``kind="onebot"``: when ``True`` (default), the adapter
+    downloads ``http(s)://`` image URLs itself before sending to NapCat,
+    inlining as base64 on success and substituting a fallback text on
+    failure. Without this, a single dead image URL embedded in a DSL
+    rule's output causes NapCat to drop the entire ``send_msg`` —
+    which is what motivated turning this on. Set to ``false`` only
+    when every image URL referenced by the ruleset is known-good and
+    the per-message HEAD/GET overhead is unwanted.
+    """
+    remote_image_fallback_text: str = "[图片加载失败]"
+    """Text inserted in place of an image segment whose URL preflight
+    failed. Empty string drops the image silently. Only meaningful
+    when ``remote_image_preflight`` is ``True``.
+    """
 
 
 class StorageConfig(BaseModel):

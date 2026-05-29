@@ -806,9 +806,13 @@ def _rewrite_image_url(raw: str) -> str:
       render them; the client never talks to third-party hosts directly.
     * ``@pic:<name>`` — rewrite to ``/api/files/assets/picture/<name>``,
       defaulting the extension to ``.jpg`` when the shorthand omits it.
-    * Anything else (absolute filesystem paths, ``base64://``, empty) —
-      drop (return empty) so the bubble doesn't render a broken
-      ``<img>`` for sources the browser can't reach.
+    * ``base64://<payload>`` — rewrite to a ``data:image/png;base64,...``
+      URI. Tools like ``$扭蛋图$`` emit base64-inlined PNGs so NapCat
+      can ship them without a shared filesystem; the browser reads
+      the same scheme natively (CSP already permits ``data:``).
+    * Anything else (absolute filesystem paths, empty) — drop (return
+      empty) so the bubble doesn't render a broken ``<img>`` for
+      sources the browser can't reach.
     """
     if not raw:
         return ""
@@ -816,6 +820,10 @@ def _rewrite_image_url(raw: str) -> str:
         return _PROXY_PREFIX + quote("https:" + raw, safe="")
     if raw.startswith(("http://", "https://")):
         return _PROXY_PREFIX + quote(raw, safe="")
+    if raw.startswith("base64://"):
+        # PNG is what our renderers emit today; the browser sniffs
+        # the actual MIME from the magic bytes if it disagrees.
+        return "data:image/png;base64," + raw[len("base64://"):]
     if raw.startswith(_ASSET_SCHEME):
         name = raw[len(_ASSET_SCHEME) :]
         if not name:

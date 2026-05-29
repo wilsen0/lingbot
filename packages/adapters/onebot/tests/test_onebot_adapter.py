@@ -1068,3 +1068,283 @@ class TestAssetResolution:
         import base64 as _b64
 
         assert _b64.b64decode(file_field[len("base64://") :]) == b"<svg/>"
+
+
+class TestRemoteImagePreflight:
+    """``http(s)://`` image URLs are downloaded by the adapter before
+    forwarding to NapCat so a single dead URL doesn't cause NapCat to
+    drop the entire ``send_msg``.
+
+    Background: legacy KV-stored avatars (``啊/主页系/专属形象``) hold
+    URLs from yximgs / superbed / BOS that have since 404'd. The DSL
+    embeds them via ``±img=%专%±`` at the tail of every 我的背包 /
+    我的礼品 / 我的珍品 reply. Without preflight, NapCat fetches the
+    dead URL, fails, and the whole reply silently disappears — which
+    is exactly the 2992611516 incident.
+    """
+
+    def test_remote_url_inlined_on_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import base64 as _b64
+
+        adapter = _make_adapter()
+
+        # Stub the HTTP client so the test doesn't touch the network.
+        class _StubResponse:
+            status_code = 200
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def aiter_bytes(self):
+                yield b"\xff\xd8\xff\xe0fakejpg"
+
+        class _StubClient:
+            def stream(self, method, url, timeout):
+                return _StubResponse()
+
+            async def aclose(self):
+                pass
+
+        client = _StubClient()
+        monkeypatch.setattr(adapter, "_ensure_http_client", lambda: client)
+
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[
+                TextSegment(text="hi"),
+                ImageSegment(url="https://example.com/avatar.jpg"),
+            ],
+        )
+        prepared = asyncio.run(adapter._prepare_action(action))
+        assert isinstance(prepared.segments[1], ImageSegment)
+        url = prepared.segments[1].url or ""
+        assert url.startswith("base64://")
+        assert _b64.b64decode(url[len("base64://") :]) == b"\xff\xd8\xff\xe0fakejpg"
+
+    def test_remote_url_failure_replaced_with_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        adapter = _make_adapter()
+
+        class _StubResponse:
+            status_code = 404
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def aiter_bytes(self):
+                if False:
+                    yield b""  # pragma: no cover
+
+        class _StubClient:
+            def stream(self, method, url, timeout):
+                return _StubResponse()
+
+            async def aclose(self):
+                pass
+
+        client = _StubClient()
+        monkeypatch.setattr(adapter, "_ensure_http_client", lambda: client)
+
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[
+                TextSegment(text="珍品列表:"),
+                ImageSegment(url="https://help-ol.bj.bcebos.com/dead.jpg"),
+            ],
+        )
+        prepared = asyncio.run(adapter._prepare_action(action))
+        # Image was replaced with the fallback text — original text
+        # segment is preserved so the user still sees the rule output.
+        assert all(not isinstance(s, ImageSegment) for s in prepared.segments)
+        assert any(
+            isinstance(s, TextSegment) and s.text == "[图片加载失败]"
+            for s in prepared.segments
+        )
+        assert prepared.segments[0].text == "珍品列表:"  # type: ignore[attr-defined]
+
+    def test_preflight_disabled_passes_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        adapter = _make_adapter()
+        adapter._remote_preflight = False
+
+        # If preflight is off we must not even call the HTTP client.
+        called: list[str] = []
+        monkeypatch.setattr(
+            adapter,
+            "_ensure_http_client",
+            lambda: called.append("nope") or None,  # type: ignore[func-returns-value]
+        )
+
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="https://example.com/img.png")],
+        )
+        prepared = asyncio.run(adapter._prepare_action(action))
+        assert called == []
+        assert isinstance(prepared.segments[0], ImageSegment)
+        assert prepared.segments[0].url == "https://example.com/img.png"
+
+    def test_preflight_caches_negative_results(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second hit for the same URL stays inside the negative
+        TTL window and never re-issues the HTTP request — keeps a
+        flapping host from blocking the hot path on every reply.
+        """
+        import asyncio
+
+        adapter = _make_adapter()
+        call_count = {"n": 0}
+
+        class _StubResponse:
+            status_code = 502
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def aiter_bytes(self):
+                if False:
+                    yield b""  # pragma: no cover
+
+        class _StubClient:
+            def stream(self, method, url, timeout):
+                call_count["n"] += 1
+                return _StubResponse()
+
+            async def aclose(self):
+                pass
+
+        client = _StubClient()
+        monkeypatch.setattr(adapter, "_ensure_http_client", lambda: client)
+
+        async def _exercise() -> None:
+            assert await adapter._preflight_remote_image("https://h/i.jpg") is None
+            assert await adapter._preflight_remote_image("https://h/i.jpg") is None
+
+        asyncio.run(_exercise())
+        assert call_count["n"] == 1
+
+    def test_send_raises_on_napcat_failure_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``send`` raises ``OneBotSendError`` so the router's
+        sink-failure path runs (instead of silently auditing ``ok``).
+        """
+        import asyncio
+
+        from linling_adapter_onebot.adapter import OneBotSendError
+
+        adapter = _make_adapter()
+
+        async def _fake_call_api(action, **params):
+            return {
+                "status": "failed",
+                "retcode": 1404,
+                "data": None,
+                "wording": "image fetch failed",
+                "echo": "x",
+            }
+
+        monkeypatch.setattr(adapter, "call_api", _fake_call_api)
+        # Skip preflight to keep the test focused on the post-call branch.
+        adapter._remote_preflight = False
+
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[TextSegment(text="hi")],
+        )
+        with pytest.raises(OneBotSendError) as exc_info:
+            asyncio.run(adapter.send(action))
+        assert exc_info.value.retcode == 1404
+        assert exc_info.value.status == "failed"
+        assert "image fetch failed" in str(exc_info.value)
+
+    def test_send_accepts_async_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OneBot v11 also defines ``status="async"`` for fire-and-forget
+        calls. We must not treat that as a failure."""
+        import asyncio
+
+        adapter = _make_adapter()
+        adapter._remote_preflight = False
+
+        async def _fake_call_api(action, **params):
+            return {"status": "async", "retcode": 1, "data": None, "echo": "x"}
+
+        monkeypatch.setattr(adapter, "call_api", _fake_call_api)
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[TextSegment(text="hi")],
+        )
+        result = asyncio.run(adapter.send(action))
+        assert result["status"] == "async"
+
+    def test_send_raises_on_preflight_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If every segment was an unfetchable remote image and the
+        operator disabled the textual fallback, ``send`` refuses to
+        issue an empty ``send_msg`` — surfaces as a sink failure.
+        """
+        import asyncio
+
+        from linling_adapter_onebot.adapter import OneBotSendError
+
+        adapter = _make_adapter()
+        adapter._remote_fallback_text = ""  # operator opted into silent skip.
+
+        class _StubResponse:
+            status_code = 503
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return None
+
+            async def aiter_bytes(self):
+                if False:
+                    yield b""  # pragma: no cover
+
+        class _StubClient:
+            def stream(self, method, url, timeout):
+                return _StubResponse()
+
+            async def aclose(self):
+                pass
+
+        client = _StubClient()
+        monkeypatch.setattr(adapter, "_ensure_http_client", lambda: client)
+
+        action = Action(
+            kind="reply",
+            target=Scope(kind="group", id="100", platform="onebot"),
+            segments=[ImageSegment(url="https://dead.example/x.jpg")],
+        )
+        with pytest.raises(OneBotSendError) as exc_info:
+            asyncio.run(adapter.send(action))
+        assert exc_info.value.status == "preflight-empty"

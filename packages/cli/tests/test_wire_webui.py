@@ -261,3 +261,52 @@ rules:
 def _make_app() -> FastAPI:
     """WebUI app factory wrapper — avoids global state between tests."""
     return create_app()
+
+
+# ---------------------------------------------------------------------------
+# _rewrite_image_url — DSL-emitted image source → browser-reachable URL
+# ---------------------------------------------------------------------------
+
+
+class TestRewriteImageURL:
+    """Direct unit tests for the URL rewriter the WS dispatcher uses.
+
+    Covers each branch the rewriter recognises so a regression in any
+    one scheme (remote http(s), ``@pic:``, ``base64://``) gets a
+    targeted failure rather than buried in a full-stack chat dispatch
+    test.
+    """
+
+    def test_rewrites_pic_shorthand(self) -> None:
+        from linling_cli.wire_webui import _rewrite_image_url
+
+        assert _rewrite_image_url("@pic:思思") == "/api/files/assets/picture/思思.jpg"
+        assert _rewrite_image_url("@pic:大飞龙.jpg") == "/api/files/assets/picture/大飞龙.jpg"
+
+    def test_proxies_remote_http(self) -> None:
+        from linling_cli.wire_webui import _rewrite_image_url
+
+        out = _rewrite_image_url("https://example.com/x.png")
+        assert out.startswith("/api/files/proxy?url=")
+        assert "example.com" in out
+
+    def test_data_uri_for_base64(self) -> None:
+        """``base64://...`` (e.g. from ``$扭蛋图$``) becomes a ``data:`` URI.
+
+        The browser already permits ``data:`` under our CSP
+        (``img-src 'self' data: blob:``) so the bubble can render
+        without a round trip to the WebUI.
+        """
+        from linling_cli.wire_webui import _rewrite_image_url
+
+        out = _rewrite_image_url("base64://AAAA")
+        assert out == "data:image/png;base64,AAAA"
+
+    def test_drops_unknown_schemes(self) -> None:
+        from linling_cli.wire_webui import _rewrite_image_url
+
+        # Absolute filesystem paths can't be reached by the browser
+        # so the dispatcher drops them rather than render a broken
+        # ``<img>``.
+        assert _rewrite_image_url("/var/cache/x.png") == ""
+        assert _rewrite_image_url("") == ""
