@@ -732,11 +732,12 @@ async def bootstrap_bot(
         ledger_writer=ledger_writer,
     )
 
-    # Image-rendering tools (``$图文$`` / ``$扭蛋图$``) need an on-disk
-    # cache dir for their output PNGs and the asset bundle root so
-    # ``$扭蛋图$`` can find sprites. We resolve both relative to
-    # ``base`` (the bot's project dir) so a single bot can host multiple
-    # asset bundles without bleed.
+    # Image-rendering tools (``$图文$`` / ``$扭蛋图$`` / ``$钓鱼结算图$``
+    # / ``$鱼篓图$`` / ``$鱼图鉴图$``) need an on-disk cache dir for their
+    # output PNGs and the asset bundle root so sprite-backed renderers
+    # can find their art. We resolve both relative to ``base`` (the
+    # bot's project dir) so a single bot can host multiple asset bundles
+    # without bleed.
     image_cache_dir = base / "data" / "cache" / "image_text"
     image_cache_dir.mkdir(parents=True, exist_ok=True)
     commands.update_extras(image_text_cache_dir=image_cache_dir)

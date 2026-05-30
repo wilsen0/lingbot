@@ -16,6 +16,8 @@ import linling_core.tools_builtin
 from linling_tools_stdlib import (
     adapter_rpc,
     codec,
+    fishing_game,
+    fishing_image,
     format_ops,
     gacha_image,
     globals_ops,
@@ -32,6 +34,8 @@ __all__ = [
     "__version__",
     "adapter_rpc",
     "codec",
+    "fishing_game",
+    "fishing_image",
     "format_ops",
     "gacha_image",
     "globals_ops",

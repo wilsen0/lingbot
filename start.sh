@@ -96,11 +96,12 @@ case "$choice" in
     echo "  手机 QQ 扫完上面任一二维码授权，再跑 ./start.sh 选 2 即可。"
     ;;
   5)
-    echo "→ 启动掉线自愈看门狗（后台常驻）..."
-    if ! docker inspect napcat >/dev/null 2>&1; then
-      echo "  ✗ NapCat 容器不存在"; exit 1
+    echo "→ 启动掉线自愈看门狗（后台常驻，盯 LLBot）..."
+    if ! docker inspect llbot-pmhq >/dev/null 2>&1; then
+      echo "  ✗ LLBot 容器(llbot-pmhq)不存在，先 docker compose -f docker/llbot/docker-compose.yml up -d"
+      exit 1
     fi
-    exec ./scripts/napcat_watchdog.sh --loop
+    exec ./scripts/llbot_watchdog.sh --loop
     ;;
   *)
     echo "无效选择"; exit 1

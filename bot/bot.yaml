@@ -12,9 +12,10 @@ storage:
 adapters:
   - kind: cli
   - kind: onebot
-    # NapCat 的 WebSocket 服务地址。linling 作为客户端主动去连。
-    # 如果 NapCat 在同一台机器,127.0.0.1 就行;在另一台机器填那台的 IP。
-    ws_url: ws://127.0.0.1:3001
+    # OneBot v11 服务端地址。linling 作为客户端主动去连。
+    # 当前指向 LLBot(LLOneBot) 的 :3003；回退 NapCat 改成 :3001 即可。
+    # 留空用 ${ONEBOT_WS_URL}(见 .env)，dev/prod 同源。
+    ws_url: ${ONEBOT_WS_URL}
     access_token: ${ONEBOT_TOKEN}
 
 rules:

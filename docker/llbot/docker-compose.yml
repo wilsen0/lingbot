@@ -1,0 +1,59 @@
+# LLBot (LLOneBot) 协议端 —— NapCat 的候选替代，和 NapCat 并存测试用。
+#
+# 架构：pmhq 容器跑 QQ（外部驱动，非 NapCat 那种改 QQ 文件的 patch 注入），
+#       llbot 容器跑 OneBot v11 服务端。linling 作为客户端连 llbot 的 :3003。
+#
+# 端口（全部只绑 127.0.0.1，和 NapCat 一样不对公网暴露）：
+#   3003  OneBot v11 WebSocket 服务端（linling 连这里）
+#   3080  LLBot WebUI（扫码登录 / 改配置；token 见 llbot_config/webui_token.txt）
+#
+# 配置与登录态：
+#   /home/wilsen/.llbot/llbot_config        LLBot 配置（config_<QQ>.json / webui_token.txt）
+#   qq_volume (docker named vol)  QQ 登录态缓存
+#
+# 用法：
+#   docker compose -f docker/llbot/docker-compose.yml up -d
+#   docker compose -f docker/llbot/docker-compose.yml logs -f
+#   docker compose -f docker/llbot/docker-compose.yml down   # 停止（保留数据卷）
+services:
+  pmhq:
+    image: linyuchen/pmhq:latest
+    container_name: llbot-pmhq
+    hostname: SU-DESKTOP          # 给 QQ 一个像正常电脑的设备名，别用容器ID/root
+    privileged: true
+    environment:
+      - ENABLE_HEADLESS=false          # 有头更稳（无头省内存但易掉线）
+      - AUTO_LOGIN_QQ=1707476110
+    networks:
+      - llbot_net
+    volumes:
+      - qq_volume:/root/.config/QQ
+      - /home/wilsen/.llbot/llbot_config:/app/llbot/data:rw
+    restart: unless-stopped
+
+  llbot:
+    image: linyuchen/llbot:latest
+    container_name: llbot
+    ports:
+      - "127.0.0.1:3003:3003"          # OneBot v11 WS 服务端
+      - "127.0.0.1:3080:3080"          # WebUI
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PMHQ_HOST=pmhq
+      - WEBUI_PORT=3080
+    networks:
+      - llbot_net
+    volumes:
+      - qq_volume:/root/.config/QQ
+      - /home/wilsen/.llbot/llbot_config:/app/llbot/data:rw
+    depends_on:
+      - pmhq
+    restart: unless-stopped
+
+volumes:
+  qq_volume:
+
+networks:
+  llbot_net:
+    driver: bridge
