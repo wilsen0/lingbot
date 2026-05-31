@@ -27,8 +27,9 @@ from linling_core.segments import ReplySegment, TextSegment
 
 from linling_agent.action_delay import with_random_delay_before
 from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
-from linling_agent.context import ContextBudget, ContextManager, SummaryStore
+from linling_agent.context import ContextBudget, ContextManager, OnBeforeCompact, SummaryStore
 from linling_agent.llm import Message
+from linling_agent.profile import ProfileStore, render_profile_block
 from linling_agent.runtime import AgentResult, AgentRuntime
 
 if TYPE_CHECKING:
@@ -65,6 +66,9 @@ class AgentChatDispatcher:
         ledger_store: LedgerStore | None = None,
         ledger_renderer: LedgerRenderer | None = None,
         context_budget: ContextBudget | None = None,
+        profile_store: ProfileStore | None = None,
+        on_before_compact: OnBeforeCompact | None = None,
+        profile_inject_dm: bool = True,
         max_replies: int = 3,
         max_reply_chars: int = 500,
         multi_reply_delay_min_s: float = 0.0,
@@ -79,6 +83,12 @@ class AgentChatDispatcher:
         # exactly (Requirement 1.11 / 1.12 / 11.5).
         self._ledger_store = ledger_store
         self._ledger_renderer = ledger_renderer
+        # Per-user profile memory. ``profile_store`` enables DM-side
+        # ``<user_profile>`` injection; ``on_before_compact`` is threaded
+        # into the ContextManager so profiles are distilled just before a
+        # summary compaction. Both default off → behaviour unchanged.
+        self._profile_store = profile_store
+        self._profile_inject_dm = profile_inject_dm
         # Multi-message reply caps. The dispatcher's ``run`` parses an
         # optional ``{"actions":[...]}`` payload from the assistant
         # content; ``max_replies`` bounds how many segments we'll emit
@@ -96,6 +106,7 @@ class AgentChatDispatcher:
                 temperature=agent.agent_def.temperature,
                 budget=context_budget,
                 store=history_store if isinstance(history_store, SummaryStore) else None,
+                on_before_compact=on_before_compact,
             )
             if context_budget is not None
             else None
@@ -180,6 +191,21 @@ class AgentChatDispatcher:
         batch_system = str(event.raw.get("_linling_prompt_system") or "")
         if batch_system:
             prefix_messages.append(Message(role="system", content=batch_system))
+        # DM-side per-user profile injection. Group scope (and group-batch
+        # synthetic events) deliberately skip this — there the LLM reads
+        # profiles on demand via the read_user_profile tool instead.
+        if (
+            self._profile_store is not None
+            and self._profile_inject_dm
+            and event.scope.kind == "dm"
+            and not event.raw.get("_linling_group_batch")
+        ):
+            profile_block = await self._render_profile_block(
+                event.sender.id, event.sender.display_name
+            )
+            if profile_block:
+                prefix_messages.append(Message(role="system", content=profile_block))
+            await self._touch_name_safe(event.sender.id, event.sender.display_name)
         reserve_tokens = self._agent.agent_def.guardrails.max_tokens
         user_input = raw_user_input
         if self._context is not None:
@@ -428,6 +454,30 @@ class AgentChatDispatcher:
         return [Action(kind="reply", target=event.scope, segments=[TextSegment(text=text)])]
 
     # ---- history plumbing -------------------------------------------
+
+    async def _render_profile_block(self, qq: str, name: str | None) -> str | None:
+        """Load the user's profile and render the ``<user_profile>`` block.
+
+        Fail-open: any KV error yields ``None`` (no injection) so a profile
+        read can never block or break the current turn.
+        """
+        if self._profile_store is None:
+            return None
+        try:
+            profile = await self._profile_store.load(qq)
+        except Exception:
+            logger.debug("profile.inject_load_failed", sender_id=qq, exc_info=True)
+            return None
+        return render_profile_block(qq, name, profile)
+
+    async def _touch_name_safe(self, qq: str, name: str | None) -> None:
+        """Best-effort maintenance of the qq→nickname mapping."""
+        if self._profile_store is None or not name:
+            return
+        try:
+            await self._profile_store.touch_name(qq, name)
+        except Exception:
+            logger.debug("profile.touch_name_failed", sender_id=qq, exc_info=True)
 
     async def _maybe_rehydrate(self, session: Session, event: Event) -> None:
         """Concurrently restore chat history and DSL ledger from KV.

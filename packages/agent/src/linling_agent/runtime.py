@@ -21,7 +21,7 @@ from linling_core.metrics import (
     NullMetrics,
 )
 from linling_core.storage.kv import KVStore
-from linling_core.tools import ToolCtx, ToolRegistry
+from linling_core.tools import ToolCtx, ToolRegistry, tool_parameters_schema
 
 from linling_agent.agent_def import AgentDef
 from linling_agent.context import fit_messages_to_budget
@@ -95,30 +95,11 @@ class AgentRuntime:
             td = self._registry.get(tool_name)
             if td is None:
                 continue
-            properties: dict[str, object] = {}
-            required: list[str] = []
-            for param_name, type_str in td.schema.items():
-                optional = type_str.endswith("?")
-                base_type = type_str.rstrip("?")
-                type_map = {
-                    "string": "string",
-                    "int": "integer",
-                    "float": "number",
-                    "bool": "boolean",
-                }
-                json_type = type_map.get(base_type, "string")
-                properties[param_name] = {"type": json_type}
-                if not optional:
-                    required.append(param_name)
             schemas.append(
                 ToolSchema(
                     name=td.name,
                     description=td.description,
-                    parameters={
-                        "type": "object",
-                        "properties": properties,
-                        "required": required,
-                    },
+                    parameters=tool_parameters_schema(td),
                 )
             )
         return schemas

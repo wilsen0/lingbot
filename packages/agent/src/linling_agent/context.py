@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
@@ -10,6 +12,13 @@ import structlog
 from linling_agent.llm import LLMResponse, Message
 
 logger = structlog.get_logger(__name__)
+
+
+# Callback fired immediately before older turns are folded into the running
+# summary. ``(scope_id, sender_id, older_messages)``. Defined here (rather than
+# imported from ``linling_agent.profile``) so ``context`` keeps zero inbound
+# dependency on the profile layer — ``profile`` imports this, not vice-versa.
+OnBeforeCompact = Callable[[str, str, list["Message"]], Awaitable[None]]
 
 
 @runtime_checkable
@@ -124,12 +133,14 @@ class ContextManager:
         temperature: float,
         budget: ContextBudget,
         store: SummaryStore | None,
+        on_before_compact: OnBeforeCompact | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
         self._temperature = temperature
         self._budget = budget
         self._store = store
+        self._on_before_compact = on_before_compact
 
     @property
     def max_tokens(self) -> int:
@@ -184,6 +195,7 @@ class ContextManager:
         recent = history[-keep_messages:] if keep_messages else []
         older = history[:-keep_messages] if keep_messages else history
         if older:
+            await self._safe_before_compact(scope_id, sender_id, older)
             summary = await self._summarize(summary, older)
             await self._save_summary(scope_id, sender_id, summary)
         visible = self._with_summary(summary, recent)
@@ -220,6 +232,25 @@ class ContextManager:
 
     def _completion_reserve(self, reserve_tokens: int) -> int:
         return min(max(0, reserve_tokens), max(0, self._budget.max_tokens // 4))
+
+    async def _safe_before_compact(
+        self, scope_id: str, sender_id: str, older: list[Message]
+    ) -> None:
+        """Run the pre-compaction hook (profile distillation) — fail-open.
+
+        The hook is best-effort: any failure (timeout, network, parser,
+        callback crash) is logged and swallowed so the running summary is
+        still generated and the user's current turn still completes.
+        ``asyncio.CancelledError`` is re-raised for clean shutdown.
+        """
+        if self._on_before_compact is None:
+            return
+        try:
+            await self._on_before_compact(scope_id, sender_id, older)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("context.before_compact_failed", scope_id=scope_id)
 
     async def _summarize(self, existing_summary: str, older: list[Message]) -> str:
         provider_chat = getattr(self._provider, "chat", None)

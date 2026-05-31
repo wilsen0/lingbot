@@ -120,6 +120,26 @@ _TYPE_MAP: dict[str, str] = {
 }
 
 
+def tool_parameters_schema(tool_def: ToolDef) -> dict[str, Any]:
+    """Convert a :class:`ToolDef`'s simplified ``schema`` into JSON Schema params.
+
+    The single source of truth for the simplified-type → JSON-Schema mapping,
+    shared by :meth:`ToolRegistry.llm_schemas`, ``AgentRuntime`` and
+    ``ProfileUpdater`` so schema generation can't drift between call sites.
+    Returns the ``{"type": "object", "properties": {...}, "required": [...]}``
+    object expected under an OpenAI function ``parameters`` key.
+    """
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for param_name, type_str in tool_def.schema.items():
+        optional = type_str.endswith("?")
+        base_type = type_str.rstrip("?")
+        properties[param_name] = {"type": _TYPE_MAP.get(base_type, "string")}
+        if not optional:
+            required.append(param_name)
+    return {"type": "object", "properties": properties, "required": required}
+
+
 class ToolRegistry:
     """Registry of tool definitions with lookup by Python name or DSL name."""
 
@@ -155,26 +175,13 @@ class ToolRegistry:
         for td in self._by_name.values():
             if not td.llm_visible:
                 continue
-            properties: dict[str, Any] = {}
-            required: list[str] = []
-            for param_name, type_str in td.schema.items():
-                optional = type_str.endswith("?")
-                base_type = type_str.rstrip("?")
-                json_type = _TYPE_MAP.get(base_type, "string")
-                properties[param_name] = {"type": json_type}
-                if not optional:
-                    required.append(param_name)
             schemas.append(
                 {
                     "type": "function",
                     "function": {
                         "name": td.name,
                         "description": td.description,
-                        "parameters": {
-                            "type": "object",
-                            "properties": properties,
-                            "required": required,
-                        },
+                        "parameters": tool_parameters_schema(td),
                     },
                 }
             )

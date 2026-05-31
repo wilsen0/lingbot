@@ -23,12 +23,15 @@ from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
 from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import Message, ToolCall, ToolSchema
+from linling_agent.profile import ProfileStore
 
 logger = structlog.get_logger(__name__)
 
 _TOOL_READ_BATCH = "read_batch_messages"
 _TOOL_REPLY_TO_MESSAGE = "reply_to_message"
 _TOOL_SEND_GROUP = "send_group"
+_TOOL_READ_PROFILE = "read_user_profile"
+_TOOL_WRITE_PROFILE = "write_user_profile"
 _MAX_TOOL_ROUNDS = 8
 _MAX_READ_CALLS = 2
 _MAX_READ_MESSAGES = 5
@@ -783,21 +786,32 @@ class GroupBatchChatDispatcher:
         # probe entirely — re-judging with a small model that lacks
         # full context can incorrectly veto an obvious reply.
         #
-        # The probe sees EXACTLY the same messages the main LLM will see
-        # — same system prompt, same history, same batch, same tools,
-        # same max_tokens. Think of it as "what would the agent do if
-        # we swapped the model to Groq?". If the small model decides
-        # not to act (no tool_calls), we trust that and skip the main
-        # LLM call entirely. If the probe fails (TPM cap, network),
-        # fail-open to the main LLM. ---
+        # The probe deliberately sees a HISTORY-FREE view: only the
+        # system prompt and the buffered batch (the same user_prompt the
+        # main LLM gets), with NO prior conversation turns. Reasons:
+        #   1. The probe is a cheap yes/no "is anything here worth a
+        #      reply?" gate — past turns don't change that judgement and
+        #      just inflate token cost on the small model.
+        #   2. The probe model (e.g. Groq llama) is a different backend
+        #      from the main LLM (e.g. DeepSeek). History assistant turns
+        #      can carry provider-specific fields like ``reasoning_content``
+        #      that the probe backend rejects outright (HTTP 400
+        #      "reasoning_content is unsupported"), which would fail the
+        #      whole batch closed and silently drop replies.
+        # The main LLM below still gets the full ``messages`` (with
+        # history); only the probe is trimmed.
         if (
             not had_attention
             and self._probe_wired()
             and self._probe is not None
         ):
+            probe_messages = [
+                Message(role="system", content=selector_prompt),
+                Message(role="user", content=user_prompt),
+            ]
             try:
                 probe_has_action = await self._probe_has_action(
-                    messages=messages,
+                    messages=probe_messages,
                     tools=tools,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -1200,7 +1214,40 @@ class GroupBatchChatDispatcher:
                 generation,
                 sent_count,
             )
+        if tool_call.name in (_TOOL_READ_PROFILE, _TOOL_WRITE_PROFILE):
+            return await self._tool_profile(tool_call.name, args), None, False, False
         return _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}), None, False, False
+
+    async def _tool_profile(self, name: str, args: dict[str, object]) -> str:
+        """Execute a profile read/write tool. Never produces an outbound action.
+
+        Returns a JSON string for the tool message; the loop continues so the
+        model can keep deciding what to reply. ``self._kv`` may be ``None`` in
+        legacy test wiring — degrade to an error string rather than crash.
+        """
+        if self._kv is None:
+            return _tool_json({"ok": False, "error": "profile store unavailable"})
+        store = ProfileStore(self._kv)
+        qq = args.get("qq")
+        if not isinstance(qq, str) or not qq:
+            return _tool_json({"ok": False, "error": "qq is required"})
+        try:
+            if name == _TOOL_READ_PROFILE:
+                existing = await store.load(qq)
+                nick = await store.load_name(qq)
+                if not existing:
+                    return _tool_json({"ok": True, "qq": qq, "profile": "", "note": "暂无画像"})
+                return _tool_json({"ok": True, "qq": qq, "name": nick, "profile": existing})
+            # write
+            new_profile = args.get("profile")
+            if not isinstance(new_profile, str):
+                return _tool_json({"ok": False, "error": "profile is required"})
+            name_arg = args.get("name")
+            await store.save(qq, new_profile, name=name_arg if isinstance(name_arg, str) else None)
+            return _tool_json({"ok": True, "qq": qq, "updated": True})
+        except Exception:
+            logger.warning("group_batch.profile_tool_failed", tool=name, qq=qq, exc_info=True)
+            return _tool_json({"ok": False, "error": "profile tool failed"})
 
     async def _tool_reply_to_message(
         self,
@@ -1774,6 +1821,32 @@ def _group_batch_tool_schemas() -> list[ToolSchema]:
                     "text": {"type": "string", "description": "要发送的简短回复内容。"},
                 },
                 "required": ["message_id", "text"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_READ_PROFILE,
+            description="查阅某个用户(按 QQ 号)的长期记忆画像。想了解群里某人是谁、之前聊过什么时调用。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "qq": {"type": "string", "description": "目标用户的 QQ 号(候选消息里的 sender_id)。"},
+                },
+                "required": ["qq"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_WRITE_PROFILE,
+            description="全量重写某个用户(按 QQ 号)的长期记忆画像。了解到值得长期记住的事时调用；每次都要先读旧画像再给完整新版本(≤400字，只记长期稳定的事实/偏好/关系/承诺)。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "qq": {"type": "string", "description": "目标用户的 QQ 号。"},
+                    "profile": {"type": "string", "description": "完整的新画像正文。"},
+                    "name": {"type": "string", "description": "该用户的昵称(可选)。"},
+                },
+                "required": ["qq", "profile"],
                 "additionalProperties": False,
             },
         ),

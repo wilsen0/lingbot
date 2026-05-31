@@ -1020,6 +1020,7 @@ def _build_chat_dispatcher(
         GroupBatchConfig,
     )
     from linling_agent.history import KVHistoryStore  # noqa: PLC0415
+    from linling_agent.profile import ProfileStore, ProfileUpdater  # noqa: PLC0415
     from linling_agent.runtime import AgentRuntime  # noqa: PLC0415
 
     raw = config.agent.default_agent
@@ -1039,6 +1040,18 @@ def _build_chat_dispatcher(
     # Persistent short-term memory. The in-memory deque on Session
     # handles the live conversation; this store survives restarts.
     history = KVHistoryStore(kv, max_turns=config.conversation.history_turns)
+    # Per-user profile memory. The store backs DM-side <user_profile>
+    # injection + the read/write tools; the updater is the pre-compaction
+    # distillation loop wired in as ContextManager.on_before_compact. All
+    # tunables use profile.py module defaults — no extra config fields.
+    profile_store = ProfileStore(kv)
+    profile_updater = ProfileUpdater(
+        provider=provider,
+        kv=kv,
+        registry=global_registry,
+        bot_id=config.bot_id,
+        temperature=min(agent_def.temperature, 0.3),
+    )
     dispatcher: ChatDispatcher = AgentChatDispatcher(
         agent=agent,
         history_store=history,
@@ -1050,6 +1063,8 @@ def _build_chat_dispatcher(
             summary_keep_recent_turns=config.conversation.summary_keep_recent_turns,
             summary_max_tokens=config.conversation.summary_max_tokens,
         ),
+        profile_store=profile_store,
+        on_before_compact=profile_updater.run,
         max_replies=config.agent.dm_max_replies,
         max_reply_chars=config.agent.dm_max_reply_chars,
         multi_reply_delay_min_s=config.agent.multi_reply_delay_min_s,
