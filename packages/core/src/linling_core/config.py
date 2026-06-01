@@ -308,6 +308,13 @@ class AgentConfig(BaseModel):
     # gate. Mirrors main.ling's ``啊/%群%/苏苏确认 %QQ% %时间HHmm%``
     # mechanism. Set to 0 to disable.
     group_batch_attention_window_s: float = 300.0
+    # Optional daily forced compaction for group-batch shared history.
+    # This reuses the normal summary path, so profile memory maintenance
+    # runs through ContextManager.on_before_compact before old turns are
+    # folded into the conversation summary. Disabled by default because
+    # it can add one extra summary LLM call per active group per day.
+    group_batch_daily_summary_enabled: bool = False
+    group_batch_daily_summary_keep_recent_turns: int = 2
 
     @model_validator(mode="after")
     def _validate_group_batch(self) -> AgentConfig:
@@ -335,6 +342,10 @@ class AgentConfig(BaseModel):
             raise ValueError("group_batch_max_hold_s must be positive")
         if self.group_batch_attention_window_s < 0:
             raise ValueError("group_batch_attention_window_s must be non-negative")
+        if self.group_batch_daily_summary_keep_recent_turns < 0:
+            raise ValueError(
+                "group_batch_daily_summary_keep_recent_turns must be non-negative"
+            )
         return self
 
 

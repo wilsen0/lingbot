@@ -492,6 +492,31 @@ class TestGachaImage:
         assert rarities.count("R") == 1
         assert rarities.count("SR") == 1
 
+    async def test_missing_rare_sprite_does_not_render_as_egg(self) -> None:
+        """A missing collectible sprite must not use the 蛋壳 visual fallback."""
+        from linling_tools_stdlib.gacha_image import _N, _SR, Drop, _draw_card
+        from PIL import Image, ImageFont
+
+        def centre_colour(drop: Drop) -> tuple[int, int, int]:
+            canvas = Image.new("RGBA", (240, 300), (8, 8, 18, 255))
+            _draw_card(
+                canvas,
+                (20, 20, 220, 280),
+                drop,
+                None,
+                ImageFont.load_default(),
+            )
+            return canvas.convert("RGB").getpixel((120, 124))
+
+        egg = centre_colour(Drop("蛋壳", _N))
+        rare_missing_sprite = centre_colour(Drop("思思", _SR))
+
+        def distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+            return sum(abs(x - y) for x, y in zip(a, b, strict=True))
+
+        assert distance(egg, (245, 230, 200)) < 80
+        assert distance(rare_missing_sprite, (245, 230, 200)) > 120
+
     async def test_empty_record_falls_back_to_placeholder(
         self, tmp_path: Path, ctx: ToolCtx
     ) -> None:

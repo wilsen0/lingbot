@@ -201,3 +201,49 @@ async def test_hook_not_called_without_compaction() -> None:
     )
     assert called is False
     assert provider.summarize_calls == 0
+
+
+async def test_force_compaction_runs_hook_below_token_trigger() -> None:
+    provider = _SummaryProvider()
+    called = False
+
+    async def hook(scope_id, sender_id, older):
+        nonlocal called
+        _ = scope_id, sender_id, older
+        called = True
+
+    store = _MemSummaryStore()
+    cm = ContextManager(
+        provider=provider,
+        model="mock",
+        temperature=0.3,
+        budget=ContextBudget(
+            max_tokens=5_000,
+            summary_trigger_tokens=4_000,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+        store=store,
+        on_before_compact=hook,
+    )
+    _visible, replacement = await cm.prepare(
+        scope_id="s1",
+        sender_id="u1",
+        history=[
+            Message(role="user", content="old user"),
+            Message(role="assistant", content="old assistant"),
+            Message(role="user", content="recent user"),
+            Message(role="assistant", content="recent assistant"),
+        ],
+        current_input_text="now",
+        force_compaction=True,
+        summary_keep_recent_turns=1,
+    )
+
+    assert called is True
+    assert provider.summarize_calls == 1
+    assert await store.load_summary("s1", "u1") == "compressed"
+    assert replacement == [
+        Message(role="user", content="recent user"),
+        Message(role="assistant", content="recent assistant"),
+    ]

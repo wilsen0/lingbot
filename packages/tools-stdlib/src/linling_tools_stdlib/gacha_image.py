@@ -33,8 +33,8 @@ primitives instead.
 
 Sprites live under the bot's asset bundle, which the bootstrap exposes
 through ``ctx.extras["asset_root"]`` — same dir the OneBot adapter and
-WebUI use for ``@pic:`` resolution. Missing sprites degrade to a
-drawn-shape fallback rather than a tofu rectangle.
+WebUI use for ``@pic:`` resolution. Missing non-egg sprites degrade to a
+rarity-coloured placeholder rather than the egg-shell fallback.
 """
 
 from __future__ import annotations
@@ -278,8 +278,8 @@ def _load_font(path: str | None, size: int) -> Any:
 
 def _measure(draw: ImageDraw.ImageDraw, text: str, font: Any) -> tuple[int, int]:
     if hasattr(draw, "textbbox"):
-        l, t, r, b = draw.textbbox((0, 0), text, font=font)
-        return r - l, b - t
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return right - left, bottom - top
     return draw.textsize(text, font=font)  # type: ignore[attr-defined]
 
 
@@ -523,6 +523,82 @@ def _draw_egg_shape(
     canvas.alpha_composite(body)
 
 
+def _draw_missing_sprite_placeholder(
+    canvas: Image.Image,
+    box: tuple[int, int, int, int],
+    drop: Drop,
+    font_label: Any,
+) -> None:
+    """Draw a non-egg fallback when a collectible sprite cannot be loaded."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    cx = x0 + w // 2
+    cy = y0 + int(h * 0.40)
+    size = max(36, int(min(w, h) * 0.48))
+    rarity = drop.rarity
+
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.ellipse(
+        (cx - size // 2, cy + size // 3, cx + size // 2, cy + size // 2),
+        fill=(0, 0, 0, 130),
+    )
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(radius=5)))
+
+    draw = ImageDraw.Draw(canvas)
+    outer = [
+        (cx, cy - size // 2),
+        (cx + size // 2, cy),
+        (cx, cy + size // 2),
+        (cx - size // 2, cy),
+    ]
+    inner_size = int(size * 0.68)
+    inner = [
+        (cx, cy - inner_size // 2),
+        (cx + inner_size // 2, cy),
+        (cx, cy + inner_size // 2),
+        (cx - inner_size // 2, cy),
+    ]
+    draw.polygon(outer, fill=(*rarity.primary, 80))
+    draw.line(
+        [*outer, outer[0]],
+        fill=(*rarity.primary, 255),
+        width=max(2, size // 24),
+    )
+    draw.polygon(inner, fill=(10, 10, 24, 210))
+    draw.line(
+        [*inner, inner[0]],
+        fill=(*rarity.secondary, 220),
+        width=max(1, size // 36),
+    )
+
+    mark = _DECO_STAR if rarity.weight >= _SR.weight else _DECO_DIAMOND
+    mark_w, mark_h = _measure(draw, mark, font_label)
+    draw.text(
+        (cx - mark_w // 2, cy - mark_h - 4),
+        mark,
+        fill=(*rarity.primary, 255),
+        font=font_label,
+    )
+
+    label = _safe(drop.name)
+    label_w, label_h = _measure(draw, label, font_label)
+    pad_x = 6
+    label_box = (
+        cx - label_w // 2 - pad_x,
+        cy + 6,
+        cx + label_w // 2 + pad_x,
+        cy + 6 + label_h + 4,
+    )
+    draw.rectangle(label_box, fill=(0, 0, 0, 150))
+    draw.text(
+        (cx - label_w // 2, cy + 8),
+        label,
+        fill=(*rarity.primary, 255),
+        font=font_label,
+    )
+
+
 def _draw_card(
     canvas: Image.Image,
     box: tuple[int, int, int, int],
@@ -568,11 +644,10 @@ def _draw_card(
         sx = x0 + (w - target_w) // 2
         sy = y0 + int(h * 0.16)
         canvas.alpha_composite(sized, dest=(sx, sy))
-    else:
-        # No sprite — draw an egg shape directly (used for 蛋壳 N tier).
-        # Pillow primitives sidestep the missing 🥚 emoji glyph in
-        # NotoSansCJK; the result is also crisper at small sizes.
+    elif drop.name == "蛋壳":
         _draw_egg_shape(canvas, box)
+    else:
+        _draw_missing_sprite_placeholder(canvas, box, drop, font_label)
 
     # Name label at the bottom band.
     name = _safe(drop.name)
@@ -675,12 +750,10 @@ def _hero_drop(drops: list[Drop]) -> Drop | None:
     """Pick the highest-rarity drop, ties broken by first occurrence."""
     if not drops:
         return None
-    best_idx = 0
     best = drops[0]
-    for i, d in enumerate(drops[1:], 1):
+    for d in drops[1:]:
         if d.rarity.weight > best.rarity.weight:
             best = d
-            best_idx = i
     return best if best.rarity.weight >= _SR.weight else None
 
 
@@ -762,7 +835,7 @@ def _render_panel(
             "SR": f"{_DECO_STAR} {_DECO_STAR}  珍  品  {_DECO_STAR} {_DECO_STAR}",
         }
         tag = _safe(tag_map.get(hero.rarity.name, f"{_DECO_STAR}  收  藏  {_DECO_STAR}"))
-        tw, th = _measure(draw, tag, f_sub)
+        tw, _ = _measure(draw, tag, f_sub)
         _gold_text(
             canvas,
             ((layout.width - tw) // 2, hy + hero_h + 4),

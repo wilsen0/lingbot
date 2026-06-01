@@ -173,8 +173,9 @@ class RunningBot:
         Centralised so :func:`bootstrap_bot`, :meth:`attach_adapter`,
         and :meth:`reload_rules` all wire the same set of keys
         (``action_sink`` / ``adapter`` / ``primary_platform`` /
-        ``handler_lookup``) without drifting. A future addition needs
-        to be made here once and benefits every entry point.
+        ``handler_lookup`` / image-rendering paths) without drifting. A
+        future addition needs to be made here once and benefits every
+        entry point.
         """
         cmds = self.router.command_dispatcher
         if cmds is None:
@@ -182,6 +183,13 @@ class RunningBot:
         update = getattr(cmds, "update_extras", None)
         if update is None:
             return
+        if self._base_dir is not None:
+            image_cache_dir = self._base_dir / "data" / "cache" / "image_text"
+            image_cache_dir.mkdir(parents=True, exist_ok=True)
+            update(
+                image_text_cache_dir=image_cache_dir,
+                asset_root=_resolve_asset_root(self._base_dir),
+            )
         update(action_sink=sink)
         # Bot-level identity: expose ``admin_users`` as the
         # ``%管理员%`` placeholder the migrator emits into rule files.
@@ -310,7 +318,7 @@ class RunningBot:
         )
         # Carry forward the scheduler (for ``$调用$``) into the new
         # dispatcher; the rest of the side-channels (action sink,
-        # adapter, primary platform) are pushed via the shared
+        # adapter, primary platform, image paths) are pushed via the shared
         # :meth:`_refresh_dispatcher_extras` helper *after* we install
         # the new dispatcher on the router.
         reload_extras: dict[str, Any] = {}
@@ -1106,6 +1114,10 @@ def _build_chat_dispatcher(
                 # bootstrap intent explicit.
                 attention_probe_enabled=attention_probe is not None,
                 attention_window_s=config.agent.group_batch_attention_window_s,
+                daily_summary_enabled=config.agent.group_batch_daily_summary_enabled,
+                daily_summary_keep_recent_turns=(
+                    config.agent.group_batch_daily_summary_keep_recent_turns
+                ),
             ),
             conversations=conversations,
             bot_id=config.bot_id,

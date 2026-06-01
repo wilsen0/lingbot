@@ -211,6 +211,12 @@ class _SummaryThenNoopProvider:
         raise NotImplementedError
 
 
+class _FailingSummaryHistoryStore(KVHistoryStore):
+    async def save_summary(self, scope_id: str, sender_id: str, summary: str) -> None:
+        _ = scope_id, sender_id, summary
+        raise RuntimeError("summary store unavailable")
+
+
 class _BlockingToolProvider:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -443,6 +449,88 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
     assert [record["message_id"] for record in records] == ["m1", "m2"]
     assert [record["sender_id"] for record in records] == ["u1", "u2"]
     assert [record["sender_name"] for record in records] == ["同名", "同名"]
+    assert sent == []
+    await dispatcher.stop()
+
+
+async def test_group_batch_tool_prompt_marks_member_at_as_other_not_bot() -> None:
+    provider = _ToolProvider(
+        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0.05, require_attention=False),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("linling", "g1", "u1"))
+    first = _event(" 你看这个", eid="m1", sender="u1", name="小明")
+    first.bot_id = "linling"
+    first.raw["self_id"] = "bot-qq"
+    first.segments.insert(0, at("u2"))
+    second = _event("我看到了", eid="m2", sender="u2", name="小红")
+    second.bot_id = "linling"
+    second.raw["self_id"] = "bot-qq"
+
+    await dispatcher.run(first, session)
+    await dispatcher.run(second, session)
+
+    await _wait_for(lambda: len(provider.calls) == 1)
+    prompt = provider.calls[0][0][-1].content
+    records = [
+        json.loads(line)
+        for line in prompt.splitlines()
+        if line.startswith("{")
+    ]
+    assert "at_others=@别人非你" in prompt
+    assert records[0]["message_id"] == "m1"
+    assert records[0]["text"] == "你看这个"
+    assert records[0]["mentions_bot"] is False
+    assert records[0]["at_others"] == ["小红"]
+    assert "at_others" not in records[1]
+    assert "@u2" not in prompt
+    assert sent == []
+    await dispatcher.stop()
+
+
+async def test_group_batch_llbot_self_id_at_is_mentions_bot_not_at_other() -> None:
+    provider = _ToolProvider(
+        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(
+            enabled=True,
+            window_s=0,
+            require_attention=True,
+            bot_names=(),
+        ),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("linling", "g1", "u1"))
+    event = _event(" 在吗", eid="m1", sender="u1", name="小明")
+    event.bot_id = "linling"
+    event.raw["self_id"] = 1707476110
+    event.segments.insert(0, at("1707476110"))
+
+    await dispatcher.run(event, session)
+
+    await _wait_for(lambda: len(provider.calls) == 1)
+    prompt = provider.calls[0][0][-1].content
+    records = [
+        json.loads(line)
+        for line in prompt.splitlines()
+        if line.startswith("{")
+    ]
+    assert records[0]["text"] == "在吗"
+    assert records[0]["mentions_bot"] is True
+    assert "at_others" not in records[0]
+    assert "1707476110" not in prompt
     assert sent == []
     await dispatcher.stop()
 
@@ -912,6 +1000,208 @@ async def test_group_batch_toolcall_summarizes_shared_group_history_without_reco
         assert not any(message.content == "普通闲聊" for message in group_session.history)
         loaded = await history.load("g1", "")
         assert all("普通闲聊" not in message.content for message in loaded)
+        await dispatcher.stop()
+
+
+async def test_group_batch_daily_summary_forces_once_per_day() -> None:
+    kv = SqliteKVStore(bot_id="bot1", db_path=":memory:")
+    async with kv:
+        history = KVHistoryStore(kv, max_turns=20)
+        provider = _SummaryThenNoopProvider()
+        agent_def = AgentDef(name="batch-agent", model="mock", system="")
+        agent = AgentRuntime(
+            agent_def=agent_def,
+            provider=provider,
+            tool_registry=registry,
+            kv=kv,
+            bot_id="bot1",
+        )
+        inner = AgentChatDispatcher(
+            agent=agent,
+            history_store=history,
+            context_budget=ContextBudget(
+                max_tokens=5_000,
+                summary_trigger_tokens=4_000,
+                summary_keep_recent_turns=8,
+                summary_max_tokens=50,
+            ),
+        )
+        conversations = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+        dispatcher = GroupBatchChatDispatcher(
+            inner=inner,
+            config=GroupBatchConfig(
+                enabled=True,
+                window_s=0,
+                require_attention=False,
+                daily_summary_enabled=True,
+                daily_summary_keep_recent_turns=1,
+            ),
+            conversations=conversations,
+            bot_id="bot1",
+            kv=kv,
+        )
+        sent: list[Action] = []
+        dispatcher.set_action_sink(sent.append)
+        group_session = await conversations.get_or_create(
+            ConversationKey("bot1", "g1", "")
+        )
+        for i in range(3):
+            group_session.history.append(Message(role="user", content=f"old user {i}"))
+            group_session.history.append(Message(role="assistant", content=f"old assistant {i}"))
+
+        await dispatcher.run(
+            _event("普通闲聊", eid="m1", at=datetime(2026, 6, 1, 12, tzinfo=UTC)),
+            group_session,
+        )
+
+        await _wait_for(lambda: len(provider.calls) >= 2)
+        assert sent == []
+        assert await history.load_summary("g1", "") == "group compressed facts"
+        assert list(group_session.history) == [
+            Message(role="user", content="old user 2"),
+            Message(role="assistant", content="old assistant 2"),
+        ]
+        assert sum(
+            1
+            for messages, _tools in provider.calls
+            if len(messages) == 1 and messages[0].content.startswith("Summarize")
+        ) == 1
+
+        await dispatcher.run(
+            _event("还是普通闲聊", eid="m2", at=datetime(2026, 6, 1, 13, tzinfo=UTC)),
+            group_session,
+        )
+
+        await _wait_for(lambda: len(provider.calls) >= 3)
+        assert sum(
+            1
+            for messages, _tools in provider.calls
+            if len(messages) == 1 and messages[0].content.startswith("Summarize")
+        ) == 1
+        await dispatcher.stop()
+
+
+async def test_group_batch_daily_summary_marker_waits_for_successful_compaction() -> None:
+    kv = SqliteKVStore(bot_id="bot1", db_path=":memory:")
+    async with kv:
+        history = _FailingSummaryHistoryStore(kv, max_turns=20)
+        provider = _SummaryThenNoopProvider()
+        agent_def = AgentDef(name="batch-agent", model="mock", system="")
+        agent = AgentRuntime(
+            agent_def=agent_def,
+            provider=provider,
+            tool_registry=registry,
+            kv=kv,
+            bot_id="bot1",
+        )
+        inner = AgentChatDispatcher(
+            agent=agent,
+            history_store=history,
+            context_budget=ContextBudget(
+                max_tokens=5_000,
+                summary_trigger_tokens=4_000,
+                summary_keep_recent_turns=8,
+                summary_max_tokens=50,
+            ),
+        )
+        conversations = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+        dispatcher = GroupBatchChatDispatcher(
+            inner=inner,
+            config=GroupBatchConfig(
+                enabled=True,
+                window_s=0,
+                require_attention=False,
+                daily_summary_enabled=True,
+                daily_summary_keep_recent_turns=1,
+            ),
+            conversations=conversations,
+            bot_id="bot1",
+            kv=kv,
+        )
+        group_session = await conversations.get_or_create(
+            ConversationKey("bot1", "g1", "")
+        )
+        for i in range(3):
+            group_session.history.append(Message(role="user", content=f"old user {i}"))
+            group_session.history.append(Message(role="assistant", content=f"old assistant {i}"))
+
+        await dispatcher.run(
+            _event("普通闲聊", eid="m1", at=datetime(2026, 6, 1, 12, tzinfo=UTC)),
+            group_session,
+        )
+
+        await _wait_for(lambda: len(provider.calls) >= 2)
+        marker = await kv.read(
+            "__history_daily_summary__/g1",
+            "_group",
+            "last_date",
+            default="",
+        )
+        assert marker == ""
+        assert any("old user 0" in message.content for message in group_session.history)
+        await dispatcher.stop()
+
+
+async def test_group_batch_daily_summary_marks_done_when_history_too_short() -> None:
+    kv = SqliteKVStore(bot_id="bot1", db_path=":memory:")
+    async with kv:
+        history = KVHistoryStore(kv, max_turns=20)
+        provider = _SummaryThenNoopProvider()
+        agent_def = AgentDef(name="batch-agent", model="mock", system="")
+        agent = AgentRuntime(
+            agent_def=agent_def,
+            provider=provider,
+            tool_registry=registry,
+            kv=kv,
+            bot_id="bot1",
+        )
+        inner = AgentChatDispatcher(
+            agent=agent,
+            history_store=history,
+            context_budget=ContextBudget(
+                max_tokens=5_000,
+                summary_trigger_tokens=4_000,
+                summary_keep_recent_turns=8,
+                summary_max_tokens=50,
+            ),
+        )
+        conversations = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+        dispatcher = GroupBatchChatDispatcher(
+            inner=inner,
+            config=GroupBatchConfig(
+                enabled=True,
+                window_s=0,
+                require_attention=False,
+                daily_summary_enabled=True,
+                daily_summary_keep_recent_turns=2,
+            ),
+            conversations=conversations,
+            bot_id="bot1",
+            kv=kv,
+        )
+        group_session = await conversations.get_or_create(
+            ConversationKey("bot1", "g1", "")
+        )
+        group_session.history.append(Message(role="user", content="recent user"))
+        group_session.history.append(Message(role="assistant", content="recent assistant"))
+
+        await dispatcher.run(
+            _event("普通闲聊", eid="m1", at=datetime(2026, 6, 1, 12, tzinfo=UTC)),
+            group_session,
+        )
+
+        await _wait_for(lambda: len(provider.calls) == 1)
+        marker = await kv.read(
+            "__history_daily_summary__/g1",
+            "_group",
+            "last_date",
+            default="",
+        )
+        assert marker == "2026-06-01"
+        assert not any(
+            len(messages) == 1 and messages[0].content.startswith("Summarize")
+            for messages, _tools in provider.calls
+        )
         await dispatcher.stop()
 
 

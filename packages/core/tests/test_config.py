@@ -119,6 +119,8 @@ bot_id: partial
         assert cfg.agent.group_batch_enabled is False
         assert cfg.agent.group_batch_require_attention is True
         assert cfg.agent.group_batch_max_hold_s == 30.0
+        assert cfg.agent.group_batch_daily_summary_enabled is False
+        assert cfg.agent.group_batch_daily_summary_keep_recent_turns == 2
         assert cfg.agent.multi_reply_delay_min_s == 0.0
         assert cfg.agent.multi_reply_delay_max_s == 0.0
 
@@ -149,6 +151,14 @@ conversation:
                 """\
 agent:
   group_batch_max_messages: 0
+"""
+            )
+
+        with pytest.raises(ValueError, match="group_batch_daily_summary_keep_recent_turns"):
+            BotConfig.from_yaml_str(
+                """\
+agent:
+  group_batch_daily_summary_keep_recent_turns: -1
 """
             )
 

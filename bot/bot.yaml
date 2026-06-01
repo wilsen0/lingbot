@@ -61,6 +61,10 @@ agent:
   # 跟 main.ling 的 $写 啊/%群%/苏苏确认$ 共用一个 KV 命名空间,
   # 所以 DSL 和 LLM 路径互相可见。300 秒 = 5 分钟,设为 0 关闭。
   group_batch_attention_window_s: 300
+  # 每天第一次群聊 LLM 批处理前，强制走一次现有 summary 压缩流程。
+  # 这会同时触发 profile/memory 维护，避免群共享历史无限堆在短期上下文里。
+  group_batch_daily_summary_enabled: true
+  group_batch_daily_summary_keep_recent_turns: 2
   group_batch_bot_names:
     - 苏苏
     - 涂山苏苏

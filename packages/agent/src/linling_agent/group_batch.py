@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
@@ -43,6 +44,9 @@ _MAX_TOOL_RESULT_CHARS = 2_500
 
 _ATTENTION_KV_SCOPE_PREFIX = "啊/"
 _ATTENTION_KV_FILE = "苏苏确认"
+_DAILY_SUMMARY_SCOPE_PREFIX = "__history_daily_summary__/"
+_DAILY_SUMMARY_FILE = "_group"
+_DAILY_SUMMARY_KEY = "last_date"
 # Threshold separating HHmm (0..2359) from unix epoch seconds.
 # HHmm fits in 4 digits; any value above this is treated as epoch.
 _HHMM_MAX = 9999
@@ -279,6 +283,8 @@ class GroupBatchConfig:
     attention_window_s: float = 300.0
     multi_reply_delay_min_s: float = 0.0
     multi_reply_delay_max_s: float = 0.0
+    daily_summary_enabled: bool = False
+    daily_summary_keep_recent_turns: int = 2
 
     def __post_init__(self) -> None:
         if self.window_s < 0:
@@ -301,6 +307,8 @@ class GroupBatchConfig:
             raise ValueError("multi_reply_delay_max_s must be non-negative")
         if self.multi_reply_delay_max_s < self.multi_reply_delay_min_s:
             raise ValueError("multi_reply_delay_max_s must be >= multi_reply_delay_min_s")
+        if self.daily_summary_keep_recent_turns < 0:
+            raise ValueError("daily_summary_keep_recent_turns must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -469,6 +477,47 @@ class GroupBatchChatDispatcher:
                 "group_batch.attention_window.kv_write_failed",
                 scope_id=scope_id,
                 sender_id=sender_id,
+                exc_info=True,
+            )
+
+    async def _daily_summary_request(self, event: Event) -> tuple[bool, str]:
+        if (
+            not self._cfg.daily_summary_enabled
+            or self._kv is None
+            or not self._inner_context_compaction_enabled()
+        ):
+            return False, ""
+        today = _event_local_date(event.time)
+        try:
+            raw = await self._kv.read(
+                f"{_DAILY_SUMMARY_SCOPE_PREFIX}{event.scope.id}",
+                _DAILY_SUMMARY_FILE,
+                _DAILY_SUMMARY_KEY,
+                default="",
+            )
+        except Exception:
+            logger.debug(
+                "group_batch.daily_summary.kv_read_failed",
+                scope_id=event.scope.id,
+                exc_info=True,
+            )
+            return False, today
+        return raw != today, today
+
+    async def _mark_daily_summary(self, scope_id: str, date_text: str) -> None:
+        if self._kv is None or not date_text:
+            return
+        try:
+            await self._kv.write(
+                f"{_DAILY_SUMMARY_SCOPE_PREFIX}{scope_id}",
+                _DAILY_SUMMARY_FILE,
+                _DAILY_SUMMARY_KEY,
+                date_text,
+            )
+        except Exception:
+            logger.debug(
+                "group_batch.daily_summary.kv_write_failed",
+                scope_id=scope_id,
                 exc_info=True,
             )
 
@@ -767,13 +816,20 @@ class GroupBatchChatDispatcher:
         guardrails = getattr(agent_def, "guardrails", None)
         max_tokens = getattr(guardrails, "max_tokens", None)
         temperature = min(getattr(agent_def, "temperature", 0.7), 0.3)
-        history = await self._prepare_context_history(
+        force_daily_summary, daily_summary_date = await self._daily_summary_request(event)
+        history, history_compacted = await self._prepare_context_history(
             session,
             event,
             prefix_messages=[Message(role="system", content=selector_prompt)],
             current_input_text=user_prompt,
             reserve_tokens=max_tokens or 0,
+            force_compaction=force_daily_summary,
+            summary_keep_recent_turns=(
+                self._cfg.daily_summary_keep_recent_turns if force_daily_summary else None
+            ),
         )
+        if force_daily_summary and history_compacted:
+            await self._mark_daily_summary(event.scope.id, daily_summary_date)
         messages = [
             Message(role="system", content=selector_prompt),
             *history,
@@ -1116,14 +1172,14 @@ class GroupBatchChatDispatcher:
         for action in actions[:remaining]:
             if not await self._batch_is_current(event, generation):
                 break
-            action = self._with_multi_reply_delay(
+            delayed_action = self._with_multi_reply_delay(
                 action,
                 sent_count=sent_count + len(records),
             )
-            sent, _error = await self._send_action(action, event)
+            sent, _error = await self._send_action(delayed_action, event)
             if sent and await self._batch_is_current(event, generation):
-                await self._refresh_attention_for_action(action, event, batch)
-                records.append(_record_from_action(action, batch))
+                await self._refresh_attention_for_action(delayed_action, event, batch)
+                records.append(_record_from_action(delayed_action, batch))
         return records
 
     def _with_multi_reply_delay(self, action: Action, *, sent_count: int) -> Action:
@@ -1439,12 +1495,38 @@ class GroupBatchChatDispatcher:
         prefix_messages: list[Message],
         current_input_text: str,
         reserve_tokens: int,
-    ) -> list[Message]:
-        prepare = getattr(self._inner, "prepare_context_history", None)
-        if prepare is None:
-            return list(session.history)
+        force_compaction: bool = False,
+        summary_keep_recent_turns: int | None = None,
+    ) -> tuple[list[Message], bool]:
+        prepare_with_status = getattr(
+            self._inner, "prepare_context_history_with_status", None
+        )
+        if prepare_with_status is None:
+            prepare = getattr(self._inner, "prepare_context_history", None)
+            if prepare is None:
+                return list(session.history), False
+            async with session.lock:
+                prepare_kwargs = {
+                    "session": session,
+                    "scope_id": event.scope.id,
+                    "sender_id": "",
+                    "prefix_messages": prefix_messages,
+                    "current_input_text": current_input_text,
+                    "reserve_tokens": reserve_tokens,
+                    "allow_compaction": True,
+                    "commit_replacement": True,
+                }
+                prepare_params = inspect.signature(prepare).parameters
+                if "force_compaction" in prepare_params:
+                    prepare_kwargs["force_compaction"] = force_compaction
+                if "summary_keep_recent_turns" in prepare_params:
+                    prepare_kwargs["summary_keep_recent_turns"] = summary_keep_recent_turns
+                prepared: list[Message] = await prepare(
+                    **prepare_kwargs,
+                )
+                return prepared, False
         async with session.lock:
-            prepared: list[Message] = await prepare(
+            prepared, replacement_committed, source_history_len = await prepare_with_status(
                 session=session,
                 scope_id=event.scope.id,
                 sender_id="",
@@ -1452,9 +1534,19 @@ class GroupBatchChatDispatcher:
                 current_input_text=current_input_text,
                 reserve_tokens=reserve_tokens,
                 allow_compaction=True,
+                force_compaction=force_compaction,
+                summary_keep_recent_turns=summary_keep_recent_turns,
                 commit_replacement=True,
             )
-            return prepared
+            no_compactable_history = (
+                force_compaction
+                and summary_keep_recent_turns is not None
+                and source_history_len <= summary_keep_recent_turns * 2
+            )
+            return prepared, bool(replacement_committed or no_compactable_history)
+
+    def _inner_context_compaction_enabled(self) -> bool:
+        return bool(getattr(self._inner, "context_compaction_enabled", False))
 
     async def _batch_is_current(self, event: Event, generation: int) -> bool:
         state = self._states.get(self._state_key(event))
@@ -1534,7 +1626,7 @@ class GroupBatchChatDispatcher:
 
     def _build_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = [
-            "候选消息（按发送时间从早到晚；sender_id 是稳定身份，sender_name 是昵称）："
+            "候选消息（按发送时间从早到晚；sender_id 稳定，sender_name 昵称；mentions_bot=找你；at_others=@别人非你）："
         ]
         name_by_id = _batch_name_index(batch)
         for m in batch:
@@ -1599,7 +1691,7 @@ class GroupBatchChatDispatcher:
 
     def _build_tool_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = [
-            "群聊候选消息如下，按发送时间从早到晚排列。sender_id 是稳定身份，sender_name 是昵称；先判断是否值得回复；text_truncated=true 时可用 line/message_id 读取原文。",
+            "群聊候选消息如下，按发送时间从早到晚。sender_id 稳定，sender_name 昵称；mentions_bot=找你；at_others=@别人非你；先判断是否值得回复；text_truncated=true 可用 line/message_id 读原文。",
             "候选索引：",
         ]
         name_by_id = _batch_name_index(batch)
@@ -1637,6 +1729,12 @@ def _format_time(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _event_local_date(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone().date().isoformat()
 
 
 def _event_sort_timestamp(value: datetime) -> float:

@@ -145,6 +145,32 @@ rules:
         await bot.stop()
 
 
+@pytest.mark.asyncio
+async def test_reload_preserves_image_tool_extras(tmp_path: Path):
+    _write(tmp_path, "rules/main.ling", "ping\npong\n")
+    (tmp_path / "assets" / "picture").mkdir(parents=True)
+    bot = await _boot(
+        tmp_path,
+        """
+bot_id: bot1
+storage:
+  kv: ":memory:"
+rules:
+  - "rules/*.ling"
+""",
+    )
+    try:
+        report = await bot.reload_rules()
+        assert report.applied
+
+        extras = bot.router.command_dispatcher._extras
+        assert extras["image_text_cache_dir"] == tmp_path / "data" / "cache" / "image_text"
+        assert extras["asset_root"] == tmp_path / "assets"
+        assert extras["scheduler"] is bot.scheduler
+    finally:
+        await bot.stop()
+
+
 # ---------------------------------------------------------------------------
 # WebUI endpoint integration
 # ---------------------------------------------------------------------------

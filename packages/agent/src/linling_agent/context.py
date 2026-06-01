@@ -146,6 +146,14 @@ class ContextManager:
     def max_tokens(self) -> int:
         return self._budget.max_tokens
 
+    @property
+    def compaction_enabled(self) -> bool:
+        return (
+            self._budget.enabled
+            and self._store is not None
+            and self._budget.summary_trigger_tokens > 0
+        )
+
     async def prepare(
         self,
         *,
@@ -158,6 +166,8 @@ class ContextManager:
         current_input_text: str = "",
         reserve_tokens: int = 0,
         allow_compaction: bool = True,
+        force_compaction: bool = False,
+        summary_keep_recent_turns: int | None = None,
     ) -> tuple[list[Message], list[Message] | None]:
         """Return ``(messages, replacement_history)`` for an LLM call.
 
@@ -185,21 +195,30 @@ class ContextManager:
         summary = await self._load_summary(scope_id, sender_id)
         visible = self._with_summary(summary, history)
         prompt_tokens = reserved + estimate_messages_tokens(visible)
-        if prompt_tokens < self._budget.summary_trigger_tokens:
+        if prompt_tokens < self._budget.summary_trigger_tokens and not force_compaction:
             return self._clip_to_budget(visible, budget_for_history), None
 
         if not allow_compaction:
             return self._clip_to_budget(visible, budget_for_history), None
 
-        keep_messages = max(0, self._budget.summary_keep_recent_turns * 2)
+        keep_recent_turns = (
+            self._budget.summary_keep_recent_turns
+            if summary_keep_recent_turns is None
+            else summary_keep_recent_turns
+        )
+        keep_messages = max(0, keep_recent_turns * 2)
         recent = history[-keep_messages:] if keep_messages else []
         older = history[:-keep_messages] if keep_messages else history
+        summary_saved = False
         if older:
             await self._safe_before_compact(scope_id, sender_id, older)
             summary = await self._summarize(summary, older)
-            await self._save_summary(scope_id, sender_id, summary)
+            summary_saved = await self._save_summary(scope_id, sender_id, summary)
         visible = self._with_summary(summary, recent)
-        return self._clip_to_budget(visible, budget_for_history), recent
+        return (
+            self._clip_to_budget(visible, budget_for_history),
+            recent if summary_saved else None,
+        )
 
     def fit_text(self, text: str, *, reserved_tokens: int = 0) -> str:
         """Clip a single text field so the overall prompt stays within budget."""
@@ -292,12 +311,14 @@ class ContextManager:
             logger.exception("context.summary_load_failed")
             return ""
 
-    async def _save_summary(self, scope_id: str, sender_id: str, summary: str) -> None:
+    async def _save_summary(self, scope_id: str, sender_id: str, summary: str) -> bool:
         assert self._store is not None
         try:
             await self._store.save_summary(scope_id, sender_id, summary)
+            return True
         except Exception:
             logger.exception("context.summary_save_failed")
+            return False
 
     def _with_summary(self, summary: str, history: list[Message]) -> list[Message]:
         if not summary:

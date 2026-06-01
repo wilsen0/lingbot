@@ -127,6 +127,10 @@ class AgentChatDispatcher:
     def context_max_tokens(self) -> int | None:
         return self._context.max_tokens if self._context is not None else None
 
+    @property
+    def context_compaction_enabled(self) -> bool:
+        return self._context.compaction_enabled if self._context is not None else False
+
     async def dispatch(self, event: Event, session: Session) -> AgentResult | None:
         """Run one chat turn end-to-end and return the raw :class:`AgentResult`.
 
@@ -359,6 +363,8 @@ class AgentChatDispatcher:
         current_input_text: str = "",
         reserve_tokens: int = 0,
         allow_compaction: bool = True,
+        force_compaction: bool = False,
+        summary_keep_recent_turns: int | None = None,
         commit_replacement: bool = False,
     ) -> list[Message]:
         """Return LLM-visible history for custom dispatcher loops.
@@ -367,9 +373,44 @@ class AgentChatDispatcher:
         loop, such as group batching, persist summary compaction even
         when they do not call :meth:`dispatch` for the current turn.
         """
+        visible, _replacement_committed, _source_history_len = (
+            await self.prepare_context_history_with_status(
+                session=session,
+                scope_id=scope_id,
+                sender_id=sender_id,
+                prefix_messages=prefix_messages,
+                extra_messages=extra_messages,
+                system_text=system_text,
+                current_input_text=current_input_text,
+                reserve_tokens=reserve_tokens,
+                allow_compaction=allow_compaction,
+                force_compaction=force_compaction,
+                summary_keep_recent_turns=summary_keep_recent_turns,
+                commit_replacement=commit_replacement,
+            )
+        )
+        return visible
+
+    async def prepare_context_history_with_status(
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        prefix_messages: list[Message] | None = None,
+        extra_messages: list[Message] | None = None,
+        system_text: str = "",
+        current_input_text: str = "",
+        reserve_tokens: int = 0,
+        allow_compaction: bool = True,
+        force_compaction: bool = False,
+        summary_keep_recent_turns: int | None = None,
+        commit_replacement: bool = False,
+    ) -> tuple[list[Message], bool, int]:
+        """Return visible history plus whether a replacement was committed."""
         history = list(session.history)
         if self._context is None:
-            return history
+            return history, False, len(history)
         visible, replacement_history = await self._context.prepare(
             scope_id=scope_id,
             sender_id=sender_id,
@@ -380,13 +421,17 @@ class AgentChatDispatcher:
             current_input_text=current_input_text,
             reserve_tokens=reserve_tokens,
             allow_compaction=allow_compaction,
+            force_compaction=force_compaction,
+            summary_keep_recent_turns=summary_keep_recent_turns,
         )
+        replacement_committed = False
         if commit_replacement and replacement_history is not None:
             session.history.clear()
             session.history.extend(replacement_history)
             if self._history_store is not None:
                 await self._persist_key(session, scope_id, sender_id)
-        return visible
+            replacement_committed = True
+        return visible, replacement_committed, len(history)
 
     async def ensure_history(self, session: Session, event: Event) -> None:
         """Hydrate ``session.history`` for callers that own a custom LLM loop."""

@@ -61,6 +61,33 @@ class TestBuildEventFromMessage:
         assert isinstance(event.segments[1], AtSegment)
         assert event.segments[1].user_id == "22222"
 
+    def test_llbot_array_group_at_payload_keeps_raw_self_id_and_at_target(self) -> None:
+        adapter = _make_adapter(bot_id="linling")
+        payload = {
+            "self_id": 1707476110,
+            "post_type": "message",
+            "message_type": "group",
+            "message_id": 12345,
+            "group_id": 67890,
+            "user_id": 11111,
+            "sender": {"user_id": 11111, "nickname": "Alice", "role": "member"},
+            "message": [
+                {"type": "at", "data": {"qq": 22222}},
+                {"type": "text", "data": {"text": " 你看这个"}},
+            ],
+        }
+
+        event = adapter._build_event_from_message(payload)
+
+        assert event is not None
+        assert event.bot_id == "linling"
+        assert event.raw["self_id"] == 1707476110
+        assert event.scope.kind == "group"
+        assert isinstance(event.segments[0], AtSegment)
+        assert event.segments[0].user_id == "22222"
+        assert event.text == " 你看这个"
+        assert event.match_text == "@22222 你看这个"
+
     def test_private_message(self) -> None:
         adapter = _make_adapter()
         payload = {

@@ -73,6 +73,12 @@ class _RecordingProvider:
         raise NotImplementedError
 
 
+class _FailingSummaryStore(KVHistoryStore):
+    async def save_summary(self, scope_id: str, sender_id: str, summary: str) -> None:
+        _ = scope_id, sender_id, summary
+        raise RuntimeError("summary store unavailable")
+
+
 def _event(text: str, *, sender: str = "u1", scope: str = "s1") -> Event:
     return Event(
         id=f"e-{text}-{sender}",
@@ -350,6 +356,42 @@ async def test_dispatcher_summarizes_when_history_exceeds_budget(kv, history):
     actual_prompt = provider.calls[-1]
     assert any("<conversation_summary>" in m.content for m in actual_prompt)
     assert not any("old user 0" in m.content for m in actual_prompt)
+
+
+async def test_dispatcher_does_not_drop_history_when_summary_save_fails(kv):
+    history = _FailingSummaryStore(kv, max_turns=20)
+    provider = _RecordingProvider()
+    agent_def = AgentDef(name="ctx", model="mock", system="")
+    agent = AgentRuntime(
+        agent_def=agent_def,
+        provider=provider,
+        tool_registry=registry,
+        kv=kv,
+        bot_id="bot1",
+    )
+    dispatcher = AgentChatDispatcher(
+        agent=agent,
+        history_store=history,
+        context_budget=ContextBudget(
+            max_tokens=200,
+            summary_trigger_tokens=80,
+            summary_keep_recent_turns=1,
+            summary_max_tokens=50,
+        ),
+    )
+    store = ConversationStore(rate_per_second=100, burst=100, history_turns=20)
+    session = await store.get_or_create(ConversationKey("bot1", "s1", "u1"))
+    for i in range(3):
+        session.history.append(Message(role="user", content=f"old user {i} " + "很长" * 20))
+        session.history.append(Message(role="assistant", content=f"old assistant {i}"))
+
+    await dispatcher.run(_event("now"), session)
+
+    assert any("old user 0" in message.content for message in session.history)
+    assert list(session.history)[-2:] == [
+        Message(role="user", content="now"),
+        Message(role="assistant", content="reply:now"),
+    ]
 
 
 async def test_dispatcher_clips_current_input_to_context_budget(kv, history):
