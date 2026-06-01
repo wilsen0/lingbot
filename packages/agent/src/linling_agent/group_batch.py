@@ -812,7 +812,7 @@ class GroupBatchChatDispatcher:
             try:
                 probe_has_action = await self._probe_has_action(
                     messages=probe_messages,
-                    tools=tools,
+                    tools=_reply_tool_schemas(),
                     temperature=temperature,
                     max_tokens=max_tokens,
                     event=event,
@@ -1788,6 +1788,16 @@ def _clip_text(text: str, max_chars: int) -> str:
 
 
 def _group_batch_tool_schemas() -> list[ToolSchema]:
+    """Full tool set for the main selective-replier loop."""
+    return [*_reply_tool_schemas(), *_profile_tool_schemas()]
+
+
+def _reply_tool_schemas() -> list[ToolSchema]:
+    """Reply-oriented tools. This is also the set the attention probe sees —
+    the probe judges 'is anything here worth replying to', so it must only be
+    offered action-shaped tools. Profile read/write are deliberately excluded
+    (a curiosity-driven ``read_user_profile`` is NOT a reply intent and would
+    otherwise be mis-counted by ``_assistant_message_has_action``)."""
     return [
         ToolSchema(
             name=_TOOL_READ_BATCH,
@@ -1824,6 +1834,12 @@ def _group_batch_tool_schemas() -> list[ToolSchema]:
                 "additionalProperties": False,
             },
         ),
+    ]
+
+
+def _profile_tool_schemas() -> list[ToolSchema]:
+    """Per-user profile tools, available to the main loop (not the probe)."""
+    return [
         ToolSchema(
             name=_TOOL_READ_PROFILE,
             description="查阅某个用户(按 QQ 号)的长期记忆画像。想了解群里某人是谁、之前聊过什么时调用。",

@@ -114,6 +114,27 @@ async def test_profile_tools_present_in_schema() -> None:
     assert "write_user_profile" in names
 
 
+async def test_probe_tool_subset_excludes_profile_tools() -> None:
+    """The attention probe must only see reply-oriented tools.
+
+    A curiosity ``read_user_profile`` is not a reply intent and would be
+    mis-counted as "no action" by ``_assistant_message_has_action``, wrongly
+    vetoing the batch. So the probe's tool list excludes profile tools.
+    """
+    from linling_agent.group_batch import (
+        _group_batch_tool_schemas,
+        _reply_tool_schemas,
+    )
+
+    probe_tools = {s.name for s in _reply_tool_schemas()}
+    assert probe_tools == {"read_batch_messages", "reply_to_message"}
+    assert "read_user_profile" not in probe_tools
+    assert "write_user_profile" not in probe_tools
+    # The main loop still gets everything.
+    main_tools = {s.name for s in _group_batch_tool_schemas()}
+    assert {"read_user_profile", "write_user_profile"} <= main_tools
+
+
 async def test_read_profile_tool_continues_loop_no_action() -> None:
     async with SqliteKVStore("bot1", ":memory:") as kv:
         await ProfileStore(kv).save("u1", "老画像", name="小明")

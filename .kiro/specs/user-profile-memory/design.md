@@ -479,8 +479,9 @@ system 蒸馏指令(要点):
 
 **File**: `packages/agent/src/linling_agent/group_batch.py`
 
-- `_group_batch_tool_schemas()` 末尾追加 `read_user_profile` /
-  `write_user_profile` 两个 `ToolSchema`(schema 与 tools_builtin 注册的一致)。
+- `_group_batch_tool_schemas()` = `_reply_tool_schemas()` + `_profile_tool_schemas()`。
+  前者是回复导向工具(`read_batch_messages` / `reply_to_message`),后者是画像
+  读写工具。
 - `_execute_batch_tool()` 增加两个分支:命中画像工具时,用
   `self._kv`(群批 dispatcher 已持有 KV)构造 `ProfileStore`,执行后把结果
   作为 `tool` 消息返回。这些工具 **不** 产生外发动作(不像 `reply_to_message`),
@@ -489,6 +490,22 @@ system 蒸馏指令(要点):
 - 工具结果经现有 `messages.append(Message(role="tool", ...))` 进入循环上下文;
   若该轮最终产生外发动作,工具消息随 `_record_tool_history` 持久化进群历史
   (语义与现有工具一致,满足"群聊工具结果持久")。
+
+### 6b. 注意力探针的工具子集(关键约束)
+
+**File**: `packages/agent/src/linling_agent/group_batch.py`
+
+注意力探针(`AttentionProbe` pre-flight)判定"这批消息是否值得回复",其裁决
+靠 `_assistant_message_has_action`(只把 `read_batch_messages` /
+`reply_to_message` / `send_group` / 识别出的 actions envelope 计为"有动作")。
+
+**陷阱**:若把画像工具也给探针,探针模型可能首步就发 `read_user_profile`
+(出于"先看看这人是谁"的好奇),而该调用 **不** 被 `_assistant_message_has_action`
+计为动作 → 整批被误判为"无需回复"而 drop,主 LLM 永不运行。
+
+**约束**:探针 **只** 拿 `_reply_tool_schemas()`(回复导向工具,无画像工具);
+主循环拿完整 `_group_batch_tool_schemas()`。画像查阅与"是否值得回复"无关,
+不该污染探针的判定。这是探针工具集与主循环工具集 **必须分离** 的硬约束。
 
 注意:群批的工具系统提示(`_build_tool_system_prompt`)可补一句说明画像工具
 的存在与用途(可选,模型也能从 tool description 推断)。
