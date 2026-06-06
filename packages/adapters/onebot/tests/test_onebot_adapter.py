@@ -569,7 +569,7 @@ class TestSpawnDispatchIsNonBlocking:
 
     Regression: the reader used to ``await`` ``_dispatch`` inline,
     which meant a slow LLM round-trip (5–30s) stalled the read loop.
-    websockets stops draining its receive queue, NapCat declares the
+    websockets stops draining its receive queue, LLBot declares the
     link dead, and the adapter logs ``onebot_ws_disconnected`` every
     few minutes. The fix fans out via ``asyncio.create_task``; this
     test exercises that fan-out without involving real websockets.
@@ -733,12 +733,12 @@ class TestMetaEventHandling:
 
 class TestAssetResolution:
     """``@pic:`` and ``/storage/...`` URLs get rewritten to inline
-    ``base64://...`` payloads before being sent to NapCat.
+    ``base64://...`` payloads before being sent to LLBot.
 
-    Without this, NapCat would receive the literal shorthand and either
+    Without this, LLBot would receive the literal shorthand and either
     bail out (image not found) or attempt an HTTP fetch on a non-URL.
     Inlining as base64 (rather than ``file://``) keeps images working
-    when NapCat doesn't share the host filesystem — e.g. the supported
+    when LLBot doesn't share the host filesystem — e.g. the supported
     Docker deployment where ``bot/assets`` isn't bind-mounted into the
     container.
     """
@@ -812,7 +812,7 @@ class TestAssetResolution:
     def test_legacy_storage_path_passes_through(self, tmp_path: Path) -> None:
         # The migrator removed all ``/storage/...`` references from the
         # ruleset; if a future rule re-introduces the shape we'd
-        # rather treat it as opaque (NapCat will fail-loud) than try
+        # rather treat it as opaque (LLBot will fail-loud) than try
         # to interpret it. Confirms the resolver doesn't accidentally
         # rewrite paths it no longer claims to handle.
         asset_root = tmp_path / "assets"
@@ -831,7 +831,7 @@ class TestAssetResolution:
         assert file_field.startswith("/storage/")
 
     def test_remote_url_unchanged(self, tmp_path: Path) -> None:
-        # Real http(s) URLs flow through to NapCat verbatim — it can
+        # Real http(s) URLs flow through to LLBot verbatim — it can
         # fetch them itself and the resolver mustn't second-guess.
         adapter = _make_adapter(asset_root=tmp_path)
         action = Action(
@@ -861,7 +861,7 @@ class TestAssetResolution:
     def test_path_traversal_rejected(self, tmp_path: Path) -> None:
         # Adversarial DSL emitting ``@pic:../something`` must not
         # escape the asset root. We pass it through unchanged so
-        # NapCat ignores it rather than accidentally serving a file.
+        # LLBot ignores it rather than accidentally serving a file.
         asset_root = tmp_path / "assets"
         asset_root.mkdir()
         (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
@@ -876,7 +876,7 @@ class TestAssetResolution:
         file_field = payload["params"]["message"][0]["data"]["file"]
         # The invariant we care about: never *leak* the escaped target.
         # Either the resolver bails out (and emits the shorthand as-is,
-        # which NapCat treats as a broken image — safe failure mode),
+        # which LLBot treats as a broken image — safe failure mode),
         # or it resolves to something inside the asset root. It must
         # never inline the contents of ``secret.txt`` as base64, nor
         # produce a ``file://`` URL pointing outside the root.
@@ -1037,7 +1037,7 @@ class TestAssetResolution:
         assert [m["type"] for m in msg] == ["text", "image", "image"]
         # Local sprite is inlined.
         assert msg[1]["data"]["file"].startswith("base64://")
-        # Remote stays verbatim — NapCat will fetch it.
+        # Remote stays verbatim — LLBot will fetch it.
         assert msg[2]["data"]["file"] == "https://multimedia.nt.qq.com.cn/download?fileid=stub"
 
     def test_voice_segment_url_is_not_rewritten(self, tmp_path: Path) -> None:
@@ -1045,7 +1045,7 @@ class TestAssetResolution:
 
         The resolver only knows about images. ``±ptt=`` rules using
         host-only ``file://`` paths or ``@pic:`` shorthands would
-        still fail on the Docker NapCat deployment — but the
+        still fail on the Docker LLBot deployment — but the
         existing ruleset doesn't actually use ``±ptt=`` (the only
         reference is dead code), and there's no historical
         ``@ptt:`` shorthand to handle. This test pins that boundary
@@ -1099,13 +1099,13 @@ class TestAssetResolution:
 
 class TestRemoteImagePreflight:
     """``http(s)://`` image URLs are downloaded by the adapter before
-    forwarding to NapCat so a single dead URL doesn't cause NapCat to
+    forwarding to LLBot so a single dead URL doesn't cause LLBot to
     drop the entire ``send_msg``.
 
     Background: legacy KV-stored avatars (``啊/主页系/专属形象``) hold
     URLs from yximgs / superbed / BOS that have since 404'd. The DSL
     embeds them via ``±img=%专%±`` at the tail of every 我的背包 /
-    我的礼品 / 我的珍品 reply. Without preflight, NapCat fetches the
+    我的礼品 / 我的珍品 reply. Without preflight, LLBot fetches the
     dead URL, fails, and the whole reply silently disappears — which
     is exactly the 2992611516 incident.
     """
@@ -1272,7 +1272,7 @@ class TestRemoteImagePreflight:
         asyncio.run(_exercise())
         assert call_count["n"] == 1
 
-    def test_send_raises_on_napcat_failure_status(
+    def test_send_raises_on_onebot_failure_status(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``send`` raises ``OneBotSendError`` so the router's

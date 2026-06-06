@@ -30,7 +30,7 @@
 
 - 不做 Android 端运行时；服务端部署为主。
 - 不自研 LLM；只做编排与调用。
-- 不做 QQ 协议端；复用 OneBot（NapCat / Lagrange / gocq 等任一实现）。
+- 不做 QQ 协议端；复用 OneBot（LLBot / Lagrange / gocq 等任一实现）。
 - 不兼容 QRSpeed 的每一个偏门语法（例如某些 undocumented 隐式行为），只兼容成熟且有真实用例的那些。
 
 ## 4. 用户角色

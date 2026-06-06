@@ -8,7 +8,7 @@ Reproduces what the rules emit when a user picks up a bottle:
 
 We craft both image segments by hand here (the local one as base64, the
 remote one as a real https URL) and ship them together to confirm
-NapCat handles a mixed-shape message.
+LLBot handles a mixed-shape message.
 """
 
 from __future__ import annotations

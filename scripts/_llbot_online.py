@@ -1,13 +1,13 @@
-"""检查 NapCat 当前是否在线（OneBot get_status）。
+"""检查 OneBot v11 服务端当前账号是否在线（get_status）。
 
 退出码:
   0  在线 (online=true)
-  1  已连上 NapCat 但账号离线 (online=false)  —— 需要重连/重登
-  2  连不上 NapCat（容器没起 / 端口没开 / token 不对）
+  1  已连上 OneBot 服务端但账号离线 (online=false)  —— 需要重连/重登
+  2  连不上 OneBot 服务端（容器没起 / 端口没开 / token 不对）
 
 用法:
-  uv run python scripts/_napcat_online.py
-  ONEBOT_WS_URL=ws://127.0.0.1:3001 ONEBOT_TOKEN=xxx uv run python scripts/_napcat_online.py
+  uv run python scripts/_llbot_online.py
+  ONEBOT_WS_URL=ws://127.0.0.1:3003 ONEBOT_TOKEN=xxx uv run python scripts/_llbot_online.py
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import sys
 
 import websockets
 
-URL = os.environ.get("ONEBOT_WS_URL", "ws://127.0.0.1:3001")
+URL = os.environ.get("ONEBOT_WS_URL", "ws://127.0.0.1:3003")
 TOKEN = os.environ.get("ONEBOT_TOKEN", "linling-secret-2026")
-TIMEOUT = float(os.environ.get("NAPCAT_STATUS_TIMEOUT", "10"))
+TIMEOUT = float(os.environ.get("ONEBOT_STATUS_TIMEOUT", "10"))
 
 
 async def _check() -> int:

@@ -95,10 +95,10 @@ class AdapterConfig(BaseModel):
     access_token: str = ""
     remote_image_preflight: bool = True
     """For ``kind="onebot"``: when ``True`` (default), the adapter
-    downloads ``http(s)://`` image URLs itself before sending to NapCat,
+    downloads ``http(s)://`` image URLs itself before sending to LLBot,
     inlining as base64 on success and substituting a fallback text on
     failure. Without this, a single dead image URL embedded in a DSL
-    rule's output causes NapCat to drop the entire ``send_msg`` —
+    rule's output causes LLBot to drop the entire ``send_msg`` —
     which is what motivated turning this on. Set to ``false`` only
     when every image URL referenced by the ruleset is known-good and
     the per-message HEAD/GET overhead is unwanted.
@@ -173,7 +173,7 @@ class RouterConfigBlock(BaseModel):
     # Per-session lock hold timeout. The router refuses to wait
     # longer than this for an in-flight handler on the same session
     # before giving up on a new event. Default lowered from the
-    # historic 30s to 10s after we saw real adapters (NapCat /
+    # historic 30s to 10s after we saw real adapters (LLBot /
     # Lagrange) occasionally hold the lock waiting on a dropped
     # ``echo`` from QQ side; 30s + a chatty group made every later
     # command line up behind one stuck send. The OneBot adapter's

@@ -1,4 +1,4 @@
-"""Try to send a private message via NapCat to verify outbound path."""
+"""Try to send a private message via LLBot to verify outbound path."""
 import asyncio
 import json
 import sys

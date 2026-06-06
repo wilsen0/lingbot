@@ -448,10 +448,12 @@ export interface paths {
         };
         /**
          * Memory
-         * @description Return the short-term sliding window for (user, scope).
+         * @description Return the agent memory snapshot for ``(user_id, scope_id)``.
          *
-         *     Long-term memory (vector store) is not yet exposed through the runtime;
-         *     returned as empty until Task 18.2 lands.
+         *     Bootstrapped bots provide a KV-backed snapshot with short-term history,
+         *     running summary and the user's profile. Minimal test harnesses and
+         *     standalone agent registries may still expose the legacy in-memory
+         *     ``runtime.memory`` shape, so we keep that as a compatibility fallback.
          */
         get: operations["memory_api_agents__name__memory_get"];
         put?: never;
@@ -1098,6 +1100,11 @@ export interface components {
             short_term: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
             /**
              * Long Term
              * @default []
@@ -1997,7 +2004,7 @@ export interface operations {
     memory_api_agents__name__memory_get: {
         parameters: {
             query?: {
-                user_id?: string;
+                user_id?: string | null;
                 scope_id?: string;
             };
             header?: {

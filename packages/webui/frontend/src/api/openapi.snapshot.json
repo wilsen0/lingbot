@@ -1806,7 +1806,7 @@
           "agents"
         ],
         "summary": "Memory",
-        "description": "Return the short-term sliding window for (user, scope).\n\nLong-term memory (vector store) is not yet exposed through the runtime;\nreturned as empty until Task 18.2 lands.",
+        "description": "Return the agent memory snapshot for ``(user_id, scope_id)``.\n\nBootstrapped bots provide a KV-backed snapshot with short-term history,\nrunning summary and the user's profile. Minimal test harnesses and\nstandalone agent registries may still expose the legacy in-memory\n``runtime.memory`` shape, so we keep that as a compatibility fallback.",
         "operationId": "memory_api_agents__name__memory_get",
         "parameters": [
           {
@@ -1823,8 +1823,14 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "webui",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "User Id"
             }
           },
@@ -3287,6 +3293,11 @@
             },
             "type": "array",
             "title": "Short Term"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
           },
           "long_term": {
             "items": {

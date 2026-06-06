@@ -1,7 +1,7 @@
 """Fishing image renderers — Pillow panels for the 鱼塘 (fishing) module.
 
 Three DSL-facing tools, all returning a ``base64://`` PNG data URL so
-the OneBot adapter can ship them to NapCat without a shared filesystem
+the OneBot adapter can ship them to LLBot without a shared filesystem
 (same contract as ``$扭蛋图$`` — see :mod:`linling_tools_stdlib.gacha_image`):
 
 * ``$钓鱼结算图 fish kind value buff$`` — single-catch settlement card.

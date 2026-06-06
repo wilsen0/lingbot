@@ -260,7 +260,7 @@ class _SinkErrorInfo:
 
     Action sinks (typically the OneBot adapter's ``send``) can fail
     after the dispatcher has already produced its actions — e.g.
-    NapCat returning ``status=failed`` on a message containing a
+    LLBot returning ``status=failed`` on a message containing a
     dead image URL. We collect these per-event so the audit row's
     payload reflects "DSL succeeded but delivery failed" instead of
     silently logging ``ok``.

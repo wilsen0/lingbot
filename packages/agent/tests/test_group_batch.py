@@ -1345,7 +1345,7 @@ async def test_group_batch_reply_without_source_does_not_attention() -> None:
     """Reply segment with no quoted-sender metadata must NOT bypass the
     attention gate.
 
-    Standard OneBot v11 (and NapCat by default) only carries the reply
+    Standard OneBot v11 (and LLBot by default) only carries the reply
     segment's ``message_id`` — there's no ``reply``/``source``/
     ``reply_message`` field on the inbound event. The previous default
     of "treat missing metadata as attention" caused every cross-user

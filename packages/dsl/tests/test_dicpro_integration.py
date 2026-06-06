@@ -4818,7 +4818,7 @@ async def test_send_temp_message_routes_to_dm_scope(kv) -> None:
 
 # ---------------------------------------------------------------------------
 # §105 [戳一戳] OneBot poke synthesis end-to-end — confirms that a real
-# OneBot ``notify/poke`` notice (the wire shape NapCat / Lagrange /
+# OneBot ``notify/poke`` notice (the wire shape LLBot / Lagrange /
 # go-cqhttp emit) reaches a ``[戳一戳]`` DSL handler. Pre-fix the
 # adapter's synthesiser explicitly skipped pokes ("they get a
 # structured PokeSegment instead"), but the classifier filters out

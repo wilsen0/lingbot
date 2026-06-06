@@ -1832,14 +1832,14 @@ def _reply_to_bot(event: Event) -> bool:
     bot_id = str(event.bot_id)
     candidates = _reply_source_candidates(event.raw)
     if not candidates:
-        # Standard OneBot v11 (and NapCat by default) only carries the
+        # Standard OneBot v11 (and LLBot by default) only carries the
         # reply segment's ``message_id`` — no quoted-sender metadata
         # ride along on the inbound event. We can't tell who's being
         # replied to from this alone, so defaulting to "yes, this is
         # a reply to the bot" caused every cross-user quote-reply in
         # a busy group to bypass the attention gate. Defaulting to
         # ``False`` here is the safer call: a real reply to the bot
-        # almost always also @-mentions the bot (NapCat injects an
+        # almost always also @-mentions the bot (LLBot injects an
         # implicit ``@bot`` when you long-press → reply on mobile),
         # which the at-segment branch in :func:`_mentions_bot`
         # already catches separately.
@@ -1929,6 +1929,18 @@ def _reply_tool_schemas() -> list[ToolSchema]:
                     "text": {"type": "string", "description": "要发送的简短回复内容。"},
                 },
                 "required": ["message_id", "text"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_SEND_GROUP,
+            description="直接在当前群里发送一条简短消息，不引用任何候选消息。适合顺着群聊接一句普通话。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要发送的简短群消息内容。"},
+                },
+                "required": ["text"],
                 "additionalProperties": False,
             },
         ),

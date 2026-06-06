@@ -326,7 +326,7 @@ class PlatformAdapter(Protocol):
 
 ### 7.3 OneBot 适配器（MVP）
 
-- WebSocket 连接 OneBot v11 impl（NapCat/LLOneBot/Lagrange）。
+- WebSocket 连接 OneBot v11 impl（LLBot/Lagrange）。
 - 正向 or 反向 WS 都支持；推荐反向（机器人连 OneBot）。
 - 消息解析：把 `message[]` 映射为 `Segment[]`；CQ 码反解同 segments 结构。
 - 发送：`Segment[]` 组装为 OneBot `message`；`reply` 追加 `reply` segment。

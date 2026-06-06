@@ -3,7 +3,7 @@
 The image audit (``audit_image_urls.py``) found 70+ remote URLs in
 ``bot/rules/main.ling`` that no longer resolve (s1.ax1x.com tomb,
 klizi.cn 404s, xiaobapi 404s, xingzhige 403s, etc.). When a rule
-contains such a URL, NapCat tries to fetch it before sending the QQ
+contains such a URL, LLBot tries to fetch it before sending the QQ
 message and stalls on TLS timeout — wedging the session lock and
 delaying every subsequent command.
 
@@ -62,9 +62,9 @@ def url_is_alive(url: str) -> bool:
 
 
 def is_local_ref(url: str) -> bool:
-    """Local file refs (filesystem paths / @pic shorthand) bypass NapCat's URL fetch.
+    """Local file refs (filesystem paths / @pic shorthand) bypass LLBot's URL fetch.
 
-    These never trigger a TLS timeout — NapCat reads the file directly
+    These never trigger a TLS timeout — LLBot reads the file directly
     when the path resolves to a real local file (which the bot's image
     audit verified for our ``picture/*.jpg`` set). Keep them.
     """

@@ -52,6 +52,27 @@ TriggerProvider = Callable[[], list[TriggerInfo]]
 
 
 @dataclass(frozen=True)
+class MemorySnapshot:
+    """Agent memory view backed by the bot runtime.
+
+    ``short_term`` contains serialisable LLM message dicts. ``summary`` is the
+    running conversation summary for the same ``(scope_id, sender_id)`` key.
+    ``long_term`` contains per-user profile entries, currently at most one
+    item for the requested ``user_id``.
+    """
+
+    short_term: list[dict[str, Any]]
+    summary: str = ""
+    long_term: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Resolves the current memory snapshot for one agent. Wired by
+# ``attach_bot_to_webui`` so the HTTP router can stay independent from the CLI
+# bootstrap module and the concrete KV layout.
+MemoryProvider = Callable[[str, str], Awaitable[MemorySnapshot]]
+
+
+@dataclass(frozen=True)
 class WebChatSegment:
     """One piece of a rich chat reply.
 
@@ -143,6 +164,10 @@ class WebUIState:
     # depending on ``linling_cli`` directly. Resolved at request time
     # so hot-reload immediately reflects in the picker.
     trigger_providers: dict[str, TriggerProvider] = field(default_factory=dict)
+    # Per-agent memory provider. Populated by ``attach_bot_to_webui`` and used
+    # by ``GET /api/agents/{name}/memory`` to expose the real KV-backed
+    # short-term history, running summary and user profile.
+    memory_providers: dict[str, MemoryProvider] = field(default_factory=dict)
 
     # Per-bot event buffer, lazy-created.
     def buffer_for(self, bot_id: str, *, capacity: int) -> EventRingBuffer:

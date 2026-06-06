@@ -50,7 +50,7 @@ egress_ip() {
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
 # 0=在线 1=离线 2=连不上
-status() { uv run python scripts/_napcat_online.py >/dev/null 2>&1; }
+status() { uv run python scripts/_llbot_online.py >/dev/null 2>&1; }
 
 record_offline() {
   local ip; ip="$(egress_ip)"

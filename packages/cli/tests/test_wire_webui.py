@@ -185,6 +185,53 @@ rules:
 
 
 @pytest.mark.asyncio
+async def test_attach_registers_kv_backed_memory_provider(tmp_path: Path):
+    """The WebUI memory provider should expose real history, summary and profile."""
+    _write(tmp_path, "rules/main.ling", "ping\npong\n")
+    bot = await _boot(
+        tmp_path,
+        """
+bot_id: bot1
+storage:
+  kv: ":memory:"
+rules:
+  - "rules/*.ling"
+""",
+    )
+    app = _make_app()
+    try:
+        # This test only needs the registry key; the provider itself reads bot.kv.
+        bot.agents["susu"] = object()
+        from linling_agent.history import KVHistoryStore
+        from linling_agent.llm import Message
+        from linling_agent.profile import ProfileStore
+
+        history = KVHistoryStore(bot.kv, max_turns=8)
+        await history.save(
+            "g1",
+            "u1",
+            [
+                Message(role="user", content="记住这个"),
+                Message(role="assistant", content="记住啦"),
+            ],
+        )
+        await history.save_summary("g1", "u1", "旧摘要")
+        await ProfileStore(bot.kv).save("u1", "喜欢钓鱼", name="小明")
+
+        attach_bot_to_webui(app, bot)
+        provider = app.state.runtime.memory_providers["susu"]
+        snapshot = await provider("u1", "g1")
+
+        assert [m["content"] for m in snapshot.short_term] == ["记住这个", "记住啦"]
+        assert snapshot.summary == "旧摘要"
+        assert snapshot.long_term == [
+            {"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}
+        ]
+    finally:
+        await bot.stop()
+
+
+@pytest.mark.asyncio
 async def test_metrics_endpoint_served_when_enabled(tmp_path: Path):
     """``metrics.enabled=True`` → ``/metrics`` returns Prometheus exposition."""
     from fastapi.testclient import TestClient

@@ -943,8 +943,8 @@ async def gacha_image(
 
     # Encode the image to PNG bytes once. We return a ``base64://``
     # data URL rather than a filesystem path so the OneBot adapter
-    # can ship it to NapCat regardless of host vs container split:
-    # the ``$扭蛋图$`` tool runs in our process, but NapCat (which
+    # can ship it to LLBot regardless of host vs container split:
+    # the ``$扭蛋图$`` tool runs in our process, but LLBot (which
     # actually does the QQ-side ``send_msg``) typically lives in a
     # Docker container that doesn't see ``/home/.../data/cache/``.
     # The returned URL is consumed verbatim by ``to_onebot_msg`` —

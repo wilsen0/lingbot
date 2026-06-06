@@ -1,9 +1,9 @@
-"""Send an inline base64 image to verify NapCat accepts the new payload.
+"""Send an inline base64 image to verify LLBot accepts the new payload.
 
 Mirrors what the OneBot adapter will send after the ``@pic:`` →
 ``base64://`` rewrite lands. Reads a real sprite off disk, encodes it,
-ships it through NapCat as a private message, and prints whatever
-NapCat reports back.
+ships it through LLBot as a private message, and prints whatever
+LLBot reports back.
 
 Usage::
 

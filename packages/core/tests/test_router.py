@@ -624,7 +624,7 @@ async def test_sink_failure_recorded_in_audit_payload():
     """If the action sink raises, the audit row reflects the failure
     instead of silently logging ``ok``.
 
-    Background: the OneBot adapter used to swallow NapCat-side
+    Background: the OneBot adapter used to swallow OneBot-side
     rejections (dead image URL, kicked-from-group, …) into a
     ``status=failed`` dict that the router never inspected. Audit
     showed ``outcome=ok`` even though the message never reached the
@@ -641,7 +641,7 @@ async def test_sink_failure_recorded_in_audit_payload():
             captured.append(entry)
 
     async def _failing_sink(action):
-        raise RuntimeError("napcat rejected: dead image URL")
+        raise RuntimeError("adapter rejected: dead image URL")
 
     classifier = MessageClassifier(_FakeScript(handlers=[_FakeHandler(trigger="我的背包")]))
     commands = FakeCommandDispatcher()
@@ -660,7 +660,7 @@ async def test_sink_failure_recorded_in_audit_payload():
     assert entry.kind == "command"
     sink_errors = entry.payload.get("sink_errors")
     assert sink_errors and sink_errors[0]["type"] == "RuntimeError"
-    assert "napcat" in sink_errors[0]["message"].lower()
+    assert "adapter" in sink_errors[0]["message"].lower()
 
 
 @pytest.mark.asyncio

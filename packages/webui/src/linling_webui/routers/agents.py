@@ -115,6 +115,7 @@ async def get_agent(
 
 class _MemoryView(BaseModel):
     short_term: list[dict[str, Any]]
+    summary: str = ""
     long_term: list[dict[str, Any]] = []
 
 
@@ -162,25 +163,43 @@ async def list_triggers(
 @router.get("/{name}/memory", response_model=_MemoryView)
 async def memory(
     name: str,
-    user_id: str = Query(default="webui"),
+    user_id: str | None = Query(default=None),
     scope_id: str = Query(default="test"),
     caller: Caller = Depends(require_auth),
     state: WebUIState = Depends(get_state),
 ) -> _MemoryView:
-    """Return the short-term sliding window for (user, scope).
+    """Return the agent memory snapshot for ``(user_id, scope_id)``.
 
-    Long-term memory (vector store) is not yet exposed through the runtime;
-    returned as empty until Task 18.2 lands.
+    Bootstrapped bots provide a KV-backed snapshot with short-term history,
+    running summary and the user's profile. Minimal test harnesses and
+    standalone agent registries may still expose the legacy in-memory
+    ``runtime.memory`` shape, so we keep that as a compatibility fallback.
     """
-    _ = caller
     runtime = _require_runtime(name, state)
+    subject_user_id = caller.username if user_id is None else user_id
+    if not caller.is_superadmin and subject_user_id != caller.username:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "cannot read another user's memory")
+    provider = state.memory_providers.get(name)
+    if provider is not None:
+        try:
+            snapshot = await provider(subject_user_id, scope_id)
+            return _MemoryView(
+                short_term=snapshot.short_term,
+                summary=snapshot.summary,
+                long_term=snapshot.long_term,
+            )
+        except Exception:
+            # A memory panel should not make the agent disappear from the UI.
+            # Fall through to the legacy runtime accessor below.
+            pass
+
     # Prefer a public ``memory`` accessor, but accept the current private
     # ``_memory`` used by :class:`AgentRuntime` (and the fake used in tests).
     mem = getattr(runtime, "memory", None) or getattr(runtime, "_memory", None)
     short: list[dict[str, Any]] = []
     if mem is not None and hasattr(mem, "get"):
         try:
-            messages = mem.get(user_id, scope_id)
+            messages = mem.get(subject_user_id, scope_id)
         except Exception:
             messages = []
         for m in messages:

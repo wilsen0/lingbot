@@ -127,12 +127,12 @@ async def test_probe_tool_subset_excludes_profile_tools() -> None:
     )
 
     probe_tools = {s.name for s in _reply_tool_schemas()}
-    assert probe_tools == {"read_batch_messages", "reply_to_message"}
+    assert probe_tools == {"read_batch_messages", "reply_to_message", "send_group"}
     assert "read_user_profile" not in probe_tools
     assert "write_user_profile" not in probe_tools
     # The main loop still gets everything.
     main_tools = {s.name for s in _group_batch_tool_schemas()}
-    assert {"read_user_profile", "write_user_profile"} <= main_tools
+    assert {"read_user_profile", "write_user_profile", "send_group"} <= main_tools
 
 
 async def test_read_profile_tool_continues_loop_no_action() -> None:

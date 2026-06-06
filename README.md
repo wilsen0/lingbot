@@ -131,9 +131,36 @@ uv run linling run bot/bot.yaml
 ```
 
 > linling 自己**不实现 QQ 协议**，需要外面有一个 OneBot v11 实现
-> （NapCat / Lagrange / gocq）翻译流量。NapCat 的 Docker 部署
+> （LLBot / Lagrange / gocq 等）翻译流量。LLBot 的 Docker 部署
 > （含 onebot11 配置 / 扫码登录 / 升级回滚）见
-> [`docs/deployment/napcat.md`](./docs/deployment/napcat.md)。
+> [`docker/llbot/docker-compose.yml`](./docker/llbot/docker-compose.yml)。
+
+#### 摊位图卡字体
+
+`摊位` / `摊位@某人` 命令会附带一张 150 像素宽的 PNG 小卡片（鱼竿/鱼饵/蛋壳
+分类色块）。卡片由 Pillow 动态渲染中文，**必须**有 CJK 字体。
+
+**字体发现顺序**（自动）：
+1. `ctx.extras["market_card_font"]` —— 启动时显式注入的 TTF/OTF 路径
+2. `data/fonts/*.otf|ttf` —— 放一个 Noto Sans SC / 思源黑体到这里即可
+3. Pillow 自带位图（10px ASCII only）—— **中文会渲染成方块**，并打 warning
+
+**手动放字体**（最常见）：
+
+```bash
+# 找一个 OTF/TTF 放进去；Noto Sans SC 简体子集约 8 MB
+# 下载：https://github.com/notofonts/noto-cjk/tree/main/Sans/SubsetOTF/SC
+mkdir -p data/fonts
+cp /path/to/NotoSansSC-Regular.otf data/fonts/
+
+# 或用系统包（推荐生产环境）
+# Ubuntu/Debian:  apt install fonts-noto-cjk
+#                -> 装好后设置 ctx.extras['market_card_font'] = '/usr/share/fonts/...'
+# Arch:           pacman -S noto-fonts-cjk
+```
+
+**Docker 部署**额外提醒：如果你用最小 Python 镜像（`python:3.13-slim` 等），
+需要装 fonts-noto-cjk，或挂载宿主机的字体目录进容器。否则图卡中文会成方块。
 
 ### 常用小技巧
 

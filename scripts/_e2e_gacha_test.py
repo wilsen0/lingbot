@@ -124,7 +124,7 @@ async def _run(handler_name: str, record: str, label: str) -> None:
     if not image_segments:
         raise SystemExit(f"FAIL: {label} produced no ImageSegment")
 
-    # The tool now returns a ``base64://`` URL that NapCat accepts
+    # The tool now returns a ``base64://`` URL that LLBot accepts
     # natively (no shared filesystem required). Confirm the payload
     # decodes back to a valid PNG.
     img_url = image_segments[0].url

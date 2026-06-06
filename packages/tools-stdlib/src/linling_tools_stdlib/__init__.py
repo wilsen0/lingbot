@@ -27,6 +27,7 @@ from linling_tools_stdlib import (
     random_ops,
     scheduler_ops,
     str_ops,
+    trade_ops,
 )
 from linling_tools_stdlib.version import __version__
 
@@ -45,4 +46,5 @@ __all__ = [
     "random_ops",
     "scheduler_ops",
     "str_ops",
+    "trade_ops",
 ]

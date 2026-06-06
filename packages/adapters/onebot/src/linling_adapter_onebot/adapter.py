@@ -1,6 +1,6 @@
 """OneBot v11 WebSocket adapter.
 
-Connects to a OneBot implementation (NapCat/Lagrange/etc.) via
+Connects to a OneBot implementation (LLBot/Lagrange/etc.) via
 reverse WebSocket, translates events to linling Events, and sends
 Actions back as OneBot API calls.
 
@@ -32,7 +32,7 @@ from linling_core.segments import ImageSegment, PokeSegment, Segment, TextSegmen
 
 
 class OneBotSendError(RuntimeError):
-    """NapCat acknowledged a ``send_msg`` call but reported failure.
+    """LLBot acknowledged a ``send_msg`` call but reported failure.
 
     Raised by :meth:`OneBotAdapter.send` when the API echo returns
     ``status != "ok"`` (or a non-zero ``retcode``). The router's sink
@@ -40,7 +40,7 @@ class OneBotSendError(RuntimeError):
     while writing a structured log line. We deliberately raise rather
     than return the dict so the existing failure surface — designed
     around exceptions — fires for retcode failures the same way it
-    does for transport-level errors. Without this, NapCat refusing
+    does for transport-level errors. Without this, LLBot refusing
     a message (dead image URL, kicked-from-group, sensitive content
     filter) was silently logged as ``ok`` in audit, which is what
     let the 2992611516 background take a week to diagnose.
@@ -57,21 +57,21 @@ logger = structlog.get_logger(__name__)
 
 # Reconnect backoff (seconds). Initial value is what we wait after the
 # first unexpected disconnect; subsequent failures double it up to
-# ``_RECONNECT_BACKOFF_MAX`` so a misconfigured endpoint or a NapCat
+# ``_RECONNECT_BACKOFF_MAX`` so a misconfigured endpoint or a LLBot
 # restart loop doesn't burn CPU and log volume. A clean reconnect
 # (``_running`` still true and we made it past the WS handshake) resets
 # the counter back to ``_RECONNECT_BACKOFF_INITIAL``.
 _RECONNECT_BACKOFF_INITIAL = 5.0
 _RECONNECT_BACKOFF_MAX = 60.0
 
-# WebSocket keepalive / framing knobs. Values picked for NapCat-style
+# WebSocket keepalive / framing knobs. Values picked for LLBot-style
 # OneBot endpoints on localhost or LAN:
 #
 # * ``ping_interval`` / ``ping_timeout`` — keep the link warm and notice
 #   half-open TCP within ~40s. The adapter does **not** rely on
 #   application-level OneBot heartbeats (``meta_event``) for liveness;
 #   those are merely logged.
-# * ``max_size`` — NapCat occasionally forwards merge-forwarded /
+# * ``max_size`` — LLBot occasionally forwards merge-forwarded /
 #   image-laden frames over 1MiB. The default cap of 1MiB closes the
 #   connection with code 1009 mid-stream; bumping to 8MiB covers the
 #   typical worst case while still rejecting clearly pathological
@@ -91,7 +91,7 @@ _WS_CLOSE_TIMEOUT = 5.0
 
 
 # Per-asset upper bound for inlining as ``base64://``. Anything larger
-# is left as ``file://...`` and will only render correctly if NapCat
+# is left as ``file://...`` and will only render correctly if LLBot
 # happens to share the host filesystem (e.g. native install). Picked
 # below ``_WS_MAX_SIZE`` so the JSON envelope, base64 expansion (4/3),
 # and any sibling segments still fit in one WS frame: 4 MiB of source
@@ -110,14 +110,14 @@ _ASSET_CACHE_MAX_ENTRIES = 64
 
 # Remote-image preflight knobs. When the DSL emits an ``ImageSegment``
 # with an ``http(s)://`` URL — typically because some legacy KV value
-# stores an avatar URL — NapCat is the one that has to fetch it.
+# stores an avatar URL — LLBot is the one that has to fetch it.
 # Several of the URL hosts in the legacy ``data.sqlite`` dataset are
-# dead (404 / 502 / DNS NXDOMAIN), and NapCat's default behaviour
+# dead (404 / 502 / DNS NXDOMAIN), and LLBot's default behaviour
 # when the fetch fails is to **drop the entire send_msg call**, not
 # just the broken image. The user perception is "我的背包 没回应"
 # — silent dispatch, no error visible to either the bot or the
 # operator. Preflight downloads the bytes ourselves; on success we
-# inline as ``base64://`` so NapCat skips the fetch entirely, on
+# inline as ``base64://`` so LLBot skips the fetch entirely, on
 # failure we substitute a TextSegment so the rest of the reply still
 # delivers. Caps and timeouts are conservative — we'd rather degrade
 # to "[图片加载失败]" than block dispatch on a slow remote.
@@ -192,7 +192,7 @@ _QR_STATUS = {
 def _first_present(data: dict[str, Any], *keys: str) -> str:
     """Return ``str(data[k])`` for the first non-empty key, else ``""``.
 
-    Convenience for the OneBot fork-spelling fallback chain — NapCat
+    Convenience for the OneBot fork-spelling fallback chain — LLBot
     / Lagrange / go-cqhttp each name the nickname fields differently.
     """
     for key in keys:
@@ -205,7 +205,7 @@ def _first_present(data: dict[str, Any], *keys: str) -> str:
 class OneBotAdapter:
     """OneBot v11 WebSocket adapter.
 
-    Connects to a OneBot implementation (NapCat/Lagrange/etc.) via
+    Connects to a OneBot implementation (LLBot/Lagrange/etc.) via
     reverse WebSocket, translates events to linling Events, and sends
     Actions back as OneBot API calls.
     """
@@ -232,7 +232,7 @@ class OneBotAdapter:
         # assets``. When ``None`` we leave the URLs untouched and let
         # the OneBot endpoint try to fetch them itself, which produces
         # broken images for the kinds of refs that need a local file
-        # (NapCat won't read ``@pic:`` either).
+        # (LLBot won't read ``@pic:`` either).
         self._asset_root: Path | None = asset_root.resolve() if asset_root else None
         # Whether to preflight-download remote ``http(s)://`` image
         # URLs ourselves and inline as base64. Default on so the
@@ -280,7 +280,7 @@ class OneBotAdapter:
 
         On unexpected disconnect we sleep for an exponentially-growing
         delay (capped at ``_RECONNECT_BACKOFF_MAX``) so a misconfigured
-        endpoint or a NapCat restart loop doesn't burn CPU and log
+        endpoint or a LLBot restart loop doesn't burn CPU and log
         volume. A connection that survives long enough to hand control
         back from the reader cleanly resets the backoff.
         """
@@ -343,7 +343,7 @@ class OneBotAdapter:
         """Send an Action to the OneBot endpoint.
 
         Returns the API response dict on success. Raises
-        :class:`OneBotSendError` when NapCat acknowledges the call but
+        :class:`OneBotSendError` when LLBot acknowledges the call but
         reports a non-ok status (dead image URL, kicked-from-group,
         sensitive content filter, …) — the router catches this in its
         ``sink_failed`` branch so the failure shows up in metrics and
@@ -357,7 +357,7 @@ class OneBotAdapter:
         # encode pipeline stays free of asyncio. Returns a new Action
         # with rewritten segments; on full failure ``segments`` is
         # empty and we surface a sink failure instead of issuing the
-        # send_msg call (NapCat would reject an empty message anyway).
+        # send_msg call (LLBot would reject an empty message anyway).
         prepared = await self._prepare_action(action)
         if not prepared.segments and action.kind in ("reply", "send"):
             raise OneBotSendError(
@@ -371,7 +371,7 @@ class OneBotAdapter:
         api_action = payload.pop("action")
         params = payload.pop("params", {})
         result = await self.call_api(api_action, **params)
-        # Surface NapCat-side rejections as exceptions so the router's
+        # Surface LLBot-side rejections as exceptions so the router's
         # sink-failure path runs. ``status == "ok"`` is the canonical
         # success marker; ``retcode == 0`` is OneBot v11's; we accept
         # either being healthy because forks vary on which they set.
@@ -396,7 +396,7 @@ class OneBotAdapter:
     async def call_api(self, action: str, **params: Any) -> dict[str, Any]:
         """Call a raw OneBot API method.
 
-        Times out at 5s per call: NapCat / Lagrange occasionally drop
+        Times out at 5s per call: LLBot / Lagrange occasionally drop
         the ``echo`` response when an outbound message fails on QQ's
         side (kicked-from-group, image URL fetch failed, rate limit
         hit, …) and we'd otherwise wedge the calling session for the
@@ -452,7 +452,7 @@ class OneBotAdapter:
         downstream work (router → DSL VM or LLM round-trip) inline
         would block the reader for seconds at a time, which causes
         websockets to stop draining the receive queue, fills the TCP
-        receive window, and ultimately makes NapCat declare the link
+        receive window, and ultimately makes LLBot declare the link
         dead. Async fan-out keeps the read path latency-bounded by the
         JSON parser alone.
         """
@@ -571,7 +571,7 @@ class OneBotAdapter:
         elif post_type == "meta_event":
             # OneBot heartbeat / lifecycle. Not routed anywhere — but
             # we record it at debug level so an operator who suspects
-            # a silent NapCat (no heartbeats arriving) can confirm it
+            # a silent LLBot (no heartbeats arriving) can confirm it
             # from logs without attaching a debugger.
             meta_type = data.get("meta_event_type", "")
             if meta_type == "heartbeat":
@@ -736,7 +736,7 @@ class OneBotAdapter:
         ``%Code%`` / ``%UinName%`` / ``%Inviteename%`` / etc.
 
         OneBot v11 doesn't standardise nickname fields on notice
-        payloads — NapCat / Lagrange / go-cqhttp each spell them
+        payloads — LLBot / Lagrange / go-cqhttp each spell them
         differently. We probe the common variants in priority order
         so legacy QRSpeed handlers see *some* name regardless of
         which fork is upstream.
@@ -816,13 +816,13 @@ class OneBotAdapter:
     # ------------------------------------------------------------------
 
     # DSL rules emit image URLs as ``@pic:NAME`` (the migrator's
-    # shorthand). NapCat can't fetch that — we read the bytes off
+    # shorthand). LLBot can't fetch that — we read the bytes off
     # disk and inline them as ``base64://...`` so the image renders
-    # regardless of whether NapCat shares the host filesystem (e.g.
+    # regardless of whether LLBot shares the host filesystem (e.g.
     # the supported Docker deployment doesn't mount ``bot/assets``).
     # Files larger than ``_ASSET_INLINE_MAX_BYTES`` fall back to
     # ``file://...`` — those are oversized for one WS frame anyway,
-    # and the file:// path at least works on native NapCat installs.
+    # and the file:// path at least works on native LLBot installs.
     _ASSET_SCHEME = "@pic:"
 
     def _resolve_asset_url(self, raw: str) -> str:
@@ -849,7 +849,7 @@ class OneBotAdapter:
         encoded = self._encode_asset_b64(target)
         if encoded is not None:
             return encoded
-        # Oversized or read failure — fall back to ``file://``. NapCat
+        # Oversized or read failure — fall back to ``file://``. LLBot
         # in a Docker deployment will still 404 on it, but on a native
         # install (or if the operator mounted the asset directory in)
         # it will work, and the WS frame is guaranteed to fit.
@@ -994,10 +994,10 @@ class OneBotAdapter:
         2. For any remaining ``ImageSegment`` whose URL is
            ``http(s)://...``, attempt to download the bytes ourselves
            (subject to a 4s timeout and a 4 MiB cap). On success we
-           inline as ``base64://`` so NapCat skips its own fetch. On
+           inline as ``base64://`` so LLBot skips its own fetch. On
            failure we replace the segment with a TextSegment carrying
            ``self._remote_fallback_text`` so the rest of the reply
-           still delivers — that's the whole point: NapCat dropping
+           still delivers — that's the whole point: LLBot dropping
            the entire ``send_msg`` because one image 404'd is what
            caused the 2992611516 incident.
 
@@ -1132,7 +1132,7 @@ class OneBotAdapter:
 
         We avoid creating the connection pool until first use because
         the CLI / unit-test paths typically never trigger a remote
-        fetch. ``follow_redirects=True`` matches what NapCat itself
+        fetch. ``follow_redirects=True`` matches what LLBot itself
         does — image hosts often 302 to a CDN.
         """
         client = self._http_client

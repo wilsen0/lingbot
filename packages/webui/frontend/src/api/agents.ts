@@ -24,16 +24,19 @@ export interface MemoryMessage {
 }
 export interface MemoryView {
   short_term: MemoryMessage[];
+  summary: string;
   long_term: unknown[];
 }
 
 export async function getAgentMemory(
   name: string,
-  userId = "webui",
+  userId?: string,
   scopeId = "test",
 ): Promise<MemoryView> {
+  const params: { user_id?: string; scope_id: string } = { scope_id: scopeId };
+  if (userId !== undefined) params.user_id = userId;
   const r = await apiClient.get<MemoryView>(`/agents/${encodeURIComponent(name)}/memory`, {
-    params: { user_id: userId, scope_id: scopeId },
+    params,
   });
   return r.data;
 }

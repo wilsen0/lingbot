@@ -1,8 +1,8 @@
 """Send an image via ``file://`` to confirm the legacy adapter path
-(bind-mount-dependent) actually fails inside the NapCat container.
+(bind-mount-dependent) actually fails inside the LLBot container.
 
 Reproduces what OneBotAdapter emits *before* the base64 rewrite lands.
-If NapCat returns ``status=failed`` or returns ok but no image arrives
+If LLBot returns ``status=failed`` or returns ok but no image arrives
 on the receiving QQ, the host filesystem isn't reachable from the
 container — exactly the bug we're fixing.
 """

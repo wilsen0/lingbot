@@ -430,7 +430,7 @@ class TestGachaImage:
         assert td is not None
         result = await td.fn(ctx, record=record, kind="十连", cost="488")
         # Tool returns a ``base64://`` URL so the OneBot adapter can
-        # ship the image to NapCat without a shared filesystem.
+        # ship the image to LLBot without a shared filesystem.
         assert result.startswith("base64://")
         import base64 as _b64
         import io

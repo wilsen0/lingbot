@@ -112,7 +112,7 @@ TARGET = "222222"
 
 
 def _onebot_event(text: str, at_user_id: str | None) -> Event:
-    """Build the Event you'd see if NapCat / OneBot delivered ``<text>@<at>``.
+    """Build the Event you'd see if LLBot / OneBot delivered ``<text>@<at>``.
 
     Mirrors the real wire shape: a ``text`` segment followed (when
     @-mentioned) by an ``at`` segment carrying the target's user id.

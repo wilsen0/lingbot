@@ -20,7 +20,13 @@ from linling_core.audit import AuditEntry
 from linling_core.events import Action
 from linling_core.router import clean_trigger_label
 from linling_core.segments import ImageSegment, TextSegment
-from linling_webui.state import BotInfo, TriggerInfo, WebChatReply, WebChatSegment
+from linling_webui.state import (
+    BotInfo,
+    MemorySnapshot,
+    TriggerInfo,
+    WebChatReply,
+    WebChatSegment,
+)
 from linling_webui.wire import wire_bot as _wire_bot_state
 
 if TYPE_CHECKING:
@@ -235,6 +241,7 @@ def attach_bot_to_webui(
         # the classifier in place still gets reflected on the next
         # poll — the WebUI fetches this on-demand, never cached.
         state.trigger_providers[agent_name] = _build_trigger_provider(bot)
+        state.memory_providers[agent_name] = _build_memory_provider(bot)
 
     # Expose the scheduler to the WebUI's state container so admin
     # endpoints can introspect pending tasks. ``state.scheduler`` is
@@ -434,6 +441,69 @@ def _build_trigger_provider(
         return out
 
     return provide
+
+
+def _build_memory_provider(
+    bot: RunningBot,
+) -> Callable[[str, str], Awaitable[MemorySnapshot]]:
+    """Build a closure that reads the bot's real KV-backed agent memory.
+
+    The WebUI router deliberately does not know the ``__history__`` /
+    ``__profile__`` KV layout. Keeping the layout access here mirrors the rest
+    of this module: it adapts a fully bootstrapped bot to the WebUI's generic
+    state container.
+    """
+
+    from linling_agent.history import KVHistoryStore  # noqa: PLC0415
+    from linling_agent.profile import ProfileStore  # noqa: PLC0415
+
+    history = KVHistoryStore(bot.kv, max_turns=bot.config.conversation.history_turns)
+    profiles = ProfileStore(bot.kv)
+
+    async def provide(user_id: str, scope_id: str) -> MemorySnapshot:
+        messages = await history.load(scope_id, user_id)
+        summary = await history.load_summary(scope_id, user_id)
+        long_term: list[dict[str, object]] = []
+        if user_id:
+            profile = await profiles.load(user_id)
+            name = await profiles.load_name(user_id)
+            if profile or name:
+                long_term.append(
+                    {
+                        "qq": user_id,
+                        "name": name,
+                        "profile": profile,
+                    }
+                )
+        return MemorySnapshot(
+            short_term=[_message_memory_item(message) for message in messages],
+            summary=summary,
+            long_term=long_term,
+        )
+
+    return provide
+
+
+def _message_memory_item(message: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "role": getattr(message, "role", "user"),
+        "content": getattr(message, "content", ""),
+        "name": getattr(message, "name", None),
+    }
+    tool_call_id = getattr(message, "tool_call_id", None)
+    if tool_call_id is not None:
+        item["tool_call_id"] = tool_call_id
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        item["tool_calls"] = [
+            {
+                "id": getattr(tc, "id", ""),
+                "name": getattr(tc, "name", ""),
+                "arguments": getattr(tc, "arguments", ""),
+            }
+            for tc in tool_calls
+        ]
+    return item
 
 
 # Substring matches that hide a trigger from the inline-suggest panel.
@@ -807,7 +877,7 @@ def _rewrite_image_url(raw: str) -> str:
     * ``@pic:<name>`` — rewrite to ``/api/files/assets/picture/<name>``,
       defaulting the extension to ``.jpg`` when the shorthand omits it.
     * ``base64://<payload>`` — rewrite to a ``data:image/png;base64,...``
-      URI. Tools like ``$扭蛋图$`` emit base64-inlined PNGs so NapCat
+      URI. Tools like ``$扭蛋图$`` emit base64-inlined PNGs so LLBot
       can ship them without a shared filesystem; the browser reads
       the same scheme natively (CSP already permits ``data:``).
     * Anything else (absolute filesystem paths, empty) — drop (return

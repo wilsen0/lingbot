@@ -1,9 +1,9 @@
-# LLBot (LLOneBot) 协议端 —— NapCat 的候选替代，和 NapCat 并存测试用。
+# LLBot (LLOneBot) 协议端
 #
-# 架构：pmhq 容器跑 QQ（外部驱动，非 NapCat 那种改 QQ 文件的 patch 注入），
+# 架构：pmhq 容器跑 QQ（外部驱动，patch 注入，不动宿主机 QQ 文件），
 #       llbot 容器跑 OneBot v11 服务端。linling 作为客户端连 llbot 的 :3003。
 #
-# 端口（全部只绑 127.0.0.1，和 NapCat 一样不对公网暴露）：
+# 端口（全部只绑 127.0.0.1，不对公网暴露）：
 #   3003  OneBot v11 WebSocket 服务端（linling 连这里）
 #   3080  LLBot WebUI（扫码登录 / 改配置；token 见 llbot_config/webui_token.txt）
 #

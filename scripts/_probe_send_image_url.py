@@ -1,4 +1,4 @@
-"""Send a remote ``http(s)://`` image to verify NapCat fetches it.
+"""Send a remote ``http(s)://`` image to verify LLBot fetches it.
 
 The 漂流瓶 / 接扔瓶子 DSL stores QQ-CDN URLs received from inbound
 ``%IMG0%`` and replays them later. The OneBot adapter does NOT rewrite
@@ -6,7 +6,7 @@ those (only ``@pic:`` shorthands are touched), so this is the
 unmodified path. We confirm that:
 
 * a generic ``https://`` image URL works,
-* a malformed / unreachable ``https://`` produces a NapCat-side error
+* a malformed / unreachable ``https://`` produces a LLBot-side error
   (so the failure mode is explicit, not silent).
 """
 

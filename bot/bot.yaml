@@ -13,7 +13,7 @@ adapters:
   - kind: cli
   - kind: onebot
     # OneBot v11 服务端地址。linling 作为客户端主动去连。
-    # 当前指向 LLBot(LLOneBot) 的 :3003；回退 NapCat 改成 :3001 即可。
+    # 当前指向 LLBot(LLOneBot) 的 :3003（见 docker/llbot/docker-compose.yml）。
     # 留空用 ${ONEBOT_WS_URL}(见 .env)，dev/prod 同源。
     ws_url: ${ONEBOT_WS_URL}
     access_token: ${ONEBOT_TOKEN}
