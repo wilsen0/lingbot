@@ -279,16 +279,19 @@ async def marketplace_list(
     whether to surface the message to the user.
     """
     if not item or item not in TRADABLE_ITEMS:
-        return f"error:暂不支持上架 {item!r}（目前可上架：{','.join(TRADABLE_ITEMS)}）"
+        return (
+            f"error:嗯…{item} 现在还摆不出来哦"
+            f"（苏苏能上架的：{'/'.join(TRADABLE_ITEMS)}）"
+        )
     if _is_group_scoped_item(item):
-        return f"error:{item} 是群维度物品，不能上全服摊位"
+        return f"error:{item} 是全群才有的东西，不能挂单哦"
     qty_i = _parse_int(qty)
     price_i = _parse_int(price_each)
     if qty_i <= 0 or price_i <= 0:
-        return "error:数量和单价必须是正整数"
+        return "error:数量和单价得是正整数才能上架呀"
     duration_h = _parse_int(duration_hours, 24)
     if duration_h < 1 or duration_h > 24 * 7:
-        return "error:挂单时长只能在 1~168 小时之间"
+        return "error:挂单时长挑个 1 到 168 小时之间的吧"
 
     seller = ctx.event.sender.id if ctx.event is not None else ""
     if not seller:
@@ -309,12 +312,12 @@ async def marketplace_list(
             if blob and _parse_json_field(blob, "status") == "active":
                 active_for_seller += 1
         if active_for_seller >= _MAX_ACTIVE_LISTINGS_PER_SELLER:
-            return f"error:最多同时挂{_MAX_ACTIVE_LISTINGS_PER_SELLER}个挂单，请先撤掉一些"
+            return f"error:手上还挂着{_MAX_ACTIVE_LISTINGS_PER_SELLER}单呢，先撤一些再来吧"
 
         # 2) Debit seller inventory (escrow).
         ok = await _debit_inventory(tx, seller, item, qty_i)
         if not ok:
-            return f"error:{item} 库存不足"
+            return f"error:你身上 {item} 不够啦"
 
         # 3) Write the listing record.
         listing = {
@@ -360,7 +363,7 @@ async def marketplace_list(
     dsl_name="购买挂单",
     description=(
         "Buy qty units from listing list_id. "
-        "$购买挂单 list_id qty$. Returns 'ok:paid=...,received=...' "
+        "$购买挂单 list_id qty$. Returns 'ok:paid=...,received=...,item=...' "
         "on success, or 'error:<reason>' on failure (insufficient "
         "funds, expired, already sold, self-purchase blocked, …)."
     ),
@@ -404,7 +407,7 @@ async def marketplace_buy(
         # 1) Read & validate the listing.
         blob = await tx.read(_SCOPE_LISTING, "挂单", list_id, "")
         if not blob:
-            return f"error:挂单 {list_id} 不存在"
+            return f"error:没找到挂单 {list_id}，可能已经撤掉或卖完啦"
         listing = _read_json(blob)
         if not isinstance(listing, dict):
             return f"error:挂单 {list_id} 数据损坏"
@@ -418,21 +421,21 @@ async def marketplace_buy(
         if status == "expired" or (expire_at and now > expire_at):
             # Lazy expire + refund.
             await _expire_listing_locked(tx, list_id, listing, seller, item)
-            return f"error:挂单 {list_id} 已过期，已自动撤销"
+            return f"error:挂单 {list_id} 过久了，苏苏已经帮你撤掉啦"
         if status != "active":
-            return f"error:挂单 {list_id} 不可购买（{status}）"
+            return f"error:挂单 {list_id} 已经下架啦"
         if buyer == seller:
-            return "error:不能买自己挂的物品"
+            return "error:自己挂的东西不能自己买哦，留给别人嘛"
         if item not in TRADABLE_ITEMS:
-            return f"error:挂单 {list_id} 物品 {item!r} 暂不可交易"
+            return f"error:这单 {item} 现在不能交易了"
         if left < qty_i:
-            return f"error:挂单 {list_id} 库存不足（剩余 {left}）"
+            return f"error:这单只剩 {left} 个啦，不够你要的"
 
         # 2) Cooldown check.
         last_buy_raw = await tx.read(_SCOPE_BUYER_COOLDOWN, "购买冷却", cooldown_key, "0")
         last_buy = _parse_int(last_buy_raw)
         if last_buy and now - last_buy < _BUY_COOLDOWN_S:
-            return "error:该挂单一小时内已购买过，冷却中"
+            return "error:这单一小时内已经买过啦，过会儿再来看看"
 
         # 3) Funds check + transfers.
         gross_pay = math.ceil(qty_i * price_each * (1 + _FEE_RATE))
@@ -440,7 +443,7 @@ async def marketplace_buy(
         buyer_balance_raw = await tx.read("啊/灵玉系", "灵玉", buyer, "0")
         buyer_balance = _parse_int(buyer_balance_raw)
         if buyer_balance < gross_pay:
-            return f"error:灵玉不足（需要 {gross_pay}，当前 {buyer_balance}）"
+            return f"error:灵玉不太够呢…需要 {gross_pay}，你身上只有 {buyer_balance}"
         seller_balance_raw = await tx.read("啊/灵玉系", "灵玉", seller, "0")
         seller_balance = _parse_int(seller_balance_raw)
         fee_balance_raw = await tx.read("啊/灵玉系", "灵玉", _BOT_FEE_ACCOUNT, "0")
@@ -486,7 +489,10 @@ async def marketplace_buy(
                 ),
             )
 
-    return f"ok:paid={gross_pay},received={qty_i * price_each}"
+    return (
+        f"ok:付了 {gross_pay} 灵玉"
+        f",到手 {qty_i * price_each} 灵玉的 {item}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -518,15 +524,15 @@ async def marketplace_cancel(ctx: ToolCtx, list_id: str = "") -> str:
     async with sq.transaction() as tx:
         blob = await tx.read(_SCOPE_LISTING, "挂单", list_id, "")
         if not blob:
-            return f"error:挂单 {list_id} 不存在"
+            return f"error:没找到挂单 {list_id}，可能已经撤掉或卖完啦"
         listing = _read_json(blob)
         if not isinstance(listing, dict):
             return f"error:挂单 {list_id} 数据损坏"
         if listing.get("seller") != seller:
-            return "error:只能撤自己的挂单"
+            return "error:这单是别人挂的，苏苏不能帮你撤哦"
         status = listing.get("status")
         if status in ("sold_out", "cancelled", "expired"):
-            return f"error:挂单 {list_id} 已是 {status} 状态"
+            return f"error:挂单 {list_id} 已经下架啦"
         item = listing.get("item", "")
         left = _parse_int(str(listing.get("left", 0)))
         await _credit_inventory(tx, seller, item, left)
@@ -607,9 +613,9 @@ async def marketplace_list_active(
         if agg == "1":
             return "全服摊位空空如也~"
         if seller:
-            return f"{seller} 还没在摊位上卖东西哦"
+            return f"{seller} 还没来摆过摊呢"
         if item:
-            return f"摊位上没有{item}哦"
+            return f"摊位上还没人挂 {item} 哦"
         return ""
 
     now = int(time.time())
@@ -711,7 +717,7 @@ async def marketplace_list_active(
         if seller:
             return "TA 还没在摊位上卖东西哦"
         if item:
-            return f"摊位上没有{item}哦"
+            return f"摊位上还没人挂 {item} 哦"
         return ""
 
     # 20-row cap only applies to the unfiltered (item-only) branch.
@@ -836,35 +842,67 @@ def _card_load_font(ctx: ToolCtx) -> Any:
 
 
 def _find_bundled_font() -> str | None:
-    """Return the first TTF/OTF inside ``data/fonts/`` if any.
+    """Return a usable CJK-capable TTF/OTF/TTC path, or None.
 
-    We scan a small, fixed set of filenames first (so the common
-    case skips the directory glob entirely), then fall back to
-    picking the first matching file in the directory. The
-    function lives at module scope (called once per card render)
-    but the directory walk is O(few files) — not worth caching.
+    Search order:
+
+    1. **Bundled** at ``data/fonts/`` (next to the repo root, both
+       cwd-relative and ``__file__``-relative lookups). This is the
+       preferred path: operators can drop a font in once and every
+       deployment (containers, CI, dev boxes) renders correctly
+       without depending on host packages.
+    2. **System** fonts at the well-known Noto / WenQuanYi / Arphic
+       locations. The bundled font is the canonical source of truth
+       — this branch is a safety net for development environments
+       that ship a CJK font via the OS package manager (e.g.
+       ``fonts-noto-cjk`` on Debian/Ubuntu, the standard package on
+       NapCat / LLBot containers).
+    3. **Not found** — return None so the caller can fall back to
+       Pillow's default bitmap (which renders CJK as tofu) and
+       log a single warning.
+
+    The function is called once per card render; the search is a
+    few ``Path.is_file()`` checks — not worth caching.
     """
-    # Bundled font lives at the repo root's data/fonts/; the
-    # runtime cwd is the repo root in both the `linling run` and
-    # the WebUI dispatch paths. The walk is robust to being
-    # called from a sub-package (e.g. when running tests in
-    # place) by checking a couple of fallback roots.
-    candidate_roots = [
+    bundled_roots = [
         Path("data/fonts"),
         Path(__file__).resolve().parents[3] / "data" / "fonts",
     ]
-    preferred = ("NotoSansSC-Regular.otf", "NotoSansSC-Regular.ttf",
-                 "NotoSansCJKsc-Regular.otf", "SourceHanSansSC-Regular.otf")
-    for root in candidate_roots:
+    bundled_preferred = (
+        "NotoSansSC-Regular.otf", "NotoSansSC-Regular.ttf",
+        "NotoSansCJKsc-Regular.otf", "SourceHanSansSC-Regular.otf",
+    )
+    for root in bundled_roots:
         if not root.is_dir():
             continue
-        for name in preferred:
+        for name in bundled_preferred:
             p = root / name
             if p.is_file():
                 return str(p)
         for p in sorted(root.iterdir()):
-            if p.suffix.lower() in (".otf", ".ttf"):
+            if p.suffix.lower() in (".otf", ".ttf", ".ttc"):
                 return str(p)
+
+    system_candidates = [
+        # Debian / Ubuntu: fonts-noto-cjk package.
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        # Older Debian: fonts-noto-cjk-extra / fonts-noto-cjk-pure.
+        "/usr/share/fonts/opentype/noto/NotoSansCJK.ttc",
+        # Arch / Manjaro.
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        # Fedora / RHEL.
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.otf",
+        # WenQuanYi fallback (a few lightweight distros still ship this).
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        # macOS.
+        "/System/Library/Fonts/PingFang.ttc",
+        "/Library/Fonts/Songti.ttc",
+    ]
+    for p in system_candidates:
+        if Path(p).is_file():
+            return p
     return None
 
 
@@ -1149,9 +1187,9 @@ def _parse_json_field(blob: str, field: str) -> str | None:
         "Strip a known prefix from a tool result. "
         "$剥离前缀 result prefix$ — returns *result* with *prefix* removed "
         "(if present) and a leading colon/whitespace trimmed, so the "
-        "DSL can show the marketplace's ``ok:paid=...`` or "
-        "``error:库存不足`` strings without leaking the protocol "
-        "prefix to the end user. Empty inputs return empty; missing "
+        "DSL can show the marketplace's ``ok:...`` or ``error:...`` "
+        "strings without leaking the protocol prefix to the end user. "
+        "Empty inputs return empty; missing "
         "prefix returns *result* unchanged."
     ),
     schema={"result": "string", "prefix": "string"},

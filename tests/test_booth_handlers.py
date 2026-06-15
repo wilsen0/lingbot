@@ -59,25 +59,23 @@ L:$列出挂单 $ %AT0% $
 ═════ %名%的摊位 ═════\\n
 %L%\\n
 ┈┈┈┈┈┈┈\\n
-#<挂单号> 买<数量>
+发「摊位帮助」看全部指令
 
 (摊位|摆摊)(鱼竿|鱼饵|蛋壳)$
 L:$列出挂单 %括号2% $ $
-═════ 苏苏的摊位 · %括号2% ═════\\n
+═════ 摊位地图 · %括号2% ═════\\n
 %L%\\n
 ┈┈┈┈┈┈┈\\n
-#<挂单号> 买<数量>
+发「摊位帮助」看全部指令
 
 (摊位|摆摊)$
 L:$列出挂单 $ $ 1$
 图:$市场图卡 $
 ±img=%图%±
-═════ 苏苏的摊位 ═════\\n
+═════ 摊位地图 ═════\\n
 %L%\\n
 ┈┈┈┈┈┈┈\\n
-发「摊位鱼竿/鱼饵/蛋壳」看分类\\n
-发「摊位@某人」看 TA 的摊位\\n
-发「我的摊位」看自己挂的
+发「摊位帮助」看全部指令
 
 (查挂单|查单)\\s+([0-9A-Z]{4})
 详:$格式化挂单 %括号2%$
@@ -85,12 +83,12 @@ L:$列出挂单 $ $ 1$
 挂单#%括号2%详情\\n
 %详%
 如果尾
-挂单%括号2%不存在哦
+嗯…%括号2% 这单找不到了，可能撤了或卖完啦
 
 (我的摊位|我的挂单)$
 索:$读 啊/摊位/索引/卖家/卖家 %QQ% []$
 如果:%索%==[]
-你还没有挂过单哦
+你还没来摆过摊呢～
 返回
 如果尾
 L:$列出挂单 $ %QQ% $
@@ -100,38 +98,53 @@ L:$列出挂单 $ %QQ% $
 ═════ %名%的摊位 ═════\\n
 %L%\\n
 ┈┈┈┈┈┈┈\\n
-#<挂单号> 买<数量>；撤单 <id> 撤销
+发「摊位帮助」看全部指令
 
 
 (上架|摆摊上架)(鱼竿|鱼饵|蛋壳)([0-9]+)个单价([0-9]+)
 ID:$上架挂单 %括号2% %括号3% %括号4% 24$
 正则:%ID%==error:.*
 消:$剥离前缀 %ID% error$
-上架失败：%消%
+上架没成：%消%
 返回
 如果尾
-已挂单！#%ID% 挂%括号2%x%括号3% 单价%括号4%灵玉/个
+上架好啦～#%ID% 挂 %括号2%×%括号3% 单价 %括号4% 灵玉/个
 消:%时间HH:mm%摊位 #%ID% 已上架 %括号2%×%括号3% 单价%括号4%灵玉
 $写 啊/主页系/最新消息 %QQ% %消%$
 
-(买|购买|下单|拍下)\\s*#?([0-9A-Z]{4})(?:\\s+([0-9]+))?
+(买|购买|下单|拍下)([0-9A-Z]{4})([0-9]+)个$
 Q:$购买挂单 %括号2% %括号3%$
 正则:%Q%==ok:.+
 消:$剥离前缀 %Q% ok$
-购买成功！%消%
+%消%
 返回
 如果尾
 消:$剥离前缀 %Q% error$
-购买失败：%消%
+购买没成：%消%
 
 (撤单|取消挂单)\\s*#?([0-9A-Z]{4})
 R:$撤单 %括号2%$
 正则:%R%==error:.*
 消:$剥离前缀 %R% error$
-撤单失败：%消%
+撤单没成：%消%
 返回
 如果尾
-已撤单！
+撤下来啦～
+
+
+(摊位帮助|摊位指令|摊位介绍)$
+苏苏帮你整理了一下摊位的指令～\\n
+═════ 摊位 · 指令一览 ═════\\n
+查看全部挂单：摊位\\n
+按物品看：摊位鱼竿/鱼饵/蛋壳\\n
+看某人摊位：摊位@某人\\n
+看自己摊位：我的摊位\\n
+挂单详情：查挂单 ABCD\\n
+上架：上架鱼竿/鱼饵/蛋壳5个单价10\\n
+购买：买ABCD1个\\n
+撤单：撤单ABCD\\n
+┈┈┈┈┈┈┈\\n
+挂单号是 4 位字母数字（例 A1B2）
 """
 
 TEST_GROUP = "999999"
@@ -220,9 +233,9 @@ async def test_listing_happy_path_emits_id_and_news(script, classifier, kv):
         intent.match.handler, ev, captures=intent.match.captures
     )
     text = _render(result.segments)
-    assert "已挂单！#" in text
-    assert "挂鱼竿x5" in text
-    assert "单价10灵玉/个" in text
+    assert "上架好啦～#" in text
+    assert "鱼竿×5" in text
+    assert "单价 10 灵玉/个" in text
     # 5 rods escrowed; seller keeps 0.
     assert await kv.read("休闲系/钓鱼", "鱼竿", SENDER) == "0"
     # News entry written.
@@ -250,12 +263,12 @@ async def test_listing_insufficient_inventory_surfaces_error(
         intent.match.handler, ev, captures=intent.match.captures
     )
     text = _render(result.segments)
-    # The tool returns "error:鱼竿 库存不足" — this must be surfaced
+    # The tool returns "error:你身上 鱼竿 不够啦" — this must be surfaced
     # verbatim rather than being swallowed by a dead if-check.
-    assert text.startswith("error:") or "库存不足" in text, (
+    assert text.startswith("上架没成") or "不够" in text, (
         f"expected inventory error, got: {text!r}"
     )
-    assert "已挂单" not in text, "success template leaked despite the error"
+    assert "上架好啦" not in text, "success template leaked despite the error"
     # Inventory untouched.
     assert await kv.read("休闲系/钓鱼", "鱼竿", SENDER) == "1"
 
@@ -285,18 +298,29 @@ async def test_buy_happy_path_returns_tool_output(script, classifier, kv):
     # Pre-fund the buyer.
     await kv.write("啊/灵玉系", "灵玉", SENDER, "100")
 
-    ev = _onebot_event(f"买 {list_id} 2")
+    ev = _onebot_event(f"买{list_id}2个")
     intent = classifier.classify(ev)
+    # Result-oriented: the user typed a valid buy, the router should
+    # classify it as a command (not chat fallback) AND the captured
+    # id/qty must round-trip into the tool call.
+    assert intent.kind == "command", (
+        f"expected command, got {intent.kind!r} ({intent.reason!r})"
+    )
     assert intent.match is not None
+    # Trigger is `(买|购买|下单|拍下)([0-9A-Z]{4})([0-9]+)个$` — three
+    # groups, but only 括号2/3 are used in the handler body. Verify the
+    # whole list so a future regex change can't silently shift indices.
+    assert list(intent.match.captures) == ["买", list_id, "2"]
     result = await _vm(kv).execute_handler(
         intent.match.handler, ev, captures=intent.match.captures
     )
     text = _render(result.segments)
-    # The DSL strips the ``ok:`` protocol prefix before showing the
-    # user — the raw tool return is a status line, not user-facing.
-    assert text.startswith("购买成功！"), f"unexpected success msg: {text!r}"
-    assert "paid=" in text
-    assert "received=" in text
+    # The tool now returns a natural sentence like
+    # "付了 11 灵玉,到手 10 灵玉的 鱼竿" — the DSL strips ``ok:`` and
+    # the rule body passes the rest through as-is.
+    assert "付了" in text and "灵玉" in text and "鱼竿" in text, (
+        f"unexpected success msg: {text!r}"
+    )
     # 2 rods moved buyer-ward.
     assert await kv.read("休闲系/钓鱼", "鱼竿", SENDER) == "2"
     # In the escrow model, the seller's inventory was already
@@ -308,6 +332,132 @@ async def test_buy_happy_path_returns_tool_output(script, classifier, kv):
     assert await kv.read("休闲系/钓鱼", "鱼竿", seller) == "3"
     listing_blob = await kv.read(_SCOPE_LISTING, "挂单", list_id, "")
     assert json.loads(listing_blob)["left"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # Space between 买 and the id — must NOT match.
+        "买 A1B2 2个",
+        # Missing 个 — must NOT match.
+        "买A1B22",
+        # Trailing junk — must NOT match.
+        "买A1B22个谢谢",
+    ],
+)
+async def test_buy_compact_only(script, classifier, kv, msg):
+    """The 买 rule is intentionally rigid: 买[ID][数字]个 only.
+
+    Mirrors the上架 rule's compact form (``上架鱼竿5个单价10``). Anything
+    looser must fall through to :class:`Intent.kind="chat"` — the router's
+    fallback for "no rule matches, let the LLM handle it." We assert on
+    the *observed* intent (not on which rule did or didn't match) so the
+    test stays honest if a future rule accidentally starts gobbling
+    these inputs.
+    """
+    ev = _onebot_event(msg)
+    intent = classifier.classify(ev)
+    assert intent.kind == "chat", (
+        f"expected chat fallback for {msg!r}, got kind={intent.kind!r} "
+        f"reason={intent.reason!r} match_trigger="
+        f"{intent.match.handler.trigger if intent.match else None!r}"
+    )
+    assert intent.match is None, (
+        f"no rule should match {msg!r} but matched: {intent.match.handler.trigger}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 摊位帮助 — the help handler is the single source of truth for booth
+# command syntax, and the three page-footers point at it. Pin both: the
+# help text contains the *current* syntax, and the footers no longer
+# carry the old `#<挂单号> 买<数量>` placeholder.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("msg", ["摊位帮助", "摊位指令", "摊位介绍"])
+async def test_booth_help_renders_current_syntax(script, classifier, kv, msg):
+    """Any of the three help triggers should emit the help block."""
+    ev = _onebot_event(msg)
+    intent = classifier.classify(ev)
+    assert intent.kind == "command", (
+        f"{msg!r}: expected command, got {intent.kind!r} ({intent.reason!r})"
+    )
+    assert intent.match is not None
+    result = await _vm(kv).execute_handler(
+        intent.match.handler, ev, captures=intent.match.captures
+    )
+    text = _render(result.segments)
+    # The eight booth commands must each appear in their *current* form.
+    for needle in (
+        "摊位",          # 全摊
+        "摊位鱼竿",      # 按物品
+        "摊位@某人",     # @某人
+        "我的摊位",      # 自己
+        "查挂单",        # 详情
+        "上架",          # 上架
+        "买ABCD1个",     # 买
+        "撤单ABCD",      # 撤单
+        "4 位字母数字",  # ID 长度说明
+    ):
+        assert needle in text, f"{msg!r} output missing {needle!r}: {text!r}"
+    # The old placeholder must NOT leak through.
+    assert "买<数量>" not in text, f"stale placeholder in {msg!r}: {text!r}"
+    # The help page opens with a one-line 苏苏 intro — pin it so
+    # the persona stays present at the help entry point.
+    assert "苏苏" in text, f"{msg!r} should open with a 苏苏 line: {text!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # (摊位)$ — main booth list
+        "摊位",
+        # (摊位鱼竿|鱼饵|蛋壳)$ — category
+        "摊位鱼竿",
+        # (我的摊位)$ — own stall
+        "我的摊位",
+    ],
+)
+async def test_booth_page_footers_point_at_help(script, classifier, kv, msg):
+    """The three list pages should NOT carry stale placeholder syntax.
+
+    The footers used to show ``#<挂单号> 买<数量>`` — the 2026 compact
+    ID format replaced that, and the help handler is now the canonical
+    reference. We assert on the *absence* of the old placeholder so a
+    future helper who restores it for "convenience" trips this test.
+
+    To exercise the page footer, the sender must have at least one
+    active listing; otherwise the page short-circuits to a friendly
+    empty message (verified separately in
+    ``test_my_stall_with_no_listings_says_so``).
+    """
+    # Seed at least one listing so the "has data" branch is hit.
+    from linling_core.tools import ToolCtx
+    from linling_tools_stdlib import trade_ops
+
+    await _seed_seller_with_rods(kv, qty=5)
+    seller_ctx = ToolCtx(kv=kv, event=_event_for(SENDER), bot_id="booth_test")
+    await trade_ops.marketplace_list(
+        seller_ctx, item="鱼竿", qty="2", price_each="10"
+    )
+
+    ev = _onebot_event(msg)
+    intent = classifier.classify(ev)
+    assert intent.match is not None, f"{msg!r} should match a booth page"
+    result = await _vm(kv).execute_handler(
+        intent.match.handler, ev, captures=intent.match.captures
+    )
+    text = _render(result.segments)
+    # The help pointer must be there …
+    assert "摊位帮助" in text, f"{msg!r} footer should point at 摊位帮助: {text!r}"
+    # … and the stale placeholder must not.
+    assert "买<数量>" not in text, (
+        f"{msg!r} footer still shows stale '买<数量>' placeholder: {text!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +522,7 @@ async def test_my_stall_with_no_listings_says_so(script, classifier, kv):
     result = await _vm(kv).execute_handler(
         intent.match.handler, ev, captures=intent.match.captures
     )
-    assert _render(result.segments) == "你还没有挂过单哦"
+    assert _render(result.segments) == "你还没来摆过摊呢～"
 
 
 @pytest.mark.asyncio
@@ -453,7 +603,7 @@ async def test_inspect_unknown_listing_says_not_found(script, classifier, kv):
         intent.match.handler, ev, captures=intent.match.captures
     )
     text = _render(result.segments)
-    assert "不存在" in text
+    assert "找不到了" in text, f"expected not-found msg, got: {text!r}"
     # The success-template line must NOT leak into the empty case.
     assert "详情" not in text
 

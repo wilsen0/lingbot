@@ -17,7 +17,18 @@ from typing import Any
 import structlog
 from linling_core.events import Action, Event, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
-from linling_core.segments import ReplySegment, TextSegment
+from linling_core.segments import (
+    CardSegment,
+    FaceSegment,
+    FileSegment,
+    ImageSegment,
+    ReplySegment,
+    Segment,
+    TextSegment,
+    VideoSegment,
+    VoiceSegment,
+    XmlSegment,
+)
 
 from linling_agent.action_delay import with_random_delay_before
 from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
@@ -321,6 +332,7 @@ class _BufferedMessage:
     sent_at: float
     received_seq: int
     mentions_bot: bool
+    mentions_all: bool
     reply_to_bot: bool
     # User ids this message @-mentioned that are NOT the bot and not
     # ``@all``. ``plain_text`` strips every AtSegment, so without this
@@ -328,10 +340,18 @@ class _BufferedMessage:
     # LLM sees becomes a floating "你说得对" that reads like it could be
     # aimed at the bot. We surface these (resolved to names where the
     # target also appears in the batch, else a neutral "某人" marker so
-    # raw QQ ids never reach the LLM) via the ``at`` field in the
+    # raw QQ ids never reach the LLM) via the ``at_targets`` field in the
     # candidate JSON. Default ``()`` keeps the field optional for any
     # direct ``_BufferedMessage`` construction.
     at_user_ids: tuple[str, ...] = ()
+    # True iff the original message carried any non-text content segment
+    # (image / face / mface sticker / voice / …) that ``_llm_visible_text``
+    # rendered as a ``[图片]``/``[表情]``/… marker. Drives whether the
+    # system prompt bothers explaining the markers — skipped on pure-text
+    # batches so the prompt stays byte-identical to the pre-marker behaviour
+    # (important for tight token budgets in tests and for not cluttering the
+    # common case).
+    has_non_text: bool = False
 
 
 @dataclass(frozen=True)
@@ -745,7 +765,7 @@ class GroupBatchChatDispatcher:
                     "_linling_group_batch_ids": [m.message_id for m in batch],
                     "_linling_skip_history": True,
                     "_linling_disable_tools": True,
-                    "_linling_prompt_system": self._build_system_prompt(),
+                    "_linling_prompt_system": self._build_system_prompt(batch),
                 },
             }
         )
@@ -808,7 +828,7 @@ class GroupBatchChatDispatcher:
             return None
         await self._ensure_history(session, event)
         tools = _group_batch_tool_schemas()
-        selector_prompt = self._build_tool_system_prompt()
+        selector_prompt = self._build_tool_system_prompt(batch)
         agent_system = str(getattr(agent_def, "system", "") or "")
         if agent_system:
             selector_prompt = f"{agent_system}\n\n{selector_prompt}"
@@ -838,7 +858,7 @@ class GroupBatchChatDispatcher:
         messages = fit_messages_to_budget(messages, self._context_max_tokens())
         # --- Pre-flight: probe runs only when the rule-based attention
         # gate did NOT fire. If the rule already said "respond" (e.g.
-        # mentions_bot, question particle, bot_name in text), skip the
+        # @me/@all, reply-to-me, question particle, bot_name in text), skip the
         # probe entirely — re-judging with a small model that lacks
         # full context can incorrectly veto an obvious reply.
         #
@@ -906,6 +926,10 @@ class GroupBatchChatDispatcher:
             batch_size=len(batch),
             had_attention=had_attention,
             history_msgs=len(history),
+            at_target_messages=sum(1 for msg in batch if msg.at_user_ids),
+            mentions_me_messages=sum(1 for msg in batch if msg.mentions_bot),
+            mentions_all_messages=sum(1 for msg in batch if msg.mentions_all),
+            reply_to_me_messages=sum(1 for msg in batch if msg.reply_to_bot),
         )
         for _ in range(_MAX_TOOL_ROUNDS):
             if not await self._batch_is_current(event, generation):
@@ -1349,18 +1373,29 @@ class GroupBatchChatDispatcher:
         # group gets a free pass through the attention gate even if
         # rule patterns wouldn't fire on it.
         await self._refresh_attention_window(event.scope.id, msg.sender_id)
+        name_by_id = _batch_name_index(batch)
+        user_input = _message_history_line(msg, name_by_id=name_by_id)
+        tool_result = _tool_json(
+            {
+                "ok": True,
+                "action": "reply_to_message",
+                "replied_to": msg.sender_name,
+                "original_text": msg.text[:200],
+                "reply": reply_text,
+            }
+        )
         record = _ToolSendRecord(
             messages=_tool_history_messages(
-                _message_history_line(msg),
+                user_input,
                 assistant=assistant,
                 tool_call=tool_call,
-                tool_result="回复完成",
+                tool_result=tool_result,
             ),
-            user_input=_message_history_line(msg),
+            user_input=user_input,
             assistant_output=reply_text,
         )
         return (
-            "回复完成",
+            tool_result,
             record,
             False,
             False,
@@ -1392,18 +1427,26 @@ class GroupBatchChatDispatcher:
         if not sent:
             return _tool_json({"ok": False, "error": error or "send failed"}), None, False, True
         await self._refresh_attention_for_group_send(event, batch)
+        batch_summary = _batch_history_summary(batch)
+        tool_result = _tool_json(
+            {
+                "ok": True,
+                "action": "send_group",
+                "sent_text": reply_text,
+            }
+        )
         record = _ToolSendRecord(
             messages=_tool_history_messages(
-                _batch_history_summary(batch),
+                batch_summary,
                 assistant=assistant,
                 tool_call=tool_call,
-                tool_result="发送完成",
+                tool_result=tool_result,
             ),
-            user_input=_batch_history_summary(batch),
+            user_input=batch_summary,
             assistant_output=reply_text,
         )
         return (
-            "发送完成",
+            tool_result,
             record,
             False,
             False,
@@ -1414,6 +1457,7 @@ class GroupBatchChatDispatcher:
         if not selected:
             return _tool_json({"ok": False, "error": "no matching messages"})
         selected = selected[:_MAX_READ_MESSAGES]
+        name_by_id = _batch_name_index(batch)
         text_limit = max(200, min(1_200, _MAX_TOOL_RESULT_CHARS // max(1, len(selected)) - 160))
         return _tool_json(
             {
@@ -1421,7 +1465,11 @@ class GroupBatchChatDispatcher:
                 "messages": [
                     {
                         "line": line,
-                        **_message_tool_payload(msg, text_limit=text_limit),
+                        **_message_tool_payload(
+                            msg,
+                            text_limit=text_limit,
+                            name_by_id=name_by_id,
+                        ),
                     }
                     for line, msg in selected
                 ],
@@ -1573,13 +1621,15 @@ class GroupBatchChatDispatcher:
             message_id=event.id,
             sender_id=event.sender.id,
             sender_name=event.sender.display_name or event.sender.id,
-            text=_clip_text(event.text.strip(), self._cfg.max_chars),
+            text=_clip_text(_llm_visible_text(event.segments), self._cfg.max_chars),
             timestamp=_format_time(event.time),
             sent_at=_event_sort_timestamp(event.time),
             received_seq=next(self._message_seq),
             mentions_bot=_mentions_bot(event, self._cfg.bot_names),
+            mentions_all=_mentions_all(event),
             reply_to_bot=_reply_to_bot(event),
             at_user_ids=_other_at_user_ids(event),
+            has_non_text=_has_non_text_segment(event.segments),
         )
 
     def _trim_locked(self, state: _GroupState) -> None:
@@ -1604,7 +1654,7 @@ class GroupBatchChatDispatcher:
             state.flush_task = None
 
     def _is_attention_candidate(self, msg: _BufferedMessage) -> bool:
-        if msg.mentions_bot or msg.reply_to_bot:
+        if msg.mentions_bot or msg.mentions_all or msg.reply_to_bot:
             return True
         if any(name and name in msg.text for name in self._cfg.bot_names):
             return True
@@ -1626,32 +1676,22 @@ class GroupBatchChatDispatcher:
 
     def _build_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = [
-            "候选消息（按发送时间从早到晚；sender_id 稳定，sender_name 昵称；mentions_bot=找你；at_others=@别人非你）："
+            "候选消息（按时间升序；sender_id 稳定，sender_name 昵称；mentions_me/mentions_all/reply_to_me/text_truncated 出现即 true；at_targets=被@的其他成员；有 at_targets 且未找你/全体时别随意插话）：",
         ]
         name_by_id = _batch_name_index(batch)
         for m in batch:
-            entry = {
-                "message_id": m.message_id,
-                "sender_id": m.sender_id,
-                "sender_name": m.sender_name,
-                "time": m.timestamp,
-                "text": m.text,
-                "mentions_bot": m.mentions_bot,
-                "reply_to_bot": m.reply_to_bot,
-            }
-            at_others = _render_at_targets(m.at_user_ids, name_by_id)
-            if at_others:
-                entry["at_others"] = at_others
+            entry = _message_payload(m, name_by_id=name_by_id)
             lines.append(json.dumps(entry, ensure_ascii=False))
         return "\n".join(lines)
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, batch: list[_BufferedMessage]) -> str:
         return "\n".join(
             [
                 "你现在在群聊里，大家七嘴八舌地说着话。",
                 "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
                 "觉得没什么好说的就安静待着，不用勉强。",
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
                 "回复格式（按情况选一种）：",
                 "A. 一句话就够 → 直接输出一条文字，不要任何前缀，不要空行分段。",
@@ -1666,12 +1706,13 @@ class GroupBatchChatDispatcher:
             ]
         )
 
-    def _build_tool_system_prompt(self) -> str:
+    def _build_tool_system_prompt(self, batch: list[_BufferedMessage]) -> str:
         return "\n".join(
             [
                 "你现在在群聊里，大家七嘴八舌地说着话。",
                 "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
                 "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
                 "回复方式（按情况选一种或自由组合）：",
                 "1. 想直接在群里说一句话 → 直接输出一条文字，不要任何前缀，不要空行分段（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
@@ -1691,31 +1732,19 @@ class GroupBatchChatDispatcher:
 
     def _build_tool_prompt(self, batch: list[_BufferedMessage]) -> str:
         lines = [
-            "群聊候选消息如下，按发送时间从早到晚。sender_id 稳定，sender_name 昵称；mentions_bot=找你；at_others=@别人非你；先判断是否值得回复；text_truncated=true 可用 line/message_id 读原文。",
+            "群聊候选消息如下，按时间升序。sender_id 稳定，sender_name 昵称；mentions_me/mentions_all/reply_to_me/text_truncated 出现即 true；at_targets=被@的其他成员；有 at_targets 且未找你/全体时别随意插话；text_truncated 可用 line/message_id 读原文。",
             "候选索引：",
         ]
         name_by_id = _batch_name_index(batch)
         for line, msg in enumerate(batch, start=1):
             clipped_text = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
-            entry = {
-                "line": line,
-                "message_id": msg.message_id,
-                "time": msg.timestamp,
-                "sender_id": msg.sender_id,
-                "sender_name": msg.sender_name,
-                "text": clipped_text,
-                "text_truncated": len(clipped_text) < len(msg.text),
-                "mentions_bot": msg.mentions_bot,
-                "reply_to_bot": msg.reply_to_bot,
-            }
-            at_others = _render_at_targets(msg.at_user_ids, name_by_id)
-            if at_others:
-                # Direction marker: this message @-mentioned other group
-                # members (not you). Resolved to names when the target
-                # also spoke in this batch, else "某人". Helps avoid
-                # treating an addressed-to-someone-else line as if it
-                # were aimed at the bot.
-                entry["at_others"] = at_others
+            entry = _message_payload(
+                msg,
+                name_by_id=name_by_id,
+                line=line,
+                text=clipped_text,
+                text_truncated=len(clipped_text) < len(msg.text),
+            )
             lines.append(json.dumps(entry, ensure_ascii=False))
         return "\n".join(lines)
 
@@ -1753,10 +1782,18 @@ def _mentions_bot(event: Event, bot_names: tuple[str, ...]) -> bool:
     if raw_self_id is not None:
         bot_ids.add(str(raw_self_id))
     for seg in event.segments:
-        if getattr(seg, "kind", "") == "at" and getattr(seg, "user_id", "") in {*bot_ids, "all"}:
+        uid = str(getattr(seg, "user_id", ""))
+        if getattr(seg, "kind", "") == "at" and uid in bot_ids:
             return True
     text = event.text
     return any(name and name in text for name in bot_names)
+
+
+def _mentions_all(event: Event) -> bool:
+    return any(
+        getattr(seg, "kind", "") == "at" and str(getattr(seg, "user_id", "")) == "all"
+        for seg in event.segments
+    )
 
 
 def _other_at_user_ids(event: Event) -> tuple[str, ...]:
@@ -1877,6 +1914,67 @@ def _looks_like_question(text: str) -> bool:
     if "?" in text or "？" in text:
         return True
     return bool(re.search(r"(吗|嘛|么|怎么|如何|为啥|为什么|能不能|可不可以|是不是)", text))
+
+
+# Non-text segments → short LLM-visible markers, in segment order. We render
+# these into the buffered message ``text`` so a pure-sticker / image / voice
+# message no longer appears as empty content (which made the LLM ask "what did
+# you send?"). ``AtSegment`` / ``ReplySegment`` / ``PokeSegment`` are modeled
+# separately (mentions_me / at_targets / reply_to_me) and deliberately not
+# inlined here — they must not show up as stray text in the candidate.
+_NON_TEXT_MARKERS: tuple[tuple[type[Segment], str], ...] = (
+    (ImageSegment, "[图片]"),
+    (FaceSegment, "[表情]"),  # QQ basic face + mface/bface 商城表情包/贴纸
+    (VoiceSegment, "[语音]"),
+    (VideoSegment, "[视频]"),
+    (FileSegment, "[文件]"),
+    (CardSegment, "[卡片]"),
+    (XmlSegment, "[卡片]"),
+)
+
+
+def _llm_visible_text(segments: list[Segment]) -> str:
+    """Render segments as the text the LLM should see.
+
+    ``TextSegment``s pass through verbatim; each known non-text segment becomes
+    its marker (``[图片]`` / ``[表情]`` / …). Unknown segment kinds contribute
+    nothing. Leading/trailing whitespace is stripped, so a pure non-text message
+    yields exactly its marker (e.g. ``"[表情]"``) rather than an empty string.
+    """
+    parts: list[str] = []
+    for seg in segments:
+        if isinstance(seg, TextSegment):
+            parts.append(seg.text)
+            continue
+        for kind, marker in _NON_TEXT_MARKERS:
+            if isinstance(seg, kind):
+                parts.append(marker)
+                break
+    return "".join(parts).strip()
+
+
+def _has_non_text_segment(segments: list[Segment]) -> bool:
+    """True iff ``segments`` carry any non-text content we render as a marker."""
+    for seg in segments:
+        if isinstance(seg, TextSegment):
+            continue
+        if any(isinstance(seg, kind) for kind, _ in _NON_TEXT_MARKERS):
+            return True
+    return False
+
+
+# Shared guidance explaining the non-text markers to the LLM. Only injected
+# when the current batch actually contains a non-text message (see
+# ``_BufferedMessage.has_non_text``), so pure-text batches keep the exact
+# system prompt they had before this feature — both to avoid cluttering the
+# common case and because the selector prompt is counted toward the context
+# budget (Chinese-heavy text scores high under the byte-based token estimate),
+# and the marker rule is irrelevant when there are no markers to explain.
+_NON_TEXT_MARKER_RULE = (
+    "候选或历史里的 text 若是 [图片]/[表情]/[语音]/[视频]/[文件]/[卡片] 这类标记，"
+    "说明对方发的是非文字内容（你看不到实际内容）；这类消息通常不需要回复，"
+    "也不要追问对方发了什么。"
+)
 
 
 def _clip_text(text: str, max_chars: int) -> str:
@@ -2008,17 +2106,49 @@ def _message_tool_payload(
     msg: _BufferedMessage,
     *,
     text_limit: int | None = None,
+    name_by_id: dict[str, str] | None = None,
 ) -> dict[str, object]:
     text = msg.text if text_limit is None else _clip_text(msg.text, text_limit)
-    return {
+    return _message_payload(
+        msg,
+        name_by_id=name_by_id or {},
+        text=text,
+        text_truncated=len(text) < len(msg.text),
+    )
+
+
+def _message_payload(
+    msg: _BufferedMessage,
+    *,
+    name_by_id: dict[str, str],
+    line: int | None = None,
+    text: str | None = None,
+    text_truncated: bool | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "message_id": msg.message_id,
+        "time": msg.timestamp,
         "sender_id": msg.sender_id,
         "sender_name": msg.sender_name,
-        "time": msg.timestamp,
-        "text": text,
-        "mentions_bot": msg.mentions_bot,
-        "reply_to_bot": msg.reply_to_bot,
+        "text": msg.text if text is None else text,
     }
+    if line is not None:
+        payload = {"line": line, **payload}
+    if msg.mentions_bot:
+        payload["mentions_me"] = True
+    if msg.mentions_all:
+        payload["mentions_all"] = True
+    if msg.reply_to_bot:
+        payload["reply_to_me"] = True
+    if text_truncated:
+        payload["text_truncated"] = True
+    at_targets = _render_at_targets(msg.at_user_ids, name_by_id)
+    if at_targets:
+        # Direction marker: this message @-mentioned other group
+        # members (not the bot). Resolved to names when the target also
+        # spoke in this batch, else "某人".
+        payload["at_targets"] = at_targets
+    return payload
 
 
 def _select_batch_messages(
@@ -2056,36 +2186,48 @@ def _history_message_payload(
     *,
     line: int | None = None,
     note: str = "",
+    name_by_id: dict[str, str] | None = None,
 ) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "message_id": msg.message_id,
-        "time": msg.timestamp,
-        "sender_id": msg.sender_id,
-        "sender_name": msg.sender_name,
-        "text": _clip_text(msg.text, _BATCH_HISTORY_TEXT_CHARS),
-        "mentions_bot": msg.mentions_bot,
-        "reply_to_bot": msg.reply_to_bot,
-    }
-    if line is not None:
-        payload = {"line": line, **payload}
+    text = _clip_text(msg.text, _BATCH_HISTORY_TEXT_CHARS)
+    payload = _message_payload(
+        msg,
+        name_by_id=name_by_id or {},
+        line=line,
+        text=text,
+        text_truncated=len(text) < len(msg.text),
+    )
     if note:
         payload["note"] = note
     return payload
 
 
-def _message_history_line(msg: _BufferedMessage, *, note: str = "") -> str:
+def _message_history_line(
+    msg: _BufferedMessage,
+    *,
+    note: str = "",
+    name_by_id: dict[str, str] | None = None,
+) -> str:
     return "\n".join(
         [
             "群聊历史消息：",
-            json.dumps(_history_message_payload(msg, note=note), ensure_ascii=False),
+            json.dumps(
+                _history_message_payload(msg, note=note, name_by_id=name_by_id),
+                ensure_ascii=False,
+            ),
         ]
     )
 
 
 def _batch_history_summary(batch: list[_BufferedMessage]) -> str:
     lines = ["群聊历史片段（按发送时间从早到晚；我随后在群里直接发言）："]
+    name_by_id = _batch_name_index(batch)
     for line, msg in enumerate(batch, start=1):
-        lines.append(json.dumps(_history_message_payload(msg, line=line), ensure_ascii=False))
+        lines.append(
+            json.dumps(
+                _history_message_payload(msg, line=line, name_by_id=name_by_id),
+                ensure_ascii=False,
+            )
+        )
     return "\n".join(lines)
 
 
@@ -2145,12 +2287,14 @@ def _record_from_action(action: Action, batch: list[_BufferedMessage]) -> _ToolS
     )
     if reply_id and reply_id in message_by_id:
         msg = message_by_id[reply_id]
+        name_by_id = _batch_name_index(batch)
+        user_input = _message_history_line(msg, name_by_id=name_by_id)
         return _ToolSendRecord(
             messages=[
-                Message(role="user", content=_message_history_line(msg)),
+                Message(role="user", content=user_input),
                 Message(role="assistant", content=reply_text),
             ],
-            user_input=_message_history_line(msg),
+            user_input=user_input,
             assistant_output=reply_text,
         )
     return _ToolSendRecord(

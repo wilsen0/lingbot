@@ -107,6 +107,28 @@ def _dec_json(d: dict[str, Any]) -> Segment:
     return CardSegment(payload=str(d.get("data", "")))
 
 
+def _dec_mface(d: dict[str, Any]) -> Segment:
+    """QQ market face (商城表情包 / 贴纸).
+
+    Modeled as a :class:`FaceSegment` — a sticker is conceptually a face —
+    with the platform-specific fields (``summary``/``url``/``emoji_package_id``
+    etc.) preserved under ``extras``. Previously this type had no decoder and
+    was dropped entirely, which made a pure-sticker message decode to an empty
+    segment list and appear as genuinely-empty text downstream. Keeping it as
+    a real segment lets the agent layer tell "user sent a sticker" apart from
+    "user sent nothing".
+    """
+    return FaceSegment(
+        face_id=str(d.get("emoji_id", "")),
+        extras={k: v for k, v in d.items() if k != "emoji_id"},
+    )
+
+
+def _dec_bface(d: dict[str, Any]) -> Segment:
+    """QQ original/creative face (原创表情). Same rationale as :func:`_dec_mface`."""
+    return FaceSegment(face_id=str(d.get("id", "")), extras=dict(d))
+
+
 _DECODERS: dict[str, Callable[[dict[str, Any]], Segment]] = {
     "text": _dec_text,
     "image": _dec_image,
@@ -119,6 +141,8 @@ _DECODERS: dict[str, Callable[[dict[str, Any]], Segment]] = {
     "video": _dec_video,
     "xml": _dec_xml,
     "json": _dec_json,
+    "mface": _dec_mface,
+    "bface": _dec_bface,
 }
 
 

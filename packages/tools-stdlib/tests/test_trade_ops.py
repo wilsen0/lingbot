@@ -224,7 +224,7 @@ async def test_list_rejects_when_insufficient_inventory(ctx_factory) -> None:
         seller, item="鱼竿", qty="5", price_each="10"
     )
     assert r.startswith("error:")
-    assert "库存" in r
+    assert "鱼竿" in r and "不够" in r
     # Inventory untouched.
     assert await seller.kv.read("休闲系/钓鱼", "鱼竿", "seller-1", "0") == "2"
 
@@ -243,7 +243,7 @@ async def test_list_caps_active_per_seller(ctx_factory) -> None:
         seller, item="鱼竿", qty="1", price_each="10"
     )
     assert r.startswith("error:")
-    assert "挂单" in r or "上限" in r or "最多" in r
+    assert "挂着" in r or "撤一些" in r
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +265,7 @@ async def test_buy_transfers_funds_and_goods(ctx_factory, kv) -> None:
     result = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="2")
     assert result.startswith("ok:")
     # gross=ceil(2*100*1.04)=208, seller receives 200, fee=8.
-    assert "paid=208" in result
-    assert "received=200" in result
+    assert "208" in result and "200" in result and "鱼竿" in result
 
     # Funds moved.
     assert await kv.read("啊/灵玉系", "灵玉", "buyer-1", "0") == "792"
@@ -297,8 +296,7 @@ async def test_buy_rounds_up_partial_jiangweiyuan(ctx_factory, kv) -> None:
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
     assert r.startswith("ok:")
     # ceil(1 * 1.04) = 2, seller gets 1, fee = 1.
-    assert "paid=2" in r
-    assert "received=1" in r
+    assert "2" in r and "1" in r and "鱼饵" in r
     assert await kv.read("啊/灵玉系", "灵玉", "buyer-1", "0") == "8"
 
 
@@ -330,7 +328,7 @@ async def test_buy_rejects_self_purchase(ctx_factory, kv) -> None:
     # Same sender — must be rejected.
     r = await trade_ops.marketplace_buy(seller, list_id=list_id, qty="1")
     assert r.startswith("error:")
-    assert "自己" in r
+    assert "自己" in r or "别人" in r
 
 
 async def test_buy_rejects_insufficient_funds(ctx_factory, kv) -> None:
@@ -342,7 +340,7 @@ async def test_buy_rejects_insufficient_funds(ctx_factory, kv) -> None:
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
     assert r.startswith("error:")
-    assert "灵玉不足" in r
+    assert "灵玉" in r and "不太够" in r
 
 
 async def test_buy_rejects_qty_beyond_left(ctx_factory, kv) -> None:
@@ -354,7 +352,7 @@ async def test_buy_rejects_qty_beyond_left(ctx_factory, kv) -> None:
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="5")
     assert r.startswith("error:")
-    assert "库存" in r
+    assert "剩" in r or "不够" in r
 
 
 async def test_buy_rejects_unknown_listing(ctx_factory) -> None:
@@ -374,7 +372,7 @@ async def test_buy_enforces_1h_cooldown_per_pair(ctx_factory, kv) -> None:
     assert r1.startswith("ok:")
     r2 = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
     assert r2.startswith("error:")
-    assert "冷却" in r2
+    assert "买过" in r2 or "过会儿" in r2
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +448,7 @@ async def test_cancel_rejects_non_owner(ctx_factory, kv) -> None:
     other = await ctx_factory("other", items={}, balance=1000)
     r = await trade_ops.marketplace_cancel(other, list_id=list_id)
     assert r.startswith("error:")
-    assert "自己" in r
+    assert "自己" in r or "别人" in r
 
 
 async def test_expired_listing_refunds_on_buy_attempt(ctx_factory, kv) -> None:
@@ -469,7 +467,7 @@ async def test_expired_listing_refunds_on_buy_attempt(ctx_factory, kv) -> None:
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
     assert r.startswith("error:")
-    assert "过期" in r
+    assert "过久了" in r or "帮你撤" in r
 
     # Escrow refunded.
     assert await kv.read("休闲系/钓鱼", "鱼竿", "seller-1", "0") == "3"
@@ -906,8 +904,8 @@ def test_card_load_font_picks_bundled_noto_sc() -> None:
         import pytest
 
         pytest.skip("no bundled font in data/fonts/ (deployment strip?)")
-    # The font file should be a real TTF/OTF.
-    assert bundled.endswith((".otf", ".ttf"))
+    # The font file should be a real TTF/OTF/TTC.
+    assert bundled.endswith((".otf", ".ttf", ".ttc"))
     from PIL import ImageFont
 
     font = trade_ops._card_load_font(
@@ -975,6 +973,42 @@ def test_find_bundled_font_preferred_order() -> None:
     # across calls.
     again = trade_ops._find_bundled_font()
     assert bundled == again
+
+
+def test_market_card_cjk_renders_above_tofu_size() -> None:
+    """Result-oriented: the rendered card must contain CJK glyphs.
+
+    The previous behaviour fell back to Pillow's ``load_default``
+    bitmap whenever ``data/fonts/`` was empty (e.g. dev boxes,
+    stripped-down containers). That bitmap renders CJK as tofu
+    boxes with ~0-px advance, producing tiny PNGs (~600-800
+    bytes). Pin the byte size to a real CJK render: a 150-px
+    wide card with a 4-character title at 12-pt Noto Sans CJK
+    is consistently > 1.5 KB after PNG's deflate. If a future
+    change reverts to bitmap (or fonts-noto-cjk is removed from
+    the host image), this trips.
+    """
+    from linling_tools_stdlib import trade_ops
+
+    font = trade_ops._card_load_font(
+        ToolCtx(kv=None, event=None, bot_id="t")
+    )
+    # The CJK glyph advance is the smoking-gun signal: bitmap
+    # fallback returns 0 width for any non-ASCII string. Catch
+    # the failure mode here even when bundled font is missing
+    # and the system fallback path is what saves us.
+    assert font.getbbox("摊位地图")[2] > 0
+
+    png = trade_ops._render_card(
+        title="摊位地图",
+        rows=[("鱼竿", "3/5  10灵玉", (220, 200, 180))],
+        font=font,
+    )
+    assert len(png) > 1500, (
+        f"PNG suspiciously small ({len(png)} bytes) — "
+        f"font likely fell back to bitmap (tofu render). "
+        f"font={type(font).__name__}"
+    )
 
 
 # ---------------------------------------------------------------------------

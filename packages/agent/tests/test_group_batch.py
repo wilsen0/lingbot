@@ -8,13 +8,25 @@ from datetime import UTC, datetime
 from linling_agent.agent_def import AgentDef
 from linling_agent.context import ContextBudget
 from linling_agent.dispatcher import AgentChatDispatcher
-from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig
+from linling_agent.group_batch import (
+    GroupBatchChatDispatcher,
+    GroupBatchConfig,
+    _llm_visible_text,
+)
 from linling_agent.history import KVHistoryStore
 from linling_agent.llm import LLMResponse, Message, ToolCall, ToolSchema
 from linling_agent.runtime import AgentResult, AgentRuntime
 from linling_core.events import Action, Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
-from linling_core.segments import ReplySegment, TextSegment, at, reply
+from linling_core.segments import (
+    FaceSegment,
+    ImageSegment,
+    ReplySegment,
+    Segment,
+    TextSegment,
+    at,
+    reply,
+)
 from linling_core.storage.sqlite_kv import SqliteKVStore
 from linling_core.tools import registry
 
@@ -282,6 +294,7 @@ def _event(
     sender: str = "u1",
     name: str | None = None,
     at: datetime | None = None,
+    segments: list[Segment] | None = None,
 ) -> Event:
     data = {
         "id": eid,
@@ -289,7 +302,7 @@ def _event(
         "bot_id": "bot1",
         "scope": Scope(kind="group", id="g1", platform="test"),
         "sender": User(id=sender, platform="test", display_name=name or sender),
-        "segments": [TextSegment(text=text)],
+        "segments": [TextSegment(text=text)] if segments is None else segments,
     }
     if at is not None:
         data["time"] = at
@@ -302,6 +315,75 @@ async def _wait_for(condition: Callable[[], bool]) -> None:
             return
         await asyncio.sleep(0.01)
     raise AssertionError("condition not met before timeout")
+
+
+def test_llm_visible_text_marks_non_text_segments() -> None:
+    # Pure non-text → a marker, never an empty string.
+    assert _llm_visible_text([ImageSegment(url="https://x/a.png")]) == "[图片]"
+    # FaceSegment covers QQ basic face + mface/bface 商城表情包.
+    assert _llm_visible_text([FaceSegment(face_id="1")]) == "[表情]"
+    # Mixed text + image keeps both sides.
+    assert (
+        _llm_visible_text([TextSegment(text="看这个"), ImageSegment(url="https://x/a.png")])
+        == "看这个[图片]"
+    )
+    # At/Reply are modeled elsewhere (mentions_me / at_targets / reply_to_me),
+    # never inlined into the LLM-visible text.
+    assert _llm_visible_text([at("u2"), TextSegment(text="你好")]) == "你好"
+    # Plain text passes through, stripped.
+    assert _llm_visible_text([TextSegment(text="  hi  ")]) == "hi"
+
+
+def test_to_buffered_marks_non_text_message() -> None:
+    dispatcher = GroupBatchChatDispatcher(
+        inner=_Inner(""),
+        config=GroupBatchConfig(enabled=True),
+    )
+    # A pure image used to collapse to text="" — it must now carry a marker.
+    msg = dispatcher._to_buffered(
+        _event("", eid="m1", segments=[ImageSegment(url="https://x/a.png")])
+    )
+    assert msg.text == "[图片]"
+
+
+async def test_group_batch_non_text_message_appears_as_marker_in_prompt() -> None:
+    provider = _ToolProvider(
+        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0.02, require_attention=False),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+
+    await dispatcher.run(
+        _event(
+            "",
+            eid="m1",
+            sender="u1",
+            name="小明",
+            segments=[ImageSegment(url="https://x/a.png")],
+        ),
+        session,
+    )
+
+    await _wait_for(lambda: len(provider.calls) == 1)
+    system_prompt = provider.calls[0][0][0].content
+    user_prompt = provider.calls[0][0][-1].content
+    records = [
+        json.loads(line) for line in user_prompt.splitlines() if line.startswith("{")
+    ]
+    # The non-text message reaches the LLM as a marker, not empty text.
+    assert records[0]["text"] == "[图片]"
+    # And the system prompt teaches the model what the markers mean.
+    assert "[图片]" in system_prompt
+    assert "非文字内容" in system_prompt
+    assert sent == []
+    await dispatcher.stop()
 
 
 async def test_group_batch_silences_empty_actions() -> None:
@@ -445,7 +527,7 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
         for line in prompt.splitlines()
         if line.startswith("{")
     ]
-    assert "按发送时间从早到晚" in prompt
+    assert "按时间升序" in prompt
     assert [record["message_id"] for record in records] == ["m1", "m2"]
     assert [record["sender_id"] for record in records] == ["u1", "u2"]
     assert [record["sender_name"] for record in records] == ["同名", "同名"]
@@ -453,7 +535,7 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
     await dispatcher.stop()
 
 
-async def test_group_batch_tool_prompt_marks_member_at_as_other_not_bot() -> None:
+async def test_group_batch_tool_prompt_marks_member_at_as_target_not_me() -> None:
     provider = _ToolProvider(
         [LLMResponse(message=Message(role="assistant", content="no_reply"))]
     )
@@ -484,18 +566,21 @@ async def test_group_batch_tool_prompt_marks_member_at_as_other_not_bot() -> Non
         for line in prompt.splitlines()
         if line.startswith("{")
     ]
-    assert "at_others=@别人非你" in prompt
+    assert "at_targets=被@的其他成员" in prompt
+    assert "未找你/全体时别随意插话" in prompt
     assert records[0]["message_id"] == "m1"
     assert records[0]["text"] == "你看这个"
-    assert records[0]["mentions_bot"] is False
-    assert records[0]["at_others"] == ["小红"]
-    assert "at_others" not in records[1]
+    assert "mentions_me" not in records[0]
+    assert "mentions_all" not in records[0]
+    assert "reply_to_me" not in records[0]
+    assert records[0]["at_targets"] == ["小红"]
+    assert "at_targets" not in records[1]
     assert "@u2" not in prompt
     assert sent == []
     await dispatcher.stop()
 
 
-async def test_group_batch_llbot_self_id_at_is_mentions_bot_not_at_other() -> None:
+async def test_group_batch_llbot_self_id_at_is_mentions_me_not_at_target() -> None:
     provider = _ToolProvider(
         [LLMResponse(message=Message(role="assistant", content="no_reply"))]
     )
@@ -528,9 +613,89 @@ async def test_group_batch_llbot_self_id_at_is_mentions_bot_not_at_other() -> No
         if line.startswith("{")
     ]
     assert records[0]["text"] == "在吗"
-    assert records[0]["mentions_bot"] is True
-    assert "at_others" not in records[0]
+    assert records[0]["mentions_me"] is True
+    assert "mentions_all" not in records[0]
+    assert "at_targets" not in records[0]
     assert "1707476110" not in prompt
+    assert sent == []
+    await dispatcher.stop()
+
+
+async def test_group_batch_at_all_is_attention_but_not_mentions_me() -> None:
+    provider = _ToolProvider(
+        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(
+            enabled=True,
+            window_s=0,
+            require_attention=True,
+            bot_names=(),
+        ),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("linling", "g1", "u1"))
+    event = _event("开会了", eid="m1", sender="u1", name="小明")
+    event.bot_id = "linling"
+    event.segments.insert(0, at("all"))
+
+    await dispatcher.run(event, session)
+
+    await _wait_for(lambda: len(provider.calls) == 1)
+    prompt = provider.calls[0][0][-1].content
+    records = [
+        json.loads(line)
+        for line in prompt.splitlines()
+        if line.startswith("{")
+    ]
+    assert "mentions_me" not in records[0]
+    assert records[0]["mentions_all"] is True
+    assert "at_targets" not in records[0]
+    assert sent == []
+    await dispatcher.stop()
+
+
+async def test_group_batch_member_at_question_passes_at_targets_to_llm() -> None:
+    provider = _ToolProvider(
+        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(
+            enabled=True,
+            window_s=0,
+            require_attention=True,
+            bot_names=("苏苏",),
+        ),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("linling", "g1", "u1"))
+    event = _event(" 你怎么看？", eid="m1", sender="u1", name="小明")
+    event.bot_id = "linling"
+    event.raw["self_id"] = "bot-qq"
+    event.segments.insert(0, at("u2"))
+    second = _event("我看到了", eid="m2", sender="u2", name="小红")
+
+    await dispatcher.run(event, session)
+    await dispatcher.run(second, session)
+
+    await _wait_for(lambda: len(provider.calls) == 1)
+    prompt = provider.calls[0][0][-1].content
+    records = [
+        json.loads(line)
+        for line in prompt.splitlines()
+        if line.startswith("{")
+    ]
+    assert records[0]["message_id"] == "m1"
+    assert records[0]["at_targets"] == ["小红"]
+    assert "mentions_me" not in records[0]
     assert sent == []
     await dispatcher.stop()
 
@@ -576,7 +741,11 @@ async def test_group_batch_history_records_reply_target_for_next_prompt() -> Non
     assert "苏苏在吗" in recorded[0].content
     assert recorded[1].tool_calls
     assert recorded[1].tool_calls[0].name == "reply_to_message"
-    assert recorded[2].content == "回复完成"
+    tool_result = json.loads(recorded[2].content)
+    assert tool_result["ok"] is True
+    assert tool_result["action"] == "reply_to_message"
+    assert tool_result["replied_to"] == "小明"
+    assert tool_result["reply"] == "可以，这条我回。"
     assert all(message.content != "回复好了" for message in recorded)
     await dispatcher.run(_event("普通后续", eid="m2", sender="u2", name="小红"), session)
 
@@ -594,12 +763,60 @@ async def test_group_batch_history_records_reply_target_for_next_prompt() -> Non
     assert any(
         message.role == "tool"
         and message.name == "reply_to_message"
-        and message.content == "回复完成"
+        and '"action": "reply_to_message"' in message.content
         for message in next_prompt
     )
     assert '"sender_id": "u1"' in visible
     assert '"sender_name": "小明"' in visible
     assert "普通后续" in next_prompt[-1].content
+    await dispatcher.stop()
+
+
+async def test_group_batch_history_preserves_at_targets_for_next_prompt() -> None:
+    provider = _ToolProvider(
+        [
+            LLMResponse(
+                message=Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="reply_to_message",
+                            arguments=json.dumps(
+                                {"message_id": "m1", "text": "别看我，看小红。"},
+                                ensure_ascii=False,
+                            ),
+                        )
+                    ],
+                )
+            ),
+            LLMResponse(message=Message(role="assistant", content="回复好了")),
+        ]
+    )
+    inner = _HistoryAgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    first = _event(" 你看这个", eid="m1", sender="u1", name="小明")
+    first.segments.insert(0, at("u2"))
+    second = _event("我看到了", eid="m2", sender="u2", name="小红")
+
+    await dispatcher.run(first, session)
+    await dispatcher.run(second, session)
+
+    await _wait_for(lambda: len(sent) == 1 and len(inner.recorded_messages) == 1)
+    recorded = inner.recorded_messages[0]
+    assert '"at_targets": ["小红"]' in recorded[0].content
+    assert '"mentions_me"' not in recorded[0].content
+    assert '"reply_to_me"' not in recorded[0].content
+    assert '"at_others"' not in recorded[0].content
+    assert "@u2" not in recorded[0].content
     await dispatcher.stop()
 
 
@@ -908,6 +1125,58 @@ async def test_group_batch_toolcall_can_read_batch_before_replying() -> None:
     payload = json.loads(tool_messages[0].content)
     assert payload["messages"][0]["sender_id"] == "u1"
     assert payload["messages"][0]["sender_name"] == "u1"
+    await dispatcher.stop()
+
+
+async def test_group_batch_read_batch_preserves_at_targets() -> None:
+    provider = _ToolProvider(
+        [
+            LLMResponse(
+                message=Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="read1",
+                            name="read_batch_messages",
+                            arguments=json.dumps({"message_ids": ["m1"]}),
+                        )
+                    ],
+                )
+            ),
+            LLMResponse(message=Message(role="assistant", content="no_reply")),
+        ]
+    )
+    inner = _AgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
+    )
+    sent: list[Action] = []
+    dispatcher.set_action_sink(sent.append)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    first = _event(" 需要看完整内容", eid="m1", sender="u1", name="小明")
+    first.segments.insert(0, at("u2"))
+    second = _event("我看到了", eid="m2", sender="u2", name="小红")
+
+    await dispatcher.run(first, session)
+    await dispatcher.run(second, session)
+
+    await _wait_for(lambda: len(provider.calls) == 2)
+    second_prompt = provider.calls[1][0]
+    tool_messages = [m for m in second_prompt if m.role == "tool"]
+    assert tool_messages
+    payload = json.loads(tool_messages[0].content)
+    message = payload["messages"][0]
+    assert message["sender_name"] == "小明"
+    assert "mentions_me" not in message
+    assert "mentions_all" not in message
+    assert "reply_to_me" not in message
+    assert message["at_targets"] == ["小红"]
+    assert "at_others" not in message
+    assert "@u2" not in tool_messages[0].content
+    assert sent == []
     await dispatcher.stop()
 
 
