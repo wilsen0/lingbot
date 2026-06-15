@@ -30,6 +30,7 @@ pnpm-debug.log*
 # IDE
 .vscode/
 .idea/
+.qoder/
 *.swp
 *.swo
 
@@ -62,3 +63,7 @@ logs/
 # assets moved to bot/assets/ in 2026-05; keep the reference tree
 # untracked so it doesn't bloat history or drift.
 QRDic/
+
+# Local tooling runtime state — regenerated on each launch, never commit.
+# .codegraph/ keeps its tracked dir/config but daemon.pid changes every run.
+.codegraph/daemon.pid
