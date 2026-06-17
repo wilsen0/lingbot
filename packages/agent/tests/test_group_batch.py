@@ -374,11 +374,10 @@ async def test_group_batch_non_text_message_appears_as_marker_in_prompt() -> Non
     await _wait_for(lambda: len(provider.calls) == 1)
     system_prompt = provider.calls[0][0][0].content
     user_prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line) for line in user_prompt.splitlines() if line.startswith("{")
-    ]
     # The non-text message reaches the LLM as a marker, not empty text.
-    assert records[0]["text"] == "[图片]"
+    # With natural language format: "小明说：[图片]"
+    assert "[图片]" in user_prompt
+    assert "小明" in user_prompt
     # And the system prompt teaches the model what the markers mean.
     assert "[图片]" in system_prompt
     assert "非文字内容" in system_prompt
@@ -522,15 +521,15 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
 
     await _wait_for(lambda: len(provider.calls) == 1)
     prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line)
-        for line in prompt.splitlines()
-        if line.startswith("{")
-    ]
     assert "按时间升序" in prompt
-    assert [record["message_id"] for record in records] == ["m1", "m2"]
-    assert [record["sender_id"] for record in records] == ["u1", "u2"]
-    assert [record["sender_name"] for record in records] == ["同名", "同名"]
+    # With natural language format, check ordering by text content
+    # Earlier message "先发后到" should appear before "后发先到"
+    idx_first = prompt.find("先发后到")
+    idx_second = prompt.find("后发先到")
+    assert idx_first >= 0 and idx_second >= 0
+    assert idx_first < idx_second, "messages should be ordered by send time"
+    # Both senders appear as "同名"
+    assert prompt.count("同名") >= 2
     assert sent == []
     await dispatcher.stop()
 
@@ -561,20 +560,12 @@ async def test_group_batch_tool_prompt_marks_member_at_as_target_not_me() -> Non
 
     await _wait_for(lambda: len(provider.calls) == 1)
     prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line)
-        for line in prompt.splitlines()
-        if line.startswith("{")
-    ]
-    assert "at_targets=被@的其他成员" in prompt
-    assert "未找你/全体时别随意插话" in prompt
-    assert records[0]["message_id"] == "m1"
-    assert records[0]["text"] == "你看这个"
-    assert "mentions_me" not in records[0]
-    assert "mentions_all" not in records[0]
-    assert "reply_to_me" not in records[0]
-    assert records[0]["at_targets"] == ["小红"]
-    assert "at_targets" not in records[1]
+    # Natural language format: "小明@小红说：你看这个" shows direction explicitly
+    assert "小明@小红说：你看这个" in prompt
+    assert "小红说：我看到了" in prompt
+    # The @ direction is embedded in the line, not as separate JSON fields
+    assert "at_targets" not in prompt
+    assert "mentions_me" not in prompt
     assert "@u2" not in prompt
     assert sent == []
     await dispatcher.stop()
@@ -607,15 +598,9 @@ async def test_group_batch_llbot_self_id_at_is_mentions_me_not_at_target() -> No
 
     await _wait_for(lambda: len(provider.calls) == 1)
     prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line)
-        for line in prompt.splitlines()
-        if line.startswith("{")
-    ]
-    assert records[0]["text"] == "在吗"
-    assert records[0]["mentions_me"] is True
-    assert "mentions_all" not in records[0]
-    assert "at_targets" not in records[0]
+    # Natural language format: @bot renders as "小明@你说：在吗"
+    assert "小明@你说：在吗" in prompt
+    # Raw user id should not appear in prompt
     assert "1707476110" not in prompt
     assert sent == []
     await dispatcher.stop()
@@ -647,14 +632,8 @@ async def test_group_batch_at_all_is_attention_but_not_mentions_me() -> None:
 
     await _wait_for(lambda: len(provider.calls) == 1)
     prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line)
-        for line in prompt.splitlines()
-        if line.startswith("{")
-    ]
-    assert "mentions_me" not in records[0]
-    assert records[0]["mentions_all"] is True
-    assert "at_targets" not in records[0]
+    # Natural language format: @all renders as "小明@全体说：开会了"
+    assert "小明@全体说：开会了" in prompt
     assert sent == []
     await dispatcher.stop()
 
@@ -688,14 +667,8 @@ async def test_group_batch_member_at_question_passes_at_targets_to_llm() -> None
 
     await _wait_for(lambda: len(provider.calls) == 1)
     prompt = provider.calls[0][0][-1].content
-    records = [
-        json.loads(line)
-        for line in prompt.splitlines()
-        if line.startswith("{")
-    ]
-    assert records[0]["message_id"] == "m1"
-    assert records[0]["at_targets"] == ["小红"]
-    assert "mentions_me" not in records[0]
+    # Natural language format: @other user renders as "小明@小红说：你怎么看？"
+    assert "小明@小红说：你怎么看？" in prompt
     assert sent == []
     await dispatcher.stop()
 
@@ -1123,8 +1096,10 @@ async def test_group_batch_toolcall_can_read_batch_before_replying() -> None:
     assert tool_messages
     assert "需要看完整内容" in tool_messages[0].content
     payload = json.loads(tool_messages[0].content)
-    assert payload["messages"][0]["sender_id"] == "u1"
-    assert payload["messages"][0]["sender_name"] == "u1"
+    # read_batch now returns natural language lines
+    message_line = payload["messages"][0]
+    assert "u1" in message_line
+    assert "需要看完整内容" in message_line
     await dispatcher.stop()
 
 
@@ -1168,13 +1143,11 @@ async def test_group_batch_read_batch_preserves_at_targets() -> None:
     tool_messages = [m for m in second_prompt if m.role == "tool"]
     assert tool_messages
     payload = json.loads(tool_messages[0].content)
-    message = payload["messages"][0]
-    assert message["sender_name"] == "小明"
-    assert "mentions_me" not in message
-    assert "mentions_all" not in message
-    assert "reply_to_me" not in message
-    assert message["at_targets"] == ["小红"]
-    assert "at_others" not in message
+    # read_batch now returns natural language lines
+    message_line = payload["messages"][0]
+    assert "小明" in message_line
+    assert "小红" in message_line
+    assert "需要看完整内容" in message_line
     assert "@u2" not in tool_messages[0].content
     assert sent == []
     await dispatcher.stop()
@@ -1590,7 +1563,8 @@ async def test_group_batch_system_prompt_is_separate_from_candidate_messages() -
     assert inner.messages[0][0].role == "system"
     assert "群聊" in inner.messages[0][0].content
     assert "候选消息" in inner.messages[0][1].content
-    assert "候选消息" not in inner.messages[0][0].content
+    # The actual candidate content should not leak into the system prompt
+    assert "普通闲聊" not in inner.messages[0][0].content
     await dispatcher.stop()
 
 

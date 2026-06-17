@@ -338,9 +338,9 @@ async def test_probe_true_invokes_main_llm_exactly_once() -> None:
     await _wait_for(lambda: len(sent) == 1, timeout=2.0)
     assert spy.call_count == 1
     assert len(inner.calls) == 1
-    # The probed batch's message_id must appear in the dispatched
+    # The probed batch's message content must appear in the dispatched
     # prompt so we know the same batch was forwarded.
-    assert "m42" in inner.calls[0]
+    assert "非常普通的群闲聊" in inner.calls[0]
     await dispatcher.stop()
 
 

@@ -296,6 +296,11 @@ class GroupBatchConfig:
     multi_reply_delay_max_s: float = 0.0
     daily_summary_enabled: bool = False
     daily_summary_keep_recent_turns: int = 2
+    # Number of recent user turns from session.history to prepend as
+    # "前情提要" before the candidate messages in the user prompt.
+    # Gives the LLM conversational context when a batch is small.
+    # 0 disables the feature.
+    context_history_turns: int = 3
 
     def __post_init__(self) -> None:
         if self.window_s < 0:
@@ -320,6 +325,8 @@ class GroupBatchConfig:
             raise ValueError("multi_reply_delay_max_s must be >= multi_reply_delay_min_s")
         if self.daily_summary_keep_recent_turns < 0:
             raise ValueError("daily_summary_keep_recent_turns must be non-negative")
+        if self.context_history_turns < 0:
+            raise ValueError("context_history_turns must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -832,7 +839,10 @@ class GroupBatchChatDispatcher:
         agent_system = str(getattr(agent_def, "system", "") or "")
         if agent_system:
             selector_prompt = f"{agent_system}\n\n{selector_prompt}"
-        user_prompt = self._build_tool_prompt(batch)
+        history_context = _extract_context_lines(
+            list(session.history), self._cfg.context_history_turns
+        )
+        user_prompt = self._build_tool_prompt(batch, history_context=history_context)
         guardrails = getattr(agent_def, "guardrails", None)
         max_tokens = getattr(guardrails, "max_tokens", None)
         temperature = min(getattr(agent_def, "temperature", 0.7), 0.3)
@@ -1458,23 +1468,12 @@ class GroupBatchChatDispatcher:
             return _tool_json({"ok": False, "error": "no matching messages"})
         selected = selected[:_MAX_READ_MESSAGES]
         name_by_id = _batch_name_index(batch)
-        text_limit = max(200, min(1_200, _MAX_TOOL_RESULT_CHARS // max(1, len(selected)) - 160))
-        return _tool_json(
-            {
-                "ok": True,
-                "messages": [
-                    {
-                        "line": line,
-                        **_message_tool_payload(
-                            msg,
-                            text_limit=text_limit,
-                            name_by_id=name_by_id,
-                        ),
-                    }
-                    for line, msg in selected
-                ],
-            }
-        )
+        lines: list[str] = []
+        for _line_num, msg in selected:
+            lines.append(
+                f"[message_id={msg.message_id}] {_render_candidate_line(msg, name_by_id)}"
+            )
+        return _tool_json({"ok": True, "messages": lines})
 
     async def _send_action(self, action: Action, event: Event) -> tuple[bool, str]:
         sink = self._action_sink
@@ -1675,13 +1674,10 @@ class GroupBatchChatDispatcher:
         )
 
     def _build_prompt(self, batch: list[_BufferedMessage]) -> str:
-        lines = [
-            "候选消息（按时间升序；sender_id 稳定，sender_name 昵称；mentions_me/mentions_all/reply_to_me/text_truncated 出现即 true；at_targets=被@的其他成员；有 at_targets 且未找你/全体时别随意插话）：",
-        ]
         name_by_id = _batch_name_index(batch)
+        lines = ["候选消息如下（按时间升序）："]
         for m in batch:
-            entry = _message_payload(m, name_by_id=name_by_id)
-            lines.append(json.dumps(entry, ensure_ascii=False))
+            lines.append(_render_candidate_line(m, name_by_id))
         return "\n".join(lines)
 
     def _build_system_prompt(self, batch: list[_BufferedMessage]) -> str:
@@ -1690,7 +1686,7 @@ class GroupBatchChatDispatcher:
                 "你现在在群聊里，大家七嘴八舌地说着话。",
                 "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
                 "觉得没什么好说的就安静待着，不用勉强。",
-                "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                "候选消息里会写明谁说了什么、谁@了你、谁回复了你；上下文里的历史记录也是同样格式。",
                 *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
                 "回复格式（按情况选一种）：",
@@ -1711,13 +1707,13 @@ class GroupBatchChatDispatcher:
             [
                 "你现在在群聊里，大家七嘴八舌地说着话。",
                 "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
-                "上下文里的历史 user 记录会写明你过去是在群里直接说，还是引用回复了谁的哪条消息；assistant 记录是你当时实际发出的正文。",
+                "候选消息里会写明谁说了什么、谁@了你、谁回复了你；上下文里的历史记录也是同样格式。",
                 *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
                 "回复方式（按情况选一种或自由组合）：",
                 "1. 想直接在群里说一句话 → 直接输出一条文字，不要任何前缀，不要空行分段（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
                 "2. 想引用某条消息回复（@对方+引用框）→ 调 reply_to_message 工具。",
-                "3. 候选里的 text_truncated=true 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
+                "3. 候选消息末尾标注了 [text_truncated, message_id=...] 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
                 "4. 只要想一次连发两条或更多短消息（不打太长一段、也不想拆成多轮工具调用）→ 必须输出严格 JSON：",
                 "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
                 "   每个元素就是单独一条消息，按数组顺序发出去。type 支持 send_group 和 reply_to_message，与上面的工具一一对应。",
@@ -1730,22 +1726,41 @@ class GroupBatchChatDispatcher:
             ]
         )
 
-    def _build_tool_prompt(self, batch: list[_BufferedMessage]) -> str:
-        lines = [
-            "群聊候选消息如下，按时间升序。sender_id 稳定，sender_name 昵称；mentions_me/mentions_all/reply_to_me/text_truncated 出现即 true；at_targets=被@的其他成员；有 at_targets 且未找你/全体时别随意插话；text_truncated 可用 line/message_id 读原文。",
-            "候选索引：",
-        ]
+    def _build_tool_prompt(
+        self,
+        batch: list[_BufferedMessage],
+        history_context: str = "",
+    ) -> str:
         name_by_id = _batch_name_index(batch)
-        for line, msg in enumerate(batch, start=1):
-            clipped_text = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
-            entry = _message_payload(
-                msg,
-                name_by_id=name_by_id,
-                line=line,
-                text=clipped_text,
-                text_truncated=len(clipped_text) < len(msg.text),
+        lines: list[str] = []
+        if history_context:
+            lines.append(history_context)
+            lines.append("")
+        lines.append("候选消息如下（按时间升序）：")
+        for msg in batch:
+            clipped = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
+            truncated_msg = (
+                _BufferedMessage(
+                    message_id=msg.message_id,
+                    sender_id=msg.sender_id,
+                    sender_name=msg.sender_name,
+                    text=clipped,
+                    timestamp=msg.timestamp,
+                    sent_at=msg.sent_at,
+                    received_seq=msg.received_seq,
+                    mentions_bot=msg.mentions_bot,
+                    mentions_all=msg.mentions_all,
+                    reply_to_bot=msg.reply_to_bot,
+                    at_user_ids=msg.at_user_ids,
+                    has_non_text=msg.has_non_text,
+                )
+                if len(clipped) < len(msg.text)
+                else msg
             )
-            lines.append(json.dumps(entry, ensure_ascii=False))
+            line = _render_candidate_line(truncated_msg, name_by_id)
+            if len(clipped) < len(msg.text):
+                line += f" [text_truncated, message_id={msg.message_id}]"
+            lines.append(line)
         return "\n".join(lines)
 
     def _state_key(self, event_or_scope: Event | str) -> str:
@@ -1826,6 +1841,26 @@ def _other_at_user_ids(event: Event) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _extract_context_lines(history: list[Message], turns: int) -> str:
+    """Extract recent user messages from session history as 前情提要.
+
+    Returns an empty string when ``turns <= 0`` or no user messages exist.
+    Each user content block is truncated to 300 chars to keep the prompt compact.
+    """
+    if turns <= 0:
+        return ""
+    user_msgs = [m for m in history if m.role == "user"]
+    recent = user_msgs[-turns:]
+    if not recent:
+        return ""
+    lines = ["前情提要："]
+    for m in recent:
+        text = (m.content or "")[:300].strip()
+        if text:
+            lines.append(text)
+    return "\n---\n".join(lines)
+
+
 def _batch_name_index(batch: list[_BufferedMessage]) -> dict[str, str]:
     """Map ``sender_id -> sender_name`` for everyone who spoke in the batch.
 
@@ -1861,6 +1896,36 @@ def _render_at_targets(
             out.append("某人")
             saw_anon = True
     return out
+
+
+def _render_candidate_line(
+    msg: _BufferedMessage, name_by_id: dict[str, str]
+) -> str:
+    """Render a buffered message as a single natural-language line.
+
+    Examples::
+
+        小红@你说：今天天气真好
+        小红@小明说：你吃了吗
+        小红@全体说：大家早上好
+        小红回复你说：不是这样的
+        小红说：今天好无聊
+    """
+    sender = msg.sender_name
+
+    if msg.reply_to_bot:
+        prefix = f"{sender}回复你"
+    elif msg.at_user_ids:
+        targets = _render_at_targets(msg.at_user_ids, name_by_id)
+        prefix = f"{sender}@{','.join(targets)}"
+    elif msg.mentions_bot:
+        prefix = f"{sender}@你"
+    elif msg.mentions_all:
+        prefix = f"{sender}@全体"
+    else:
+        prefix = sender
+
+    return f"{prefix}说：{msg.text}"
 
 
 def _reply_to_bot(event: Event) -> bool:
