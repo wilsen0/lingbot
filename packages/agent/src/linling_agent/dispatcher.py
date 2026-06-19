@@ -123,6 +123,10 @@ class AgentChatDispatcher:
         """
         return self._agent
 
+    def set_action_sink(self, sink: object) -> None:
+        """Propagate the action sink to the underlying runtime."""
+        self._agent.set_action_sink(sink)
+
     @property
     def context_max_tokens(self) -> int | None:
         return self._context.max_tokens if self._context is not None else None
@@ -131,7 +135,13 @@ class AgentChatDispatcher:
     def context_compaction_enabled(self) -> bool:
         return self._context.compaction_enabled if self._context is not None else False
 
-    async def dispatch(self, event: Event, session: Session) -> AgentResult | None:
+    async def dispatch(
+        self,
+        event: Event,
+        session: Session,
+        *,
+        action_sink: object | None = None,
+    ) -> AgentResult | None:
         """Run one chat turn end-to-end and return the raw :class:`AgentResult`.
 
         Handles:
@@ -252,6 +262,7 @@ class AgentChatDispatcher:
                 event=event,
                 history=injected,
                 context_max_tokens=self._context.max_tokens if self._context is not None else None,
+                action_sink=action_sink,
             ),
             name="agent_invoke",
         )
@@ -296,8 +307,22 @@ class AgentChatDispatcher:
             session.history.extend(replacement_history)
 
         # Persist both turns; the deque's maxlen bounds memory.
+        # When the agent used tool-based sending, history should record
+        # what was *actually* sent (sent_texts from send_reply calls),
+        # not the finish_turn summary — otherwise the next turn's model
+        # sees a meta-review of the topic instead of the real words and
+        # loses conversational continuity.  The summary is only used as
+        # a last-resort placeholder when nothing was sent (e.g. the
+        # agent finished without replying).
         session.history.append(Message(role="user", content=user_input))
-        session.history.append(Message(role="assistant", content=result.content))
+        sent_texts = getattr(result, "sent_texts", None) or []
+        if sent_texts:
+            assistant_text = "\n".join(sent_texts)
+        elif result.finish_turn_summary is not None:
+            assistant_text = result.finish_turn_summary
+        else:
+            assistant_text = result.content
+        session.history.append(Message(role="assistant", content=assistant_text or ""))
 
         if self._history_store is not None:
             # Don't block the user on IO if the KV round-trip is slow —
@@ -444,59 +469,13 @@ class AgentChatDispatcher:
         await self._rehydrate_history_key(session, scope_id, sender_id)
 
     async def run(self, event: Event, session: Session) -> list[Action]:
-        result = await self.dispatch(event, session)
-        if result is None:
-            return []
-        text = result.content or self._empty_reply
-        try:
-            outcome = parse_actions_envelope(text)
-        except Exception:
-            # Defensive: parsing the LLM's content must never crash the
-            # dispatcher — that path turns the user's reply into the
-            # router's "Something went wrong" error_reply, which is far
-            # worse than losing the multi-message split. Log and treat
-            # the content as plain prose.
-            logger.exception(
-                "chat_dispatcher.actions_parse_failed",
-                scope_id=event.scope.id,
-                sender_id=event.sender.id,
-                content_preview=text[:200],
-            )
-            outcome = None
-        if outcome is not None and outcome.recognised:
-            try:
-                expanded = _expand_actions_for_dm(
-                    outcome.entries,
-                    event=event,
-                    max_actions=self._max_replies,
-                    max_chars=self._max_reply_chars,
-                    delay_min_s=self._multi_reply_delay_min_s,
-                    delay_max_s=self._multi_reply_delay_max_s,
-                )
-            except Exception:
-                logger.exception(
-                    "chat_dispatcher.actions_expand_failed",
-                    scope_id=event.scope.id,
-                    sender_id=event.sender.id,
-                )
-                expanded = None
-            if expanded is not None:
-                if expanded:
-                    return expanded
-                # Recognised envelope but every entry was filtered out
-                # (empty texts, or all messages clipped to zero). The LLM
-                # essentially asked for silence, but emitting nothing
-                # would let the router think the dispatcher returned
-                # cleanly with no work to do — same as "no_reply".
-                # That's the right semantic: stay silent.
-                logger.info(
-                    "chat_dispatcher.actions_empty_envelope",
-                    scope_id=event.scope.id,
-                    sender_id=event.sender.id,
-                    raw_entries=len(outcome.entries),
-                )
-                return []
-        return [Action(kind="reply", target=event.scope, segments=[TextSegment(text=text)])]
+        # All outbound messages are sent via tool calls (``send_reply``)
+        # inside ``AgentRuntime.invoke``.  The router expects this method
+        # to return the action list, but since delivery already happened
+        # we return an empty list — the router's sink loop becomes a
+        # no-op for the DM path.
+        await self.dispatch(event, session)
+        return []
 
     # ---- history plumbing -------------------------------------------
 

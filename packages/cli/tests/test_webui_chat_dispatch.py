@@ -34,18 +34,23 @@ class _FakeAgent:
         self.provider_name = "fake"
         self.model = "fake-1"
         self.content = "[LLM-WAS-CALLED]"
+        # Tool-based-sending contract: when set, ``invoke`` populates
+        # ``sent_texts`` on the result so the WebUI surfaces the
+        # outbound messages (the legacy JSON-envelope path is gone).
+        self.sent_texts: list[str] | None = None
 
-    async def invoke(self, content: str, *, event=None, history=None):  # type: ignore[no-untyped-def]
+    async def invoke(self, content: str, *, event=None, history=None, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(content)
 
         # Match the ``AgentResult`` shape the dispatcher expects.
         class _R:
-            def __init__(self, content: str) -> None:
+            def __init__(self, content: str, sent_texts: list[str] | None) -> None:
                 self.content = content
                 self.tool_calls_made = 0
                 self.total_tokens = 0
+                self.sent_texts = sent_texts or []
 
-        return _R(self.content)
+        return _R(self.content, self.sent_texts)
 
 
 def _write(base: Path, rel: str, content: str) -> Path:
@@ -156,11 +161,9 @@ def test_non_dsl_input_falls_back_to_llm(chat_app) -> None:
 
 def test_webui_agent_actions_are_private_chat_segments_with_delay(chat_app) -> None:
     client, token, fake = chat_app
-    fake.content = (
-        '{"actions":[{"type":"send","text":"第一句"},'
-        '{"type":"send","text":"第二句"},'
-        '{"type":"send","text":"第三句"}]}'
-    )
+    # Tool-based sending: the agent emits three separate messages via
+    # ``send_reply``; the WebUI surfaces them as three paced segments.
+    fake.sent_texts = ["第一句", "第二句", "第三句"]
 
     r = client.post(
         "/api/agents/susu/chat",
@@ -656,7 +659,9 @@ class _RecordingProvider:
         return "recording"
 
     async def chat(self, messages, *, tools=None, temperature=0.7, max_tokens=None):  # type: ignore[no-untyped-def]
-        from linling_agent.llm import LLMResponse, Message, TokenUsage
+        import json as _json
+
+        from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
 
         # ``list(...)`` defends against the caller mutating its
         # outbound buffer between turns (the runtime appends tool
@@ -666,10 +671,27 @@ class _RecordingProvider:
             (m.content for m in reversed(messages) if m.role == "user"), ""
         )
         user_count = sum(1 for m in messages if m.role == "user")
+        # Tool-based sending contract: emit the reply via ``send_reply``
+        # then end the turn with ``finish_turn``.  The dispatcher records
+        # the sent text in history (and the WebUI surfaces it via
+        # ``result.sent_texts``), so multi-turn memory keeps working.
+        reply_text = f"[heard turn {user_count}: {last_user}]"
         return LLMResponse(
             message=Message(
                 role="assistant",
-                content=f"[heard turn {user_count}: {last_user}]",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="s1",
+                        name="send_reply",
+                        arguments=_json.dumps({"text": reply_text}),
+                    ),
+                    ToolCall(
+                        id="f1",
+                        name="finish_turn",
+                        arguments=_json.dumps({"summary": "echoed"}),
+                    ),
+                ],
             ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
@@ -707,6 +729,7 @@ rules:
 
     import asyncio
 
+    import linling_tools_stdlib  # noqa: F401 — registers send_reply
     from linling_agent.agent_def import AgentDef
     from linling_agent.bridge import AgentRegistry
     from linling_agent.dispatcher import AgentChatDispatcher
@@ -724,7 +747,7 @@ rules:
     # already-open KV. Sharing the KV is what makes the persistent
     # ``KVHistoryStore`` survive a "process restart" simulation.
     provider = _RecordingProvider()
-    agent_def = AgentDef(name="susu", system="", tools=[], temperature=0.0)
+    agent_def = AgentDef(name="susu", system="", tools=["send_reply"], temperature=0.0)
     runtime = AgentRuntime(
         agent_def=agent_def,
         provider=provider,  # type: ignore[arg-type]

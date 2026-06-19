@@ -24,7 +24,7 @@ from linling_agent.dispatcher import AgentChatDispatcher
 from linling_agent.history import KVHistoryStore
 from linling_agent.ledger import LedgerRenderer
 from linling_agent.ledger_store import KVDslLedgerStore
-from linling_agent.llm import LLMResponse, Message, TokenUsage
+from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
 from linling_agent.runtime import AgentRuntime
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore, DslEvent
@@ -51,7 +51,17 @@ class _CapturingProvider:
         # Snapshot the input so later calls can't mutate what we observed.
         self.calls.append(list(messages))
         return LLMResponse(
-            message=Message(role="assistant", content="ok"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id=f"ft_{len(self.calls)}",
+                        name="finish_turn",
+                        arguments='{"summary":"ok"}',
+                    )
+                ],
+            ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 

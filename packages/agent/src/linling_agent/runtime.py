@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from linling_core.events import Event
 from linling_core.metrics import (
@@ -27,7 +29,14 @@ from linling_agent.agent_def import AgentDef
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import LLMProvider, LLMResponse, Message, ToolSchema
 
+logger = logging.getLogger(__name__)
+
 _MAX_TOOL_RESULT_CHARS = 8_000
+_NUDGE_LIMIT = 2
+_NUDGE_PROMPT = (
+    "Use tools to send messages, or call finish_turn to end this turn."
+)
+_FINISH_TURN_TOOL_NAME = "finish_turn"
 
 
 @dataclass
@@ -37,6 +46,12 @@ class AgentResult:
     content: str
     tool_calls_made: int = 0
     total_tokens: int = 0
+    finish_turn_summary: str | None = None
+    # The actual outbound message texts the agent sent this turn via the
+    # ``send_reply`` tool, in send order.  Callers that persist history
+    # (the DM dispatcher) use this instead of ``finish_turn_summary`` so
+    # the next turn sees what was really said, not a meta-summary.
+    sent_texts: list[str] = field(default_factory=list)
 
 
 class AgentRuntime:
@@ -51,6 +66,7 @@ class AgentRuntime:
         *,
         bot_id: str = "linling",
         metrics: MetricsSink | None = None,
+        action_sink: Any | None = None,
     ) -> None:
         self._agent_def = agent_def
         self._provider = provider
@@ -58,6 +74,10 @@ class AgentRuntime:
         self._kv = kv
         self._bot_id = bot_id
         self._metrics: MetricsSink = metrics or NullMetrics()
+        self._action_sink: Any | None = action_sink
+
+    def set_action_sink(self, sink: Any) -> None:
+        self._action_sink = sink
 
     # ---- Public read-only views -----------------------------------------
     # These let callers (notably the WebUI) introspect an agent's
@@ -89,7 +109,12 @@ class AgentRuntime:
         return self._provider
 
     def _build_tool_schemas(self) -> list[ToolSchema]:
-        """Convert allowed tools from the agent def into ToolSchema list."""
+        """Convert allowed tools from the agent def into ToolSchema list.
+
+        Always appends the ``finish_turn`` pseudo-tool — it is not in the
+        global registry but must be visible to every LLM call so the model
+        can explicitly end the turn.
+        """
         schemas: list[ToolSchema] = []
         for tool_name in self._agent_def.tools:
             td = self._registry.get(tool_name)
@@ -102,6 +127,26 @@ class AgentRuntime:
                     parameters=tool_parameters_schema(td),
                 )
             )
+        schemas.append(
+            ToolSchema(
+                name=_FINISH_TURN_TOOL_NAME,
+                description=(
+                    "End this turn. Call this when you have finished sending all messages. "
+                    "Provide a brief summary of the topic and your thoughts in the summary field."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": "Brief summary of this turn's topic and your thoughts.",
+                        },
+                    },
+                    "required": ["summary"],
+                    "additionalProperties": False,
+                },
+            )
+        )
         return schemas
 
     async def invoke(
@@ -111,8 +156,15 @@ class AgentRuntime:
         event: Event | None = None,
         history: list[Message] | None = None,
         context_max_tokens: int | None = None,
+        action_sink: Any | None = None,
     ) -> AgentResult:
-        """Run the agent's ReAct loop until it produces a text response or hits limits."""
+        """Run the agent's ReAct loop until it calls ``finish_turn`` or hits limits.
+
+        ``action_sink`` overrides the runtime's configured sink for this
+        call only — used by transports (the WebUI) that must capture
+        ``send_reply`` output instead of pushing it to the IM adapter
+        sink.  Passing ``None`` (the default) keeps the configured sink.
+        """
         disable_tools = bool(event is not None and event.raw.get("_linling_disable_tools"))
         # Build initial messages
         messages: list[Message] = []
@@ -128,8 +180,18 @@ class AgentRuntime:
 
         tool_calls_made = 0
         total_tokens = 0
+        nudge_count = 0
         start_time = time.monotonic()
         guardrails = self._agent_def.guardrails
+        # ``sent_texts`` accumulates the actual outbound message texts
+        # the ``send_reply`` tool emits this turn.  It lives on ``extras``
+        # (the same dict handed to every tool) so send_reply can append
+        # and the runtime can drain it on every return path — including
+        # the nudge-limit and timeout fall-backs where messages may have
+        # already gone out before the agent gave up on finish_turn.
+        sent_texts: list[str] = []
+        effective_sink = self._action_sink if action_sink is None else action_sink
+        extras: dict[str, Any] = {"action_sink": effective_sink, "sent_texts": sent_texts}
 
         while True:
             # Check timeout
@@ -139,6 +201,7 @@ class AgentRuntime:
                     content="[Agent stopped: timeout exceeded]",
                     tool_calls_made=tool_calls_made,
                     total_tokens=total_tokens,
+                    sent_texts=list(sent_texts),
                 )
 
             remaining = max(0.1, guardrails.timeout_s - elapsed)
@@ -147,19 +210,12 @@ class AgentRuntime:
                 _provider_prompt_budget(context_max_tokens=context_max_tokens),
             )
 
-            # Call LLM — timed and counted so dashboards can show
-            # token / latency / error rate per provider/model.
             provider_labels = {
                 "provider": self._agent_def.provider,
                 "model": self._agent_def.model,
             }
             llm_started = time.monotonic()
             try:
-                # ``wait_for`` guards against a single LLM call hanging
-                # past the agent-wide budget. The provider should also
-                # honour cancellation — :class:`OpenAIProvider` uses
-                # ``httpx.AsyncClient`` whose request is cancelled
-                # cleanly on ``CancelledError``.
                 response: LLMResponse = await asyncio.wait_for(
                     self._provider.chat(
                         messages,
@@ -195,7 +251,6 @@ class AgentRuntime:
 
             self._metrics.counter_inc(LLM_CALLS_TOTAL, {**provider_labels, "outcome": "ok"})
 
-            # Accumulate token usage + ship to metrics.
             if response.usage:
                 total_tokens += response.usage.total_tokens
                 if response.usage.prompt_tokens:
@@ -213,30 +268,69 @@ class AgentRuntime:
 
             assistant_msg = response.message
 
-            # If no tool calls, return the text response
+            # --- No tool calls: nudge or give up ----------------------------
             if not assistant_msg.tool_calls:
-                return AgentResult(
-                    content=assistant_msg.content,
-                    tool_calls_made=tool_calls_made,
-                    total_tokens=total_tokens,
+                nudge_count += 1
+                if nudge_count > _NUDGE_LIMIT:
+                    logger.info(
+                        "runtime.nudge_limit_reached",
+                        nudge_count=nudge_count,
+                        content_preview=(assistant_msg.content or "")[:200],
+                    )
+                    return AgentResult(
+                        content="",
+                        tool_calls_made=tool_calls_made,
+                        total_tokens=total_tokens,
+                        sent_texts=list(sent_texts),
+                    )
+                logger.debug(
+                    "runtime.nudge",
+                    nudge_count=nudge_count,
+                    content_preview=(assistant_msg.content or "")[:200],
                 )
+                messages.append(assistant_msg)
+                messages.append(Message(role="user", content=_NUDGE_PROMPT))
+                continue
 
-            # Process tool calls
+            # --- Tool calls present ----------------------------------------
+            nudge_count = 0
             messages.append(assistant_msg)
             tool_calls_made += 1
 
-            # Check max_tool_calls guardrail
             if tool_calls_made > guardrails.max_tool_calls:
-                content = assistant_msg.content or "[Agent stopped: max tool calls exceeded]"
                 return AgentResult(
-                    content=content,
+                    content=assistant_msg.content or "[Agent stopped: max tool calls exceeded]",
                     tool_calls_made=tool_calls_made,
                     total_tokens=total_tokens,
+                    sent_texts=list(sent_texts),
                 )
 
-            # Execute each tool call
-            ctx = ToolCtx(kv=self._kv, event=event, bot_id=self._bot_id)
+            # Execute every non-finish_turn tool call in this message,
+            # then honour finish_turn *afterwards*.  The previous code
+            # checked finish_turn first and returned immediately, which
+            # silently dropped any send_reply shipped in the same
+            # assistant message (a very natural "send, then finish"
+            # pattern).  Executing in order also preserves the model's
+            # intended delivery sequence.
+            ctx = ToolCtx(kv=self._kv, event=event, bot_id=self._bot_id, extras=extras)
+            finish_summary: str | None = None
             for tc in assistant_msg.tool_calls:
+                if tc.name == _FINISH_TURN_TOOL_NAME:
+                    try:
+                        ft_args = json.loads(tc.arguments) if tc.arguments else {}
+                    except json.JSONDecodeError:
+                        ft_args = {}
+                    finish_summary = str(ft_args.get("summary", "")) or ""
+                    messages.append(
+                        Message(
+                            role="tool",
+                            content='{"ok": true}',
+                            name=tc.name,
+                            tool_call_id=tc.id,
+                        )
+                    )
+                    continue
+
                 tool_def = self._registry.get(tc.name)
                 if tool_def is None:
                     result_str = f"Error: tool '{tc.name}' not found in registry"
@@ -256,6 +350,15 @@ class AgentRuntime:
                         name=tc.name,
                         tool_call_id=tc.id,
                     )
+                )
+
+            if finish_summary is not None:
+                return AgentResult(
+                    content="",
+                    tool_calls_made=tool_calls_made,
+                    total_tokens=total_tokens,
+                    finish_turn_summary=finish_summary,
+                    sent_texts=list(sent_texts),
                 )
 
 

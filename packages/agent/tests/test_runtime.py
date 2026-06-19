@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import linling_core.tools_builtin  # noqa: F401 — registers built-in tools
+import linling_tools_stdlib  # noqa: F401 — registers send_reply
 import pytest
 from linling_agent.agent_def import AgentDef, AgentGuardrails, AgentTrigger
 from linling_agent.llm import (
@@ -18,7 +19,7 @@ from linling_agent.llm import (
     ToolSchema,
 )
 from linling_agent.runtime import _MAX_TOOL_RESULT_CHARS, AgentRuntime
-from linling_core.events import Event, Scope, User
+from linling_core.events import Action, Event, Scope, User
 from linling_core.segments import TextSegment
 from linling_core.tools import ToolCtx, ToolRegistry
 from linling_core.tools import registry as global_registry
@@ -47,9 +48,9 @@ class MockProvider:
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        resp = self._responses[self._call_count]
+        idx = min(self._call_count, len(self._responses) - 1)
         self._call_count += 1
-        return resp
+        return self._responses[idx]
 
     async def chat_stream(
         self,
@@ -139,6 +140,17 @@ def make_tool_call_response(
             completion_tokens=tokens // 2,
             total_tokens=tokens,
         ),
+    )
+
+
+def make_finish_turn_response(
+    summary: str = "done",
+    call_id: str = "call_ft",
+    tokens: int = 10,
+) -> LLMResponse:
+    """Helper to create an LLMResponse with a finish_turn tool call."""
+    return make_tool_call_response(
+        "finish_turn", {"summary": summary}, call_id=call_id, tokens=tokens
     )
 
 
@@ -282,8 +294,8 @@ class TestAgentGuardrails:
 
 
 class TestRuntimeSimpleResponse:
-    async def test_simple_text_response(self, kv, tool_registry):
-        """Agent returns text without making any tool calls."""
+    async def test_finish_turn_response(self, kv, tool_registry):
+        """Agent calls finish_turn to end the turn with a summary."""
         agent_def = AgentDef.from_dict(
             {
                 "name": "simple",
@@ -291,27 +303,52 @@ class TestRuntimeSimpleResponse:
                 "tools": [],
             }
         )
-        provider = MockProvider([make_text_response("Hello there!", tokens=20)])
+        provider = MockProvider([make_finish_turn_response("聊了天气话题")])
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Hi")
-        assert result.content == "Hello there!"
-        assert result.tool_calls_made == 0
-        assert result.total_tokens == 20
+        assert result.content == ""
+        assert result.finish_turn_summary == "聊了天气话题"
+        assert result.tool_calls_made == 1
+        assert result.total_tokens == 10
+
+    async def test_nudge_then_finish(self, kv, tool_registry):
+        """Agent returns plain text first (no tools), gets nudged, then calls finish_turn."""
+        agent_def = AgentDef.from_dict({"name": "nudge-test", "tools": []})
+        provider = MockProvider([
+            make_text_response("some text"),
+            make_finish_turn_response("最终总结"),
+        ])
+        runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
+
+        result = await runtime.invoke("Hi")
+        assert result.finish_turn_summary == "最终总结"
+        assert result.content == ""
+
+    async def test_nudge_limit_returns_empty(self, kv, tool_registry):
+        """After nudge limit, runtime returns empty content."""
+        agent_def = AgentDef.from_dict({"name": "nudge-limit", "tools": []})
+        # Provider keeps returning plain text (no tool calls)
+        provider = MockProvider([make_text_response("just text")])
+        runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
+
+        result = await runtime.invoke("Hi")
+        assert result.content == ""
+        assert result.finish_turn_summary is None
 
     async def test_no_system_prompt(self, kv, tool_registry):
         """Agent with empty system prompt still works."""
         agent_def = AgentDef.from_dict({"name": "no-sys", "system": ""})
-        provider = MockProvider([make_text_response("Works fine")])
+        provider = MockProvider([make_finish_turn_response("ok")])
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Test")
-        assert result.content == "Works fine"
+        assert result.finish_turn_summary == "ok"
 
 
 class TestRuntimeToolCalls:
     async def test_single_tool_call(self, kv, tool_registry):
-        """Agent makes one tool call then returns text."""
+        """Agent makes one tool call then calls finish_turn."""
         agent_def = AgentDef.from_dict(
             {
                 "name": "tool-user",
@@ -320,14 +357,14 @@ class TestRuntimeToolCalls:
         )
         responses = [
             make_tool_call_response("random_int", {"min": 1, "max": 10}, call_id="c1", tokens=15),
-            make_text_response("The random number is 5.", tokens=10),
+            make_finish_turn_response("已生成随机数", call_id="c2"),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Give me a random number")
-        assert "random number" in result.content or result.content
-        assert result.tool_calls_made == 1
+        assert result.finish_turn_summary == "已生成随机数"
+        assert result.tool_calls_made == 2
         assert result.total_tokens == 25
 
     async def test_multiple_tool_calls_in_sequence(self, kv, tool_registry):
@@ -343,13 +380,13 @@ class TestRuntimeToolCalls:
             make_tool_call_response("random_int", {"min": 1, "max": 6}, call_id="c1", tokens=10),
             make_tool_call_response("random_int", {"min": 1, "max": 6}, call_id="c2", tokens=10),
             make_tool_call_response("random_int", {"min": 1, "max": 6}, call_id="c3", tokens=10),
-            make_text_response("I rolled three dice.", tokens=10),
+            make_finish_turn_response("三个骰子掷完了", call_id="c4"),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Roll three dice")
-        assert result.tool_calls_made == 3
+        assert result.tool_calls_made == 4
         assert result.total_tokens == 40
 
     async def test_tool_not_found(self, kv, tool_registry):
@@ -362,14 +399,14 @@ class TestRuntimeToolCalls:
         )
         responses = [
             make_tool_call_response("nonexistent_tool", {}, call_id="c1"),
-            make_text_response("Sorry, I couldn't use that tool."),
+            make_finish_turn_response("工具不可用", call_id="c2"),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Do something")
-        assert result.content == "Sorry, I couldn't use that tool."
-        assert result.tool_calls_made == 1
+        assert result.finish_turn_summary == "工具不可用"
+        assert result.tool_calls_made == 2
 
     async def test_tool_execution_error(self, kv):
         """Tool raises an exception → error string returned to LLM."""
@@ -399,14 +436,14 @@ class TestRuntimeToolCalls:
         )
         responses = [
             make_tool_call_response("bad_tool", {}, call_id="c1"),
-            make_text_response("The tool failed, sorry."),
+            make_finish_turn_response("工具出错了", call_id="c2"),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, reg, kv)
 
         result = await runtime.invoke("Use the bad tool")
-        assert result.content == "The tool failed, sorry."
-        assert result.tool_calls_made == 1
+        assert result.finish_turn_summary == "工具出错了"
+        assert result.tool_calls_made == 2
 
     async def test_tool_result_is_truncated_before_next_llm_call(self, kv):
         """Large tool outputs are capped before being replayed to the LLM."""
@@ -451,7 +488,7 @@ class TestRuntimeToolCalls:
         provider = CapturingProvider(
             [
                 make_tool_call_response("big_tool", {}, call_id="c1"),
-                make_text_response("Done"),
+                make_finish_turn_response("done", call_id="c2"),
             ]
         )
         runtime = AgentRuntime(agent_def, provider, reg, kv)
@@ -509,7 +546,7 @@ class TestRuntimeMessages:
 
             async def chat(self, messages, **kwargs):
                 captured_messages.append(list(messages))
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -542,7 +579,7 @@ class TestRuntimeMessages:
 
             async def chat(self, messages, **kwargs):
                 captured_messages.append(list(messages))
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -582,7 +619,7 @@ class TestRuntimeMessages:
 
             async def chat(self, messages, **kwargs):
                 captured_messages.append(list(messages))
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -613,7 +650,7 @@ class TestRuntimeToolSchemas:
 
             async def chat(self, messages, *, tools=None, **kwargs):
                 captured_tools.append(tools)
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -623,15 +660,17 @@ class TestRuntimeToolSchemas:
 
         assert captured_tools[0] is not None
         schemas = captured_tools[0]
-        assert len(schemas) == 1
+        # finish_turn is always injected, so 1 (read_kv) + 1 (finish_turn) = 2
+        assert len(schemas) == 2
         assert schemas[0].name == "read_kv"
         assert schemas[0].description == "Read a key-value pair from storage"
         assert "scope" in schemas[0].parameters["properties"]
         assert "file" in schemas[0].parameters["properties"]
         assert "key" in schemas[0].parameters["properties"]
+        assert schemas[1].name == "finish_turn"
 
-    async def test_empty_tool_list_no_tools_passed(self, kv, tool_registry):
-        """Empty tool list means no tools passed to LLM."""
+    async def test_empty_tool_list_still_has_finish_turn(self, kv, tool_registry):
+        """Empty configured tool list still gets finish_turn injected."""
         agent_def = AgentDef.from_dict(
             {
                 "name": "no-tools",
@@ -648,7 +687,7 @@ class TestRuntimeToolSchemas:
 
             async def chat(self, messages, *, tools=None, **kwargs):
                 captured_tools.append(tools)
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -656,7 +695,10 @@ class TestRuntimeToolSchemas:
         runtime = AgentRuntime(agent_def, CapturingProvider(), tool_registry, kv)
         await runtime.invoke("Test")
 
-        assert captured_tools[0] is None
+        # finish_turn is always present, so tools is never None
+        assert captured_tools[0] is not None
+        assert len(captured_tools[0]) == 1
+        assert captured_tools[0][0].name == "finish_turn"
 
     async def test_event_flag_can_disable_tools(self, kv, tool_registry):
         """Internal decision prompts can force a no-tools LLM call."""
@@ -676,7 +718,7 @@ class TestRuntimeToolSchemas:
 
             async def chat(self, messages, *, tools=None, **kwargs):
                 captured_tools.append(tools)
-                return make_text_response("OK")
+                return make_finish_turn_response("ok")
 
             async def chat_stream(self, messages, **kwargs):
                 raise NotImplementedError
@@ -708,7 +750,7 @@ class TestRuntimeTokenAccumulation:
         responses = [
             make_tool_call_response("random_int", {"min": 1, "max": 10}, call_id="c1", tokens=20),
             make_tool_call_response("random_int", {"min": 1, "max": 10}, call_id="c2", tokens=25),
-            make_text_response("Done!", tokens=15),
+            make_finish_turn_response("done", call_id="c3", tokens=15),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
@@ -720,7 +762,11 @@ class TestRuntimeTokenAccumulation:
         """Token count stays 0 when provider returns no usage info."""
         agent_def = AgentDef.from_dict({"name": "no-usage"})
         response = LLMResponse(
-            message=Message(role="assistant", content="No usage info"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="c1", name="finish_turn", arguments='{"summary":"ok"}')],
+            ),
             usage=None,
         )
         provider = MockProvider([response])
@@ -752,14 +798,135 @@ class TestRuntimeWithRealTools:
                 {"scope": "test", "file": "data", "key": "name"},
                 call_id="c2",
             ),
-            make_text_response("The name is linling."),
+            make_finish_turn_response("名字是 linling", call_id="c3"),
         ]
         provider = MockProvider(responses)
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Write and read my name")
-        assert result.content == "The name is linling."
-        assert result.tool_calls_made == 2
+        assert result.finish_turn_summary == "名字是 linling"
+        assert result.tool_calls_made == 3
         # Verify the KV store was actually written to
         stored = await kv.read("test", "data", "name")
         assert stored == "linling"
+
+
+class _RecordingSink:
+    """Async action sink that records every delivered Action, in order."""
+
+    def __init__(self) -> None:
+        self.actions: list[Action] = []
+
+    async def __call__(self, action: Action) -> None:
+        self.actions.append(action)
+
+
+def _dm_event(text: str = "hi") -> Event:
+    return Event(
+        id="e1",
+        platform="onebot",
+        bot_id="bot1",
+        scope=Scope(kind="dm", id="u1", platform="onebot"),
+        sender=User(id="u1", platform="onebot", display_name="U"),
+        segments=[TextSegment(text=text)],
+        raw={},
+    )
+
+
+class TestSendReplyDelivery:
+    """Regression coverage for tool-based DM sending.
+
+    These guard against three regressions found in review:
+
+    * sending ``send_reply`` + ``finish_turn`` in the *same* assistant
+      message previously dropped the message — finish_turn short-circuited
+      the tool loop before send_reply ran.
+    * ``send_reply`` used to fire-and-forget the delivery task, so the
+      message could vanish if the caller returned without pumping the
+      loop.  Delivery now awaits the sink.
+    * history recorded the finish_turn summary instead of the actual
+      sent text; ``AgentResult.sent_texts`` carries the real words.
+    """
+
+    async def test_parallel_send_reply_and_finish_turn_delivers_message(
+        self, kv, tool_registry
+    ):
+        """send_reply + finish_turn in one message must still deliver.
+
+        The natural "send, then finish" pattern must not drop the
+        message: send_reply runs first, finish_turn ends the turn.
+        """
+        agent_def = AgentDef.from_dict({"name": "t", "model": "m", "tools": ["send_reply"]})
+        sink = _RecordingSink()
+        # One assistant message carrying BOTH tool calls.
+        response = LLMResponse(
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="s1", name="send_reply", arguments='{"text":"hello!"}'),
+                    ToolCall(id="f1", name="finish_turn", arguments='{"summary":"greeted"}'),
+                ],
+            ),
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+
+        result = await runtime.invoke("hi", event=_dm_event())
+
+        # The message was actually delivered (not silently dropped).
+        assert len(sink.actions) == 1
+        assert sink.actions[0].segments[0].text == "hello!"
+        # And the result carries the real sent text for history.
+        assert result.sent_texts == ["hello!"]
+        assert result.finish_turn_summary == "greeted"
+
+    async def test_multiple_send_reply_preserve_order(self, kv, tool_registry):
+        """Multiple send_reply calls deliver in call order, all awaited."""
+        agent_def = AgentDef.from_dict({"name": "t", "model": "m", "tools": ["send_reply"]})
+        sink = _RecordingSink()
+        response = LLMResponse(
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="s1", name="send_reply", arguments='{"text":"第一条"}'),
+                    ToolCall(id="s2", name="send_reply", arguments='{"text":"第二条"}'),
+                    ToolCall(id="f1", name="finish_turn", arguments='{"summary":"done"}'),
+                ],
+            ),
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+
+        result = await runtime.invoke("hi", event=_dm_event())
+
+        assert [a.segments[0].text for a in sink.actions] == ["第一条", "第二条"]
+        assert result.sent_texts == ["第一条", "第二条"]
+
+    async def test_send_reply_awaits_sink_before_returning(self, kv, tool_registry):
+        """Delivery is awaited inline — no fire-and-forget.
+
+        If send_reply spawned an unowned task, the sink would not have
+        recorded the action by the time invoke() returns.
+        """
+        agent_def = AgentDef.from_dict({"name": "t", "model": "m", "tools": ["send_reply"]})
+        sink = _RecordingSink()
+        response = LLMResponse(
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="s1", name="send_reply", arguments='{"text":"hi"}'),
+                    ToolCall(id="f1", name="finish_turn", arguments='{"summary":"done"}'),
+                ],
+            ),
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+
+        await runtime.invoke("hi", event=_dm_event())
+
+        # With awaited delivery the action is already in the sink — no
+        # loop pumping needed.
+        assert len(sink.actions) == 1

@@ -68,7 +68,7 @@ class _AgentInner(_Inner):
 
 class _ToolProvider:
     def __init__(self, responses: list[LLMResponse]) -> None:
-        self.responses = responses
+        self.responses = list(responses)
         self.calls: list[tuple[list[Message], list[ToolSchema] | None]] = []
 
     @property
@@ -77,7 +77,17 @@ class _ToolProvider:
 
     async def chat(self, messages, *, tools=None, temperature=0.7, max_tokens=None):
         self.calls.append((list(messages), tools))
-        return self.responses.pop(0)
+        if self.responses:
+            return self.responses.pop(0)
+        return LLMResponse(
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(id="auto_ft", name="finish_turn", arguments='{"summary":"done"}')
+                ],
+            )
+        )
 
     async def chat_stream(self, messages, **kwargs):
         raise NotImplementedError
@@ -127,12 +137,12 @@ async def test_probe_tool_subset_excludes_profile_tools() -> None:
     )
 
     probe_tools = {s.name for s in _reply_tool_schemas()}
-    assert probe_tools == {"read_batch_messages", "reply_to_message", "send_group"}
+    assert probe_tools == {"read_batch_messages", "reply_to_message", "send_group", "finish_turn"}
     assert "read_user_profile" not in probe_tools
     assert "write_user_profile" not in probe_tools
     # The main loop still gets everything.
     main_tools = {s.name for s in _group_batch_tool_schemas()}
-    assert {"read_user_profile", "write_user_profile", "send_group"} <= main_tools
+    assert {"read_user_profile", "write_user_profile", "send_group", "finish_turn"} <= main_tools
 
 
 async def test_read_profile_tool_continues_loop_no_action() -> None:
@@ -165,7 +175,7 @@ async def test_read_profile_tool_continues_loop_no_action() -> None:
         await dispatcher.run(_event("苏苏，u1 是谁？", eid="m1"), session)
 
         # Two provider rounds: read tool, then no_reply.
-        await _wait_for(lambda: len(provider.calls) == 2)
+        await _wait_for(lambda: len(provider.calls) >= 2)
         # The read result reached the model as a tool message containing the profile.
         second_round_msgs = provider.calls[1][0]
         assert any(
@@ -209,7 +219,7 @@ async def test_write_profile_tool_persists() -> None:
 
         await dispatcher.run(_event("u1 说他喜欢钓鱼", eid="m1"), session)
 
-        await _wait_for(lambda: len(provider.calls) == 2)
+        await _wait_for(lambda: len(provider.calls) >= 2)
         assert await ProfileStore(kv).load("u1") == "喜欢钓鱼"
         assert await ProfileStore(kv).load_name("u1") == "小明"
         await dispatcher.stop()
@@ -241,7 +251,7 @@ async def test_profile_tool_without_kv_returns_error_no_crash() -> None:
 
     await dispatcher.run(_event("u1 是谁", eid="m1"), session)
 
-    await _wait_for(lambda: len(provider.calls) == 2)
+    await _wait_for(lambda: len(provider.calls) >= 2)
     tool_msgs = [m for m in provider.calls[1][0] if m.role == "tool"]
     assert tool_msgs
     assert "unavailable" in tool_msgs[-1].content

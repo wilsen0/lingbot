@@ -26,6 +26,7 @@ from linling_tools_stdlib import (
     legacy_stubs,
     random_ops,
     scheduler_ops,
+    send_reply,
     str_ops,
     trade_ops,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "legacy_stubs",
     "random_ops",
     "scheduler_ops",
+    "send_reply",
     "str_ops",
     "trade_ops",
 ]

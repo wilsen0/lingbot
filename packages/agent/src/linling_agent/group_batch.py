@@ -31,7 +31,7 @@ from linling_core.segments import (
 )
 
 from linling_agent.action_delay import with_random_delay_before
-from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
+from linling_agent.actions_protocol import ParsedAction
 from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
 from linling_agent.llm import Message, ToolCall, ToolSchema
@@ -42,6 +42,7 @@ logger = structlog.get_logger(__name__)
 _TOOL_READ_BATCH = "read_batch_messages"
 _TOOL_REPLY_TO_MESSAGE = "reply_to_message"
 _TOOL_SEND_GROUP = "send_group"
+_TOOL_FINISH_TURN = "finish_turn"
 _TOOL_READ_PROFILE = "read_user_profile"
 _TOOL_WRITE_PROFILE = "write_user_profile"
 _MAX_TOOL_ROUNDS = 8
@@ -51,6 +52,8 @@ _BATCH_PREVIEW_CHARS = 80
 _BATCH_PROMPT_TEXT_CHARS = 500
 _BATCH_HISTORY_TEXT_CHARS = 500
 _MAX_TOOL_RESULT_CHARS = 2_500
+_NUDGE_LIMIT = 2
+_NUDGE_PROMPT = "Use tools to reply, or call finish_turn to end this turn."
 
 
 _ATTENTION_KV_SCOPE_PREFIX = "啊/"
@@ -104,165 +107,6 @@ def _parse_attention_stamp(
     window_minutes = max(1, int(window_s // 60))
     return diff <= window_minutes
 
-
-_NO_REPLY_TOKENS: frozenset[str] = frozenset({
-    "no_reply",
-    "no-reply",
-    "noreply",
-    "skip",
-    "none",
-    "null",
-    "不回",
-    "不回复",
-    "不用回",
-    "不用回复",
-    "不需要回",
-    "不需要回复",
-    "无需回",
-    "无需回复",
-    "不用说话",
-    "不说话",
-    "保持沉默",
-})
-
-_DONE_TOKENS: frozenset[str] = frozenset({
-    "done",
-    "reply_done",
-    "reply-done",
-    "reply done",
-    "回复好了",
-    "回复完成",
-    "回复完了",
-    "已回复",
-    "已完成",
-    "已经回复好了",
-    "已经回复完成",
-    # --- Expanded "I'm done replying" family. The model likes to emit
-    # these as a closing acknowledgement after a precise
-    # reply_to_message tool call, and they must never leak into the
-    # group (would reveal the batching machinery). A few entries below
-    # (好了 / 好啦 / 好嘞 / 搞定 / 完事) are mildly ambiguous with a
-    # genuine one-word group reply ("好了" = "行/可以了"), so filtering
-    # them carries a small false-positive risk — but per the design
-    # call, leaking a meta "done" marker is the worse outcome, so we
-    # swallow them. The tilde-decorated variants ("好了~", "搞定了~~~")
-    # are handled by _normalize_control_text, not by separate entries.
-    "好了",
-    "好啦",
-    "好嘞",
-    "回好了",
-    "回复了",
-    "已经回复了",
-    "已经回复",
-    "回复完毕",
-    "回复完毕了",
-    "搞定",
-    "搞定了",
-    "完事",
-    "完事了",
-    "弄好了",
-    "答好了",
-    "回答好了",
-    "回答完了",
-    "回答完成",
-})
-
-# Trailing decorations the model tacks onto control tokens. Tildes
-# (ASCII ~, fullwidth ～ U+FF5E, wave dash 〜 U+301C) are by far the
-# most common ("好了~"); we strip a trailing run of them plus whitespace
-# so every token matches its decorated variant without table doubling.
-_TRAILING_DECORATIONS = "~～〜 \t\r\n"
-
-# Sentence-final mood particles that are colloquial contractions of a
-# trailing 了 (啦 = 了+啊, 咯/喽 = 了+喔, 嘞 ≈ 了). The model loves
-# these ("好啦", "回复好啦", "搞定咯"). Folding a trailing particle back
-# to 了 collapses the whole 了/啦/咯/喽/嘞 spelling family onto the
-# canonical 了-form entries already in the tables, so we don't have to
-# enumerate every word twice — and future 了-words are covered for free.
-_FINAL_PARTICLES_TO_LE = "啦咯喽嘞"
-
-
-def _normalize_control_text(content: str) -> str:
-    if not content:
-        return ""
-    text = content.strip().strip("\"'`“”‘’").strip()
-    # Strip trailing tildes/whitespace ("好了~", "搞定了 ~~~", "done～")
-    # so the tables don't need a separate entry per decoration.
-    text = text.rstrip(_TRAILING_DECORATIONS)
-    # Fold a trailing mood particle to 了 ("好啦"->"好了",
-    # "回复好啦"->"回复好了"), then collapse a doubled trailing 了 so
-    # the 了+啦 emphatic form ("好了啦"->"好了了"->"好了") also lands on
-    # the canonical entry.
-    if text and text[-1] in _FINAL_PARTICLES_TO_LE:
-        text = text[:-1] + "了"
-        if text.endswith("了了"):
-            text = text[:-1]
-    return text.lower()
-
-
-def _classify_stop_token(content: str) -> str | None:
-    normalized = _normalize_control_text(content)
-    if not normalized:
-        return None
-    if normalized in {"[]", "{}", "{\"actions\":[]}"}:
-        return "no_reply"
-    if normalized in _NO_REPLY_TOKENS:
-        return "no_reply"
-    first = normalized.split(maxsplit=1)[0].strip(",.!?，。！？:：;；")
-    if first in _NO_REPLY_TOKENS:
-        return "no_reply"
-    if any(
-        normalized.startswith(prefix)
-        for prefix in (
-            "no reply",
-            "do not reply",
-            "don't reply",
-            "不需要回复",
-            "不用回复",
-            "无需回复",
-            "不回复",
-            "保持沉默",
-        )
-    ):
-        return "no_reply"
-    if normalized in _DONE_TOKENS:
-        return "done"
-    if first in _DONE_TOKENS:
-        return "done"
-    if any(
-        normalized.startswith(prefix)
-        for prefix in (
-            "reply done",
-            "already replied",
-            "已经回复好了",
-            "已经回复完成",
-            "已经回复了",
-            "已经回复完了",
-            "回复好了",
-            "回复完成",
-            "回复完了",
-            "回复完毕",
-            "回答好了",
-            "回答完了",
-            "回答完成",
-        )
-    ):
-        return "done"
-    return None
-
-
-def _is_no_reply_token(content: str) -> bool:
-    """Detect whether the model's output is the 'don't reply' sentinel."""
-    return _classify_stop_token(content) == "no_reply"
-
-
-def _is_done_token(content: str) -> bool:
-    """Detect whether the model's output is the 'reply completed' sentinel."""
-    return _classify_stop_token(content) == "done"
-
-
-def _is_stop_token(content: str) -> bool:
-    return _classify_stop_token(content) is not None
 
 
 @dataclass(frozen=True)
@@ -440,6 +284,9 @@ class GroupBatchChatDispatcher:
 
     def set_action_sink(self, sink: Any) -> None:
         self._action_sink = sink
+        inner_setter = getattr(self._inner, "set_action_sink", None)
+        if inner_setter is not None:
+            inner_setter(sink)
 
     async def _is_within_attention_window(
         self, scope_id: str, sender_id: str
@@ -756,43 +603,6 @@ class GroupBatchChatDispatcher:
         if tool_selection is not None:
             if tool_selection.records and await self._batch_is_current(event, generation):
                 await self._record_tool_history(batch_session, event, tool_selection.records)
-            return
-
-        inner_dispatch = getattr(self._inner, "dispatch", None)
-        if inner_dispatch is None:
-            return
-        batch_event = event.model_copy(
-            update={
-                "id": f"group-batch:{event.bot_id}:{event.scope.id}:{batch[-1].message_id}",
-                "sender": User(id="", platform=event.platform, display_name="_group"),
-                "segments": [TextSegment(text=self._build_prompt(batch))],
-                "raw": {
-                    **event.raw,
-                    "_linling_group_batch": True,
-                    "_linling_group_batch_ids": [m.message_id for m in batch],
-                    "_linling_skip_history": True,
-                    "_linling_disable_tools": True,
-                    "_linling_prompt_system": self._build_system_prompt(batch),
-                },
-            }
-        )
-        async with batch_session.lock:
-            result = await inner_dispatch(batch_event, batch_session)
-        if result is None:
-            return
-        if not await self._batch_is_current(event, generation):
-            return
-        records = await self._handle_plain_assistant_content(
-            result.content,
-            event=event,
-            batch=batch,
-            generation=generation,
-            sent_count=0,
-        )
-        if not records:
-            return
-        if await self._batch_is_current(event, generation):
-            await self._record_tool_history(batch_session, event, records)
 
     async def _dispatch_batch_with_tools(
         self,
@@ -909,7 +719,7 @@ class GroupBatchChatDispatcher:
                     scope_id=event.scope.id,
                     batch_size=len(batch),
                     verdict=probe_has_action,
-                    model=self._probe.model,
+                    model=getattr(self._probe, "model", None),
                 )
                 if not probe_has_action:
                     return _ToolSelection(records=[])
@@ -929,6 +739,7 @@ class GroupBatchChatDispatcher:
                 return _ToolSelection(records=[])
         records: list[_ToolSendRecord] = []
         read_calls = 0
+        nudge_count = 0
         total_tokens = 0
         logger.info(
             "group_batch.tool_selector_start",
@@ -963,34 +774,20 @@ class GroupBatchChatDispatcher:
             if not await self._batch_is_current(event, generation):
                 return _ToolSelection(records=records)
             if not assistant.tool_calls:
-                # No tool calls — interpret the plain content as either
-                # an explicit "no_reply" decision, a legacy JSON action
-                # payload, or a direct group send.
-                new_records = await self._handle_plain_assistant_content(
-                    assistant.content,
-                    event=event,
-                    batch=batch,
-                    generation=generation,
-                    sent_count=len(records),
-                )
-                if not new_records:
-                    stop_kind = _classify_stop_token(assistant.content or "")
+                # No tool calls — nudge the LLM to use tools or finish_turn.
+                nudge_count += 1
+                if nudge_count > _NUDGE_LIMIT:
                     logger.info(
-                        "group_batch.tool_selector_no_reply",
+                        "group_batch.nudge_limit_reached",
                         scope_id=event.scope.id,
-                        had_attention=had_attention,
-                        actions_so_far=len(records),
-                        stop_kind=stop_kind or "empty",
+                        nudge_count=nudge_count,
+                        content_preview=(assistant.content or "")[:200],
                     )
                     return _ToolSelection(records=records)
-                records.extend(new_records)
-                logger.info(
-                    "group_batch.tool_selector_text_send",
-                    scope_id=event.scope.id,
-                    had_attention=had_attention,
-                    text_preview="\n".join(r.assistant_output for r in new_records)[:200],
-                )
-                return _ToolSelection(records=records)
+                messages.append(assistant)
+                messages.append(Message(role="user", content=_NUDGE_PROMPT))
+                continue
+            nudge_count = 0
             messages.append(assistant)
             terminal = False
             for tool_call in assistant.tool_calls:
@@ -1086,110 +883,20 @@ class GroupBatchChatDispatcher:
         event: Event,
         batch: list[_BufferedMessage],
     ) -> bool:
+        # With tool-call-only sending, the presence of any reply-shaped
+        # or finish_turn tool call is the action signal.  Plain text
+        # content (no tool calls) is no longer interpreted as a send.
+        _ = event, batch  # reserved for future policy
         tool_calls = message.tool_calls or []
-        if any(
-            tc.name in {_TOOL_READ_BATCH, _TOOL_REPLY_TO_MESSAGE, _TOOL_SEND_GROUP}
+        return any(
+            tc.name
+            in {
+                _TOOL_READ_BATCH,
+                _TOOL_REPLY_TO_MESSAGE,
+                _TOOL_SEND_GROUP,
+                _TOOL_FINISH_TURN,
+            }
             for tc in tool_calls
-        ):
-            return True
-        content = (message.content or "").strip()
-        if not content or _is_stop_token(content):
-            return False
-        envelope = parse_actions_envelope(content)
-        if envelope.recognised:
-            # Recognised the actions wire shape — there's an action iff
-            # at least one entry survived schema normalisation. Empty
-            # envelopes (``{"actions": []}``) count as "model said
-            # nothing to do".
-            return any(_normalise_group_entry(entry, event, batch) is not None
-                       for entry in envelope.entries)
-        return True
-
-    def _actions_from_envelope(
-        self,
-        content: str,
-        event: Event,
-        batch: list[_BufferedMessage],
-    ) -> list[Action] | None:
-        """Parse an actions envelope and shape it for the current group.
-
-        Returns ``None`` when the content is plain prose (caller falls back
-        to treating it as a single ``send_group``). Returns a (possibly
-        empty) list when the envelope was recognised; an empty list means
-        the LLM asked for nothing to be sent.
-        """
-        envelope = parse_actions_envelope(content)
-        if not envelope.recognised:
-            return None
-        actions: list[Action] = []
-        for entry in envelope.entries:
-            if len(actions) >= self._cfg.max_replies:
-                break
-            shaped = _normalise_group_entry(entry, event, batch)
-            if shaped is None:
-                continue
-            text = shaped.text[: self._cfg.max_reply_chars]
-            if not text:
-                continue
-            if shaped.kind == "reply":
-                actions.append(
-                    Action(
-                        kind="reply",
-                        target=event.scope,
-                        segments=[
-                            ReplySegment(message_id=shaped.message_id),
-                            TextSegment(text=text),
-                        ],
-                    )
-                )
-            else:
-                actions.append(
-                    Action(
-                        kind="send",
-                        target=event.scope,
-                        segments=[TextSegment(text=text)],
-                    )
-                )
-        return actions
-
-    async def _handle_plain_assistant_content(
-        self,
-        content: str,
-        *,
-        event: Event,
-        batch: list[_BufferedMessage],
-        generation: int,
-        sent_count: int,
-    ) -> list[_ToolSendRecord]:
-        text = (content or "").strip()
-        if not text or _is_stop_token(text):
-            return []
-        envelope_actions = self._actions_from_envelope(text, event, batch)
-        if envelope_actions is not None:
-            # Recognised actions envelope — honor it verbatim, including
-            # the empty list (which means "send nothing"). Do NOT fall
-            # through to the plain-text branch in that case, otherwise
-            # the raw JSON string would leak into a ``send_group``.
-            return await self._send_actions_and_records(
-                envelope_actions,
-                event=event,
-                batch=batch,
-                generation=generation,
-                sent_count=sent_count,
-            )
-        if sent_count >= self._cfg.max_replies:
-            return []
-        action = Action(
-            kind="send",
-            target=event.scope,
-            segments=[TextSegment(text=text[: self._cfg.max_reply_chars])],
-        )
-        return await self._send_actions_and_records(
-            [action],
-            event=event,
-            batch=batch,
-            generation=generation,
-            sent_count=sent_count,
         )
 
     async def _send_actions_and_records(
@@ -1304,6 +1011,14 @@ class GroupBatchChatDispatcher:
                 generation,
                 sent_count,
             )
+        if tool_call.name == _TOOL_FINISH_TURN:
+            summary = args.get("summary", "")
+            logger.info(
+                "group_batch.finish_turn",
+                scope_id=event.scope.id,
+                summary=str(summary)[:200],
+            )
+            return _tool_json({"ok": True}), None, False, True
         if tool_call.name in (_TOOL_READ_PROFILE, _TOOL_WRITE_PROFILE):
             return await self._tool_profile(tool_call.name, args), None, False, False
         return _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}), None, False, False
@@ -1680,49 +1395,27 @@ class GroupBatchChatDispatcher:
             lines.append(_render_candidate_line(m, name_by_id))
         return "\n".join(lines)
 
-    def _build_system_prompt(self, batch: list[_BufferedMessage]) -> str:
-        return "\n".join(
-            [
-                "你现在在群聊里，大家七嘴八舌地说着话。",
-                "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
-                "觉得没什么好说的就安静待着，不用勉强。",
-                "候选消息里会写明谁说了什么、谁@了你、谁回复了你；上下文里的历史记录也是同样格式。",
-                *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
-                "",
-                "回复格式（按情况选一种）：",
-                "A. 一句话就够 → 直接输出一条文字，不要任何前缀，不要空行分段。",
-                "B. 只要想一次连发两条或更多短消息 → 必须输出严格 JSON：",
-                "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
-                "   按数组顺序逐条发送。type 支持 send_group（直接发）和 reply_to_message（引用回复，需要 message_id）。",
-                "   JSON 外不要掺杂文字、解释、Markdown 围栏或空行。",
-                "C. 想引用某条消息回复 → 也可以用 B 里的 reply_to_message。",
-                "D. 如果整批都不用回 → 只输出 no_reply，不要解释。",
-                "E. 如果已经回复完了 → 输出 done / 回复好了 / 回复完成，不要再补别的内容。",
-                f"最多说 {self._cfg.max_replies} 句；多条必须走 actions JSON。",
-            ]
-        )
-
     def _build_tool_system_prompt(self, batch: list[_BufferedMessage]) -> str:
         return "\n".join(
             [
-                "你现在在群聊里，大家七嘴八舌地说着话。",
-                "你不需要每条都回——像平时在群里一样，看到感兴趣的、跟你有关的、或者有人找你说话的，再开口就好。",
-                "候选消息里会写明谁说了什么、谁@了你、谁回复了你；上下文里的历史记录也是同样格式。",
+                "You are in a group chat. People are chatting casually.",
+                "You do not need to reply to everything — speak up when something interests you, involves you, or someone is talking to you.",
+                "Each candidate message shows who said what, who @-mentioned you, and who replied to you. History uses the same format.",
                 *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
-                "回复方式（按情况选一种或自由组合）：",
-                "1. 想直接在群里说一句话 → 直接输出一条文字，不要任何前缀，不要空行分段（不要写'回复 XXX:'之类的，那是历史记录格式不是发送格式）。",
-                "2. 想引用某条消息回复（@对方+引用框）→ 调 reply_to_message 工具。",
-                "3. 候选消息末尾标注了 [text_truncated, message_id=...] 或看不清上下文时 → 调 read_batch_messages 工具看原文。",
-                "4. 只要想一次连发两条或更多短消息（不打太长一段、也不想拆成多轮工具调用）→ 必须输出严格 JSON：",
-                "   {\"actions\":[{\"type\":\"send_group\",\"text\":\"先这一句\"},{\"type\":\"reply_to_message\",\"message_id\":\"xxx\",\"text\":\"再补一句\"}]}",
-                "   每个元素就是单独一条消息，按数组顺序发出去。type 支持 send_group 和 reply_to_message，与上面的工具一一对应。",
-                "   JSON 外不要掺杂文字、解释、Markdown 围栏或空行。",
-                "5. 如果已经通过 reply_to_message 精确回复完了 → 输出 done / 回复好了 / 回复完成。",
-                "6. 如果整批都不用回 → 输出 no_reply。",
-                "JSON 与工具调用不要混用：同一轮里，要么全部用 tool call，要么整段输出就是一个 JSON。",
+                "## Message Protocol (CRITICAL)",
+                "You MUST send all messages through tools. Never output raw text as a message.",
                 "",
-                f"最多说 {self._cfg.max_replies} 句；多条必须走 actions JSON 或逐条 tool call。",
+                "| Intent | Tool |",
+                "|---|---|",
+                "| Say something to the group | `send_group(text=\"...\")` |",
+                "| Quote-reply to a specific message (@ + quote box) | `reply_to_message(message_id=\"...\", text=\"...\")` |",
+                "| Read full content of a truncated message | `read_batch_messages(message_ids=[...])` |",
+                "| Send multiple messages | Call `send_group` or `reply_to_message` multiple times |",
+                "| Done (or nothing to say) | `finish_turn(summary=\"...\")` |",
+                "",
+                "`finish_turn` is REQUIRED at the end of every turn.",
+                f"Maximum {self._cfg.max_replies} messages per turn. Send them one tool call at a time.",
             ]
         )
 
@@ -2062,34 +1755,34 @@ def _reply_tool_schemas() -> list[ToolSchema]:
     return [
         ToolSchema(
             name=_TOOL_READ_BATCH,
-            description="读取当前群聊批次中指定候选消息的完整内容。",
+            description="Read the full content of specified candidate messages in the current group batch.",
             parameters={
                 "type": "object",
                 "properties": {
                     "message_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "要读取的 message_id 列表。",
+                        "description": "List of message_ids to read.",
                     },
                     "lines": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "要读取的候选行号列表，从 1 开始。",
+                        "description": "List of candidate line numbers to read (1-based).",
                     },
-                    "start_line": {"type": "integer", "description": "读取范围起始行号。"},
-                    "end_line": {"type": "integer", "description": "读取范围结束行号。"},
+                    "start_line": {"type": "integer", "description": "Start line number of range to read."},
+                    "end_line": {"type": "integer", "description": "End line number of range to read."},
                 },
                 "additionalProperties": False,
             },
         ),
         ToolSchema(
             name=_TOOL_REPLY_TO_MESSAGE,
-            description="引用回复当前批次中的某一条群消息（带@和引用框）。只在明确想针对某条消息回应时调用；普通发言直接输出文本即可。",
+            description="Quote-reply to a specific group message (with @mention and quote box). Use when you want to respond directly to someone. For casual remarks, use send_group instead.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "message_id": {"type": "string", "description": "要回复的候选消息 ID。"},
-                    "text": {"type": "string", "description": "要发送的简短回复内容。"},
+                    "message_id": {"type": "string", "description": "The candidate message ID to reply to."},
+                    "text": {"type": "string", "description": "Short reply text to send."},
                 },
                 "required": ["message_id", "text"],
                 "additionalProperties": False,
@@ -2097,13 +1790,28 @@ def _reply_tool_schemas() -> list[ToolSchema]:
         ),
         ToolSchema(
             name=_TOOL_SEND_GROUP,
-            description="直接在当前群里发送一条简短消息，不引用任何候选消息。适合顺着群聊接一句普通话。",
+            description="Send a short message to the group without quoting any specific message. Use for casual remarks or joining the conversation.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "text": {"type": "string", "description": "要发送的简短群消息内容。"},
+                    "text": {"type": "string", "description": "Short message text to send."},
                 },
                 "required": ["text"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_FINISH_TURN,
+            description="End this turn. Call when done sending messages or when nothing needs a reply. Provide a brief summary of the topic and your thoughts.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary of this turn's topic and your thoughts.",
+                    },
+                },
+                "required": ["summary"],
                 "additionalProperties": False,
             },
         ),
@@ -2115,11 +1823,11 @@ def _profile_tool_schemas() -> list[ToolSchema]:
     return [
         ToolSchema(
             name=_TOOL_READ_PROFILE,
-            description="查阅某个用户(按 QQ 号)的长期记忆画像。想了解群里某人是谁、之前聊过什么时调用。",
+            description="Look up a user's long-term profile by QQ number. Use when you want to know who someone is or what was discussed before.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "qq": {"type": "string", "description": "目标用户的 QQ 号(候选消息里的 sender_id)。"},
+                    "qq": {"type": "string", "description": "The user's QQ number (sender_id from candidate messages)."},
                 },
                 "required": ["qq"],
                 "additionalProperties": False,
@@ -2127,13 +1835,13 @@ def _profile_tool_schemas() -> list[ToolSchema]:
         ),
         ToolSchema(
             name=_TOOL_WRITE_PROFILE,
-            description="全量重写某个用户(按 QQ 号)的长期记忆画像。了解到值得长期记住的事时调用；每次都要先读旧画像再给完整新版本(≤400字，只记长期稳定的事实/偏好/关系/承诺)。",
+            description="Fully rewrite a user's long-term profile by QQ number. Call when you learn something worth remembering long-term. Always read the old profile first, then write a complete new version (≤400 chars, only stable facts/preferences/relationships/commitments).",
             parameters={
                 "type": "object",
                 "properties": {
-                    "qq": {"type": "string", "description": "目标用户的 QQ 号。"},
-                    "profile": {"type": "string", "description": "完整的新画像正文。"},
-                    "name": {"type": "string", "description": "该用户的昵称(可选)。"},
+                    "qq": {"type": "string", "description": "The user's QQ number."},
+                    "profile": {"type": "string", "description": "Complete new profile text."},
+                    "name": {"type": "string", "description": "The user's display name (optional)."},
                 },
                 "required": ["qq", "profile"],
                 "additionalProperties": False,

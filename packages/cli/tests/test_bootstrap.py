@@ -85,13 +85,90 @@ async def test_sink_honors_action_delay_option(monkeypatch) -> None:
     assert rec.sent == [action]
 
 
+class _BatchSendGroupProvider:
+    """Provider that emits ``send_group("batch ok")`` then ``finish_turn``.
+
+    Mirrors the tool-based group-batch contract: the group dispatcher
+    drives the inner agent's provider and processes ``send_group`` /
+    ``reply_to_message`` / ``finish_turn`` pseudo-tools itself.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    @property
+    def name(self) -> str:
+        return "batch-send-group"
+
+    async def chat(self, messages, *, tools=None, temperature=0.7, max_tokens=None):  # type: ignore[no-untyped-def]
+        import json as _json
+
+        from linling_agent.agent_def import AgentDef  # noqa: F401
+        from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
+
+        self.calls.append(list(messages))
+        return LLMResponse(
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="sg1",
+                        name="send_group",
+                        arguments=_json.dumps({"text": "batch ok"}),
+                    ),
+                    ToolCall(
+                        id="ft1",
+                        name="finish_turn",
+                        arguments=_json.dumps({"summary": "replied"}),
+                    ),
+                ],
+            ),
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        )
+
+    async def chat_stream(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+        raise NotImplementedError
+
+
 class _BatchInner:
     def __init__(self) -> None:
         self.recorded = False
+        self._provider: _BatchSendGroupProvider | None = None
+
+    @property
+    def agent(self):
+        if self._provider is None:
+            self._provider = _BatchSendGroupProvider()
+        from linling_agent.agent_def import AgentDef
+
+        return type(
+            "Agent",
+            (),
+            {
+                "provider": self._provider,
+                "agent_def": AgentDef(name="inner-agent", model="mock", system=""),
+            },
+        )()
+
+    @property
+    def context_max_tokens(self) -> int:
+        return 4_000
+
+    async def ensure_history(self, event: Event, session: Session) -> None:  # type: ignore[no-untyped-def]
+        _ = event, session
+
+    async def ensure_history_key(self, session: Session, scope_id: str, sender_id: str) -> None:  # type: ignore[no-untyped-def]
+        _ = session, scope_id, sender_id
+
+    async def record_messages(
+        self, *, session: Session, scope_id: str, sender_id: str, messages: list  # # type: ignore[no-untyped-def]
+    ) -> None:
+        _ = session, scope_id, sender_id, messages
 
     async def dispatch(self, event: Event, session: Session) -> AgentResult:
         _ = event, session
-        return AgentResult(content='{"actions":[{"type":"send_group","text":"batch ok"}]}')
+        return AgentResult(content="")
 
     async def run(self, event: Event, session: Session) -> list[Action]:
         _ = event, session

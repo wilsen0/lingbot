@@ -524,6 +524,20 @@ def _is_suppressed_trigger(text: str) -> bool:
     return any(frag in text for frag in _SUPPRESSED_TRIGGER_FRAGMENTS)
 
 
+async def _webui_capture_sink(action: Action) -> None:
+    """No-op sink for WebUI chat dispatch.
+
+    The WebUI must not push ``send_reply`` actions to the bot's IM
+    adapter sink (that would message the operator on QQ from a browser
+    session).  We pass this capturing no-op as the per-call
+    ``action_sink`` so ``send_reply`` awaits cleanly without side
+    effects; the actual outbound text is recovered separately via
+    ``result.sent_texts`` (populated by ``send_reply`` through the
+    runtime's ``extras["sent_texts"]``).
+    """
+    return None
+
+
 def _build_web_chat_dispatcher(
     bot: RunningBot, agent_name: str
 ) -> Callable[[str, str, str | None], Awaitable[WebChatReply]]:
@@ -691,7 +705,7 @@ def _build_web_chat_dispatcher(
             runtime = bot.agents.get(agent_name)
             if runtime is None:
                 return WebChatReply(content="", source="empty")
-            result = await runtime.invoke(content, event=event)
+            result = await runtime.invoke(content, event=event, action_sink=_webui_capture_sink)
             return _agent_result_to_reply(
                 result,
                 delay_min_s=bot.config.agent.multi_reply_delay_min_s,
@@ -739,7 +753,16 @@ def _build_web_chat_dispatcher(
             )
 
         try:
-            result_or_none = await dispatch(event, session)
+            # The WebUI is a chat surface, not an IM reply path: the
+            # bot's configured action_sink points at the IM adapters,
+            # which we must NOT hit from a browser session (it would
+            # make the bot message the operator on QQ).  We override
+            # the sink per-call with a no-op capture: ``send_reply``
+            # still records the outbound text in ``result.sent_texts``
+            # (via the runtime's ``extras["sent_texts"]``), which
+            # ``_agent_result_to_reply`` surfaces as the chat bubble.
+            # See ``_build_web_chat_dispatcher``'s docstring.
+            result_or_none = await dispatch(event, session, action_sink=_webui_capture_sink)
         finally:
             session.lock.release()
 
@@ -765,51 +788,46 @@ def _agent_result_to_reply(
 ) -> WebChatReply:
     """Wrap an :class:`AgentResult` in a :class:`WebChatReply`.
 
-    Centralised so both the dispatcher-backed path and the legacy
-    direct-runtime fallback shape their return value identically.
-
-    If the agent emitted a structured ``{"actions":[...]}`` envelope
-    (the same multi-message wire shape :class:`AgentChatDispatcher`
-    expands for IM transports), we surface each entry as its own
-    :class:`WebChatSegment` and join the texts with newlines for the
-    ``content`` field — that way the web user sees several short
-    bubbles' worth of text instead of a raw JSON blob, and the audit
-    row still records the model's actual reply length. Plain-text
-    replies are emitted as a single segment, matching the historic
-    behaviour exactly.
+    With tool-based sending, the agent's actual words live in
+    ``result.sent_texts`` (what ``send_reply`` emitted, in order) — the
+    WebUI captures these instead of pushing them to the IM adapter sink.
+    We join them as the visible chat bubble.  ``finish_turn_summary`` is
+    only a last-resort placeholder when nothing was sent; ``content``
+    covers the legacy direct-runtime fallback.
     """
-    from linling_agent.action_delay import random_delay_seconds  # noqa: PLC0415
-    from linling_agent.actions_protocol import parse_actions_envelope  # noqa: PLC0415
-
-    raw = result.content or ""
-    envelope = parse_actions_envelope(raw)
-    if envelope.recognised:
-        texts = [entry.text for entry in envelope.entries if entry.text]
-        joined = "\n".join(texts)
-        segments = []
-        for idx, text in enumerate(texts):
-            delay_s = 0.0
-            if idx > 0:
-                delay_s = random_delay_seconds(
-                    min_s=delay_min_s,
-                    max_s=delay_max_s,
-                ) or 0.0
-            segments.append(WebChatSegment(kind="text", text=text, delay_before_s=delay_s))
+    _ = delay_max_s  # reserved for jittered delay support
+    sent_texts = getattr(result, "sent_texts", None) or []
+    if sent_texts:
+        # Tool-based sending: each ``send_reply`` is one outbound
+        # message.  Surface them as separate chat segments so the UI
+        # can render the inter-message pacing the IM path applies
+        # (``multi_reply_delay_min_s``) — first message has no lead-in
+        # delay, subsequent ones wait ``delay_min_s``.
+        segments = tuple(
+            WebChatSegment(
+                kind="text",
+                text=t,
+                delay_before_s=(0.0 if i == 0 else delay_min_s),
+            )
+            for i, t in enumerate(sent_texts)
+        )
         return WebChatReply(
-            content=joined,
+            content="\n".join(sent_texts),
             tool_calls_made=result.tool_calls_made,
             total_tokens=result.total_tokens,
             source="agent",
-            segments=tuple(segments),
+            segments=segments,
         )
+    summary = getattr(result, "finish_turn_summary", None)
+    text = result.content or summary or ""
     return WebChatReply(
-        content=raw,
+        content=text,
         tool_calls_made=result.tool_calls_made,
         total_tokens=result.total_tokens,
         source="agent",
         segments=(
-            (WebChatSegment(kind="text", text=raw),)
-            if raw
+            (WebChatSegment(kind="text", text=text),)
+            if text
             else ()
         ),
     )

@@ -38,6 +38,17 @@ from linling_webui.auth import decode_token
 router = APIRouter()
 
 
+async def _noop_capture_sink(action: Any) -> None:
+    """No-op action sink for direct WS agent invocation.
+
+    The streaming ``_dispatch`` path invokes the runtime without an IM
+    adapter sink (this surface is the browser, not QQ).  We pass this
+    no-op so ``send_reply`` awaits cleanly; the outbound text is
+    recovered from ``result.sent_texts``.
+    """
+    return None
+
+
 async def _authorize(ws: WebSocket, token: str | None) -> dict[str, Any] | None:
     """Validate the access token, closing the socket if not authorised."""
     config = ws.app.state.config
@@ -57,15 +68,27 @@ async def _dispatch(ws: WebSocket, runtime: Any, user_input: str) -> None:
     in place.
     """
     try:
-        result = await runtime.invoke(user_input)
-        await ws.send_json({"t": "delta", "text": result.content})
-        await ws.send_json(
-            {
-                "t": "done",
-                "tool_calls_made": result.tool_calls_made,
-                "total_tokens": result.total_tokens,
-            }
-        )
+        result = await runtime.invoke(user_input, action_sink=_noop_capture_sink)
+        # With tool-based sending the agent's actual words live in
+        # ``result.sent_texts`` (what ``send_reply`` emitted).  Fall
+        # back to content / finish_turn_summary for the legacy
+        # direct-runtime path that never adopted tool-based sending.
+        sent_texts = getattr(result, "sent_texts", None) or []
+        if sent_texts:
+            visible_text = "\n".join(sent_texts)
+        else:
+            visible_text = result.content or getattr(result, "finish_turn_summary", "") or ""
+        if visible_text:
+            await ws.send_json({"t": "delta", "text": visible_text})
+        done_payload: dict[str, Any] = {
+            "t": "done",
+            "tool_calls_made": result.tool_calls_made,
+            "total_tokens": result.total_tokens,
+        }
+        summary = getattr(result, "finish_turn_summary", None)
+        if summary is not None:
+            done_payload["finish_turn_summary"] = summary
+        await ws.send_json(done_payload)
     except asyncio.CancelledError:
         raise
     except Exception as exc:

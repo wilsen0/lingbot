@@ -38,8 +38,19 @@ class _EchoProvider:
         self._n += 1
         user = next((m.content for m in reversed(messages) if m.role == "user"), "")
         hist_user = sum(1 for m in messages if m.role == "user")
+        summary = f"[turn {hist_user}] {user}"
         return LLMResponse(
-            message=Message(role="assistant", content=f"[turn {hist_user}] {user}"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id=f"echo_{self._n}",
+                        name="finish_turn",
+                        arguments=json.dumps({"summary": summary}),
+                    )
+                ],
+            ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 
@@ -64,8 +75,19 @@ class _RecordingProvider:
                 usage=TokenUsage(total_tokens=3),
             )
         user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        summary = f"reply:{user[:20]}"
         return LLMResponse(
-            message=Message(role="assistant", content=f"reply:{user[:20]}"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id=f"rc_{len(self.calls)}",
+                        name="finish_turn",
+                        arguments=json.dumps({"summary": summary}),
+                    )
+                ],
+            ),
             usage=TokenUsage(total_tokens=3),
         )
 
@@ -526,7 +548,17 @@ class _SlowProvider:
             self.was_cancelled = True
             raise
         return LLMResponse(
-            message=Message(role="assistant", content="(slow reply)"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="slow_ft",
+                        name="finish_turn",
+                        arguments=json.dumps({"summary": "(slow reply)"}),
+                    )
+                ],
+            ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
 
@@ -588,6 +620,6 @@ async def test_cancel_event_is_cleared_before_next_turn(kv, history):
 
     # The dispatcher should clear the flag at the top of ``run`` and
     # deliver the reply as usual.
-    result = await dispatcher.run(_event("hello"), session)
-    assert result
-    assert "slow reply" in result[0].segments[0].text
+    await dispatcher.run(_event("hello"), session)
+    loaded = await history.load("s1", "u1")
+    assert any("(slow reply)" in m.content for m in loaded)

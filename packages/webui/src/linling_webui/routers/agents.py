@@ -57,6 +57,17 @@ class ChatResponse(BaseModel):
     segments: list[ChatSegment] = []
 
 
+async def _noop_capture_sink(action: Any) -> None:
+    """No-op action sink for the HTTP chat fallback path.
+
+    The single-shot ``/chat`` endpoint invokes the runtime directly when
+    no history-aware web dispatcher is wired.  This surface is the
+    browser, so we must not push ``send_reply`` actions to the bot's IM
+    adapters; the outbound text is recovered from ``result.sent_texts``.
+    """
+    return None
+
+
 def _require_runtime(name: str, state: WebUIState):  # type: ignore[no-untyped-def]
     """Look up an AgentRuntime or raise 404.
 
@@ -256,10 +267,13 @@ async def chat(
             ]
         else:
             assert runtime is not None
-            result = await runtime.invoke(body.input)
-            content = result.content
+            result = await runtime.invoke(body.input, action_sink=_noop_capture_sink)
             tool_calls_made = result.tool_calls_made
             total_tokens = result.total_tokens
+            # Tool-based sending stores the actual words in sent_texts;
+            # fall back to content for the legacy plaintext path.
+            sent_texts = getattr(result, "sent_texts", None) or []
+            content = "\n".join(sent_texts) if sent_texts else result.content
             if content:
                 segments = [ChatSegment(kind="text", text=content)]
     except Exception:
