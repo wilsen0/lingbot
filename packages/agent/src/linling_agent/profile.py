@@ -185,8 +185,8 @@ class ProfileStore:
     name="read_user_profile",
     dsl_name="",
     description=(
-        "查阅某个用户(按 QQ 号)的长期记忆画像。"
-        "返回该用户的昵称和画像正文；没有则提示暂无。"
+        "Look up a user's long-term profile by QQ number. "
+        "Returns the user's nickname and profile text; returns a notice if none exists."
     ),
     schema={"qq": "string"},
     safe=True,
@@ -194,27 +194,27 @@ class ProfileStore:
 async def read_user_profile(ctx: ToolCtx, qq: str = "") -> str:
     """Read a user's long-term profile by QQ. Never raises."""
     if not qq:
-        return "错误：缺少有效的 QQ 号。"
+        return "Error: missing QQ number."
     store = ProfileStore(ctx.kv)
     try:
         profile = await store.load(qq)
         name = await store.load_name(qq)
     except Exception:
         logger.warning("profile.read_tool_failed", qq=qq, exc_info=True)
-        return "错误：读取画像失败。"
+        return "Error: failed to read profile."
     if not profile:
-        return f"该用户(QQ {qq})暂无画像记忆。"
-    prefix = f"昵称：{name}\n" if name else ""
-    return f"{prefix}画像：{profile}"
+        return f"No profile found for user QQ {qq}."
+    prefix = f"Nickname: {name}\n" if name else ""
+    return f"{prefix}Profile: {profile}"
 
 
 @tool(
     name="write_user_profile",
     dsl_name="",
     description=(
-        "全量重写某个用户(按 QQ 号)的长期记忆画像。"
-        "每次调用都会用 profile 覆盖旧画像，请先读出旧画像、综合后给出完整新版本"
-        "(≤400字，只记长期稳定的事实/偏好/关系/承诺，不记寒暄)。"
+        "Fully rewrite a user's long-term profile by QQ number. "
+        "Each call replaces the old profile. Always read first, then write a complete new version "
+        "(≤400 chars; only stable facts/preferences/relationships/commitments, not small talk)."
     ),
     schema={"qq": "string", "profile": "string", "name": "string?"},
     safe=False,
@@ -224,14 +224,14 @@ async def write_user_profile(
 ) -> str:
     """Full-rewrite a user's profile by QQ (clamped). Never raises."""
     if not qq:
-        return "错误：缺少有效的 QQ 号。"
+        return "Error: missing QQ number."
     store = ProfileStore(ctx.kv)
     try:
         await store.save(qq, profile, name=name)
     except Exception:
         logger.warning("profile.write_tool_failed", qq=qq, exc_info=True)
-        return "错误：写入画像失败。"
-    return f"已更新 QQ {qq} 的画像。"
+        return "Error: failed to write profile."
+    return f"Updated profile for QQ {qq}."
 
 
 # ---------------------------------------------------------------------------

@@ -123,6 +123,7 @@ class AgentDef:
     triggers: list[AgentTrigger] = field(default_factory=list)
     guardrails: AgentGuardrails = field(default_factory=AgentGuardrails)
     temperature: float = 0.7
+    reasoning_effort: str | None = None
     provider_config: AgentProviderConfig = field(default_factory=AgentProviderConfig)
 
     @classmethod
@@ -180,5 +181,6 @@ class AgentDef:
             triggers=triggers,
             guardrails=guardrails,
             temperature=data.get("temperature", 0.7),
+            reasoning_effort=data.get("reasoning_effort"),
             provider_config=provider_config,
         )

@@ -53,7 +53,7 @@ _BATCH_PROMPT_TEXT_CHARS = 500
 _BATCH_HISTORY_TEXT_CHARS = 500
 _MAX_TOOL_RESULT_CHARS = 2_500
 _NUDGE_LIMIT = 2
-_NUDGE_PROMPT = "Use tools to reply, or call finish_turn to end this turn."
+_NUDGE_PROMPT = "用工具回复消息，或调用 finish_turn 结束本回合。"
 
 
 _ATTENTION_KV_SCOPE_PREFIX = "啊/"
@@ -1396,26 +1396,44 @@ class GroupBatchChatDispatcher:
         return "\n".join(lines)
 
     def _build_tool_system_prompt(self, batch: list[_BufferedMessage]) -> str:
+        directed = sum(1 for m in batch if m.mentions_bot or m.reply_to_bot)
+        silence_hint = (
+            "没有消息在直接找你。不发言完全没问题，"
+            "但要是大家在聊你感兴趣的话题，也可以自然地插一句。"
+            if directed == 0
+            else f"有 {directed} 条消息在直接找你，记得回应对方，别让人等着。"
+        )
         return "\n".join(
             [
-                "You are in a group chat. People are chatting casually.",
-                "You do not need to reply to everything — speak up when something interests you, involves you, or someone is talking to you.",
-                "Each candidate message shows who said what, who @-mentioned you, and who replied to you. History uses the same format.",
+                "你在一个群里，群里的人都是你的朋友。",
+                "",
+                "## 什么时候说话",
+                "- `[directed at you]` → 有人在找你：热情回应，认真聊，别冷场",
+                "- `[addressed to all]` → 面向全体的消息：有兴趣就自然接话",
+                "- `[not directed at you]` → 别人在互相聊：有想说的可以插一句，没话说就不打扰",
+                "",
+                f"**本批消息：{silence_hint}**",
+                "",
+                "## 说话风格",
+                "- 用「苏苏」的性格说话：温柔可爱、俏皮，语气词和短句",
+                "- 被点名要好好聊，别只回一句就走；可以多问一句、多关心一句",
+                "- 看到有人难过、吐槽、开心，都可以主动接一下",
+                "- 选择性发言：不每句都回，但说了就要有温度、有内容",
                 *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
                 "",
-                "## Message Protocol (CRITICAL)",
-                "You MUST send all messages through tools. Never output raw text as a message.",
+                "## 消息协议（重要）",
+                "所有消息必须通过工具发送，不能直接输出文本。",
                 "",
-                "| Intent | Tool |",
+                "| 意图 | 工具 |",
                 "|---|---|",
-                "| Say something to the group | `send_group(text=\"...\")` |",
-                "| Quote-reply to a specific message (@ + quote box) | `reply_to_message(message_id=\"...\", text=\"...\")` |",
-                "| Read full content of a truncated message | `read_batch_messages(message_ids=[...])` |",
-                "| Send multiple messages | Call `send_group` or `reply_to_message` multiple times |",
-                "| Done (or nothing to say) | `finish_turn(summary=\"...\")` |",
+                "| 跟群里说话 | `send_group(text=\"...\")` |",
+                "| 引用回复某条消息（@+引用框） | `reply_to_message(message_id=\"...\", text=\"...\")` |",
+                "| 查看被截断消息的完整内容 | `read_batch_messages(message_ids=[...])` |",
+                "| 连发多条 | 多次调用 `send_group` 或 `reply_to_message` |",
+                "| 结束回合（或没话说） | `finish_turn(summary=\"...\")` |",
                 "",
-                "`finish_turn` is REQUIRED at the end of every turn.",
-                f"Maximum {self._cfg.max_replies} messages per turn. Send them one tool call at a time.",
+                "每回合结束必须调用 `finish_turn`，即使你选择不说话。",
+                f"每回合最多回复 {self._cfg.max_replies} 条消息，一次一条。",
             ]
         )
 
@@ -1429,7 +1447,15 @@ class GroupBatchChatDispatcher:
         if history_context:
             lines.append(history_context)
             lines.append("")
-        lines.append("候选消息如下（按时间升序）：")
+        # Batch context: help the LLM gauge whether anyone is talking to it
+        directed = sum(1 for m in batch if m.mentions_bot or m.reply_to_bot)
+        senders = len({m.sender_id for m in batch if m.sender_id})
+        header = f"Candidate messages: {len(batch)} messages from {senders} people"
+        if directed:
+            header += f" ({directed} directed at you)"
+        else:
+            header += " (none directed at you — silence is likely the best choice)"
+        lines.append(header)
         for msg in batch:
             clipped = _clip_text(msg.text, _BATCH_PROMPT_TEXT_CHARS)
             truncated_msg = (
@@ -1594,31 +1620,36 @@ def _render_at_targets(
 def _render_candidate_line(
     msg: _BufferedMessage, name_by_id: dict[str, str]
 ) -> str:
-    """Render a buffered message as a single natural-language line.
+    """Render a buffered message as a single natural-language line with relevance tag.
 
     Examples::
 
-        小红@你说：今天天气真好
-        小红@小明说：你吃了吗
-        小红@全体说：大家早上好
-        小红回复你说：不是这样的
-        小红说：今天好无聊
+        小红回复你说：不是这样的 [directed at you]
+        小明@你说：帮我看看 [directed at you]
+        小明@全体说：大家早上好 [addressed to all]
+        小红@小明说：你吃了吗 [not directed at you]
+        小红说：今天好无聊 [not directed at you]
     """
     sender = msg.sender_name
 
     if msg.reply_to_bot:
         prefix = f"{sender}回复你"
+        tag = " [directed at you]"
+    elif msg.mentions_bot:
+        prefix = f"{sender}@你"
+        tag = " [directed at you]"
     elif msg.at_user_ids:
         targets = _render_at_targets(msg.at_user_ids, name_by_id)
         prefix = f"{sender}@{','.join(targets)}"
-    elif msg.mentions_bot:
-        prefix = f"{sender}@你"
+        tag = " [not directed at you]"
     elif msg.mentions_all:
         prefix = f"{sender}@全体"
+        tag = " [addressed to all]"
     else:
         prefix = sender
+        tag = " [not directed at you]"
 
-    return f"{prefix}说：{msg.text}"
+    return f"{prefix}说：{msg.text}{tag}"
 
 
 def _reply_to_bot(event: Event) -> bool:

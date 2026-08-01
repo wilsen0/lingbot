@@ -530,7 +530,7 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
 
     await _wait_for(lambda: len(provider.calls) >= 1)
     prompt = provider.calls[0][0][-1].content
-    assert "按时间升序" in prompt
+    assert "Candidate messages" in prompt
     # With natural language format, check ordering by text content
     # Earlier message "先发后到" should appear before "后发先到"
     idx_first = prompt.find("先发后到")
@@ -1607,8 +1607,8 @@ async def test_group_batch_system_prompt_is_separate_from_candidate_messages() -
     await _wait_for(lambda: len(provider.calls) >= 1)
     messages = provider.calls[0][0]
     assert messages[0].role == "system"
-    assert "group chat" in messages[0].content
-    assert "候选消息" in messages[-1].content
+    assert "群" in messages[0].content
+    assert "Candidate messages" in messages[-1].content
     # The actual candidate content should not leak into the system prompt
     assert "普通闲聊" not in messages[0].content
     await dispatcher.stop()

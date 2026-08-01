@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _MAX_TOOL_RESULT_CHARS = 8_000
 _NUDGE_LIMIT = 2
 _NUDGE_PROMPT = (
-    "Use tools to send messages, or call finish_turn to end this turn."
+    "用工具发送消息，或调用 finish_turn 结束本回合。"
 )
 _FINISH_TURN_TOOL_NAME = "finish_turn"
 

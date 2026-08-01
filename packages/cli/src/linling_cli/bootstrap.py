@@ -1348,6 +1348,7 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
             base_url=pc.base_url,
             extra_headers=extra_headers,
             proxy=proxy,
+            reasoning_effort=agent_def.reasoning_effort,
         )
     raise ValueError(f"unknown LLM provider: {kind!r}")
 

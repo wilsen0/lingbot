@@ -20,7 +20,7 @@ async def test_write_then_read_roundtrip() -> None:
         assert write is not None and read is not None
 
         out = await write.fn(ctx, qq="123", profile="喜欢钓鱼", name="小红")
-        assert "已更新" in out
+        assert "Updated" in out
 
         got = await read.fn(ctx, qq="123")
         assert "喜欢钓鱼" in got
@@ -33,7 +33,7 @@ async def test_read_missing_returns_placeholder() -> None:
         read = registry.get("read_user_profile")
         assert read is not None
         got = await read.fn(ctx, qq="999")
-        assert "暂无画像" in got
+        assert "No profile found" in got
 
 
 async def test_write_is_full_rewrite() -> None:
@@ -68,8 +68,8 @@ async def test_empty_qq_returns_error() -> None:
         write = registry.get("write_user_profile")
         read = registry.get("read_user_profile")
         assert write is not None and read is not None
-        assert "错误" in await write.fn(ctx, qq="", profile="x")
-        assert "错误" in await read.fn(ctx, qq="")
+        assert "Error" in await write.fn(ctx, qq="", profile="x")
+        assert "Error" in await read.fn(ctx, qq="")
 
 
 async def test_tools_swallow_kv_exceptions() -> None:
@@ -85,8 +85,8 @@ async def test_tools_swallow_kv_exceptions() -> None:
     read = registry.get("read_user_profile")
     assert write is not None and read is not None
     # Neither should raise; both return an error string.
-    assert "错误" in await write.fn(ctx, qq="123", profile="x")
-    assert "错误" in await read.fn(ctx, qq="123")
+    assert "Error" in await write.fn(ctx, qq="123", profile="x")
+    assert "Error" in await read.fn(ctx, qq="123")
 
 
 async def test_llm_visible_and_not_dsl() -> None:

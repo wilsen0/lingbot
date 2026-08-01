@@ -37,12 +37,14 @@ class OpenAIProvider:
         timeout: float = 60.0,
         extra_headers: dict[str, str] | None = None,
         proxy: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._default_temperature = default_temperature
         self._default_max_tokens = default_max_tokens
+        self._reasoning_effort = reasoning_effort
         # ``extra_headers`` is the escape hatch for OpenAI-compatible
         # endpoints that need an explicit override (rare). The default
         # ``User-Agent`` we set in :meth:`_build_headers` already
@@ -120,6 +122,8 @@ class OpenAIProvider:
             "max_tokens": max_tokens or self._default_max_tokens,
             "stream": stream,
         }
+        if self._reasoning_effort is not None:
+            body["reasoning_effort"] = self._reasoning_effort
         if tools:
             body["tools"] = [self._tool_schema_to_dict(t) for t in tools]
         return body
