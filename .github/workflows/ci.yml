@@ -1,10 +1,7 @@
 name: CI
 
+# 仅手动触发：关闭 push / PR 自动运行，避免消耗 GitHub Actions 额度
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 # Cancel an in-progress run when a new commit lands on the same ref —
