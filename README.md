@@ -17,32 +17,6 @@
 
 `linling` 采用**双轨协同架构（Dual-Track Hybrid Architecture）**将二者结合：
 
-```mermaid
-flowchart LR
-    Event[入站事件] --> Classifier{意图分类器}
-    
-    subgraph Track1 ["确定性指令轨 (0 Token / 毫秒响应)"]
-        DSLVM["DSL 解释器 (.ling)"]
-        KVStore[("KV 存储 / 状态机")]
-    end
-    
-    subgraph Track2 ["认知推理轨 (LLM Agent)"]
-        BatchProbe["群聊窗口聚合 + 注意力探针"]
-        ReActRuntime["ReAct Agent 运行时"]
-    end
-
-    Classifier -- "命中正则 / 指令前缀" --> DSLVM
-    DSLVM <--> KVStore
-    DSLVM -. "1. 异步写入执行摘要" .-> Ledger[("DSL 行动账本\n(Action Ledger)")]
-
-    Classifier -- "自然语言 / Fallback" --> BatchProbe
-    BatchProbe -- "判定需介入" --> ReActRuntime
-    Ledger -. "2. 自动注入账本上下文" .-> ReActRuntime
-    
-    DSLVM --> ActionOut[出站动作 Action]
-    ReActRuntime --> ActionOut
-```
-
 1. **指令轨（DSL VM）**：所有带前缀指令或全匹配规则直接进入 `.ling` 虚拟机执行，直接操作 KV 状态机，**0 Token、0 外部 API 依赖、毫秒级响应**；
 2. **认知轨（Agent Engine）**：非指令文本走 Fallback 链路，由群聊聚合窗口与注意力探针控制触发频率，按需调起大模型；
 3. **行动账本（Action Ledger）**：DSL 执行后产生的行为元数据被记录进账本。当用户在几轮指令后转入自然语言询问时，Agent 自动注入账本摘要，**彻底解决规则系统与大模型系统之间的上下文断层**。
@@ -69,26 +43,9 @@ flowchart LR
 
 输入消息在内核 [`linling_core.router`](packages/core/src/linling_core/router.py) 中完成去重、限流与意图分流：
 
-```mermaid
-flowchart TD
-    In([入站消息 Event]) --> Dedup{消息去重 & 限流}
-    Dedup -- "重复 / 超限" --> Drop([丢弃])
-    Dedup -- "通过" --> CheckPrefix{是否含命令前缀?\n如 '/' 或 '!'}
-
-    CheckPrefix -- "是" --> MatchCmd{匹配 DSL 命令?}
-    MatchCmd -- "命中" --> ExecDsl[执行 .ling 虚拟机]
-    MatchCmd -- "未命中" --> Unknown[返回: 未知指令]
-
-    CheckPrefix -- "否" --> MatchRegex{全匹配 DSL 正则?}
-    MatchRegex -- "命中 (签到/抽卡/查数值)" --> ExecDsl
-    MatchRegex -- "未命中" --> ScopeCheck{消息作用域?}
-
-    ScopeCheck -- "私聊 (DM / WebUI)" --> DirectAgent[即时进入 Agent 推理]
-    ScopeCheck -- "群聊 (Group)" --> BatchBuffer[推入 GroupBatch 8秒聚合窗口]
-
-    ExecDsl --> WriteLedger[写入 Action Ledger]
-    WriteLedger --> Out([出站动作 Action])
-```
+<p align="center">
+  <img src="docs/images/routing_flow.png" alt="消息路由决策流" width="600" />
+</p>
 
 ---
 
@@ -96,29 +53,12 @@ flowchart TD
 
 当用户在群内使用 DSL 指令与机器人交互后，又紧接着使用自然语言闲聊时，系统如何避免“大模型失忆”？
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 用户
-    participant Router as 路由器 (Router)
-    participant DSL as DSL 解释器 (VM)
-    participant Ledger as 行动账本 (Action Ledger)
-    participant Agent as Agent 运行时 (LLM)
+<p align="center">
+  <img src="docs/images/action_ledger.png" alt="DSL 行动账本工作时序" width="750" />
+</p>
 
-    User->>Router: 发送: "抽卡一次"
-    Router->>DSL: 命中规则触发器
-    DSL->>DSL: 扣除 10 灵玉，掷骰结算
-    DSL->>Ledger: 记录 DslEvent(handler="抽卡", summary="抽中SSR道具[避水珠]")
-    DSL-->>User: 回复: 恭喜！你获得了【避水珠】！
-
-    Note over User,Agent: 随后用户发起自然语言对话
-    User->>Router: 发送: "我刚才抽到的东西好用吗？"
-    Router->>Agent: 未命中任何规则，进入 Agent Fallback
-    Agent->>Ledger: 读取会话最近 N 条 DSL 操作摘要
-    Ledger-->>Agent: 返回: [用户刚执行抽卡，获得了 SSR 避水珠]
-    Agent->>Agent: 注入 Ledger 摘要并结合 Character Prompt 组织上下文
-    Agent-->>User: 回复: 避水珠在珍品集市里非常稀有，去东海探险带上它能大幅降低耐力消耗哦！
-```
+- **解耦设计**：DSL 执行结果 `DslEvent` 仅记录紧凑摘要，不污染原始对话 History 队列；
+- **按需注入**：当 Agent 启动时，由 `LedgerRenderer` 将最近的 DSL 行为渲染成轻量上下文带给大模型，确保大模型对用户的业务行为心知肚明。
 
 ---
 
@@ -126,30 +66,27 @@ sequenceDiagram
 
 在多人活跃群聊中，若每条消息都调用主力大模型，不仅延迟高，而且 Token 开销极大。`linling` 实现了**时间窗口聚合与两阶段判决机制**：
 
-```mermaid
-flowchart TD
-    MsgStream[群消息流涌入] --> Window[8秒时间窗口 / 50条消息缓冲区]
-    
-    Window --> CondCheck{是否触发硬性关注规则?\n1. @机器人\n2. 明确引用/回复机器人\n3. 文本出现机器人称谓\n4. 包含明确疑问句式}
-    
-    CondCheck -- "是" --> MainLLM[调起主 Agent 处理当前批次]
-    
-    CondCheck -- "否" --> ProbeCheck{是否启用注意力探针?}
-    ProbeCheck -- "未启用" --> HoldTimeout{达到最大等待时限 60s?}
-    HoldTimeout -- "是" --> DropBatch[整批静默丢弃 (0 主模型开销)]
-    HoldTimeout -- "否" --> Window
-
-    ProbeCheck -- "已启用" --> MicroProbe["调用轻量注意力探针\n(Micro Probe, max_tokens=32, temp=0.0)"]
-    
-    MicroProbe --> Verdict{"判定当前批次\n是否值得介入?"}
-    Verdict -- "True (需回复)" --> MainLLM
-    Verdict -- "False / 超时 / 异常" --> DropFailClosed["Fail-Closed: 判定为假，静默丢弃\n(绝不上送主大模型)"]
-
-    MainLLM --> ToolSelective["主模型查阅全批次上下文\n通过 reply_to_message 选择性回复 1~3 条"]
+```text
+群消息流 ──► [ 8秒窗口 / 50条缓冲 ] ──► 关注规则检查（@/回复/称谓/问句）
+                                               │
+                      ┌────────────────────────┴────────────────────────┐
+                      ▼                                                 ▼
+                  [未命中]                                           [命中]
+                      │                                                 │
+              轻量注意力探针 (Micro Probe)                              │
+          (max_tokens=32, temp=0, Fail-Closed)                          │
+                      │                                                 │
+            ┌─────────┴─────────┐                                       │
+            ▼                   ▼                                       │
+       False / 超时           True                                      │
+            │                   └───────────────┬───────────────────────┘
+            ▼                                   ▼
+        静默丢弃 (0 Token)             主力 Agent 深度处理 (选择性回复 1~3 条)
 ```
 
 - **超低开销探针**：使用轻量端点（如 `gpt-4o-mini` 或本地轻量模型），限制输出 32 Tokens，单次判定成本极微；
-- **Fail-Closed 闭环容错**：探针若发生网络超时、401 或解析失败，强制判定为 `False` 并静默，杜绝主模型被故障流量击穿。
+- **Fail-Closed 闭环容错**：探针若发生网络超时、401 或解析失败，强制判定为 `False` 并静默，杜绝主模型被故障流量击穿；
+- **选择性回复**：主力大模型获得整批消息上下文后，持有 `reply_to_message` 工具，自主决定回复其中最有价值的 1~3 条消息。
 
 ---
 
@@ -157,31 +94,9 @@ flowchart TD
 
 为了平衡 Token 上下文预算、推理成本与长期事实沉淀，`linling` 实现了三层分级记忆：
 
-```mermaid
-flowchart TB
-    subgraph L1 ["第一层：短期轮次记忆 (Turn History)"]
-        HQueue["双端队列 (Session.history, 默认 16 轮)\n异步镜像至 SQLite KVStore，跨进程持久化"]
-    end
-
-    subgraph L2 ["第二层：会话动态摘要 (Running Summary)"]
-        TokenBudget{"Token 达到 60,000 上限?"}
-        CompactSummary["滑动压缩折叠\n将早期轮次浓缩为 &lt;conversation_summary&gt;"]
-    end
-
-    subgraph L3 ["第三层：按用户隔离的永久画像 (Per-User Profile)"]
-        DistillTrigger["触发画像更新钩子 (on_before_compact)"]
-        ReActDistill["有界 ReAct 蒸馏循环\n读取历史对话 ──► 抽取事实/关系/偏好 ──► 全量重写画像"]
-        ProfileStore[("永久存储于 KV: __profile__/{qq}\n跨群聊、跨会话、跨重启持续生效")]
-    end
-
-    HQueue --> TokenBudget
-    TokenBudget -- "未超限" --> NormalRun[继续正常轮次调度]
-    TokenBudget -- "触发压缩" --> DistillTrigger
-    DistillTrigger --> ReActDistill
-    ReActDistill --> ProfileStore
-    ReActDistill --> CompactSummary
-    CompactSummary --> PreserveRecent["保留最近 8 轮清晰上下文 + 新摘要"]
-```
+<p align="center">
+  <img src="docs/images/memory_architecture.png" alt="三层立体记忆与压缩前画像蒸馏" width="750" />
+</p>
 
 - **私聊场景**：自动将当前对象的画像以 `<user_profile>` 注入系统提示词（默认限额 400 字符）；
 - **群聊场景**：开放 `read_user_profile` 与 `write_user_profile` 工具，模型根据语境按需调阅；
@@ -193,36 +108,21 @@ flowchart TB
 
 系统内所有工具仅需通过 [`linling_core.tools`](packages/core/src/linling_core/tools.py) 的 `@tool` 注册一次：
 
-```mermaid
-classDiagram
-    class ToolDefinition {
-        +name: "read_kv"
-        +dsl_name: "读"
-        +description: "读取指定键值"
-        +schema: dict
-        +safe: bool
-        +handler(ctx, ...)
-    }
-
-    class PythonView {
-        原生异步 Python 调用
-        ctx.tools.read_kv(...)
-    }
-
-    class DslView {
-        中文规则 DSL 语法
-        $读 作用域/文件名 键名 默认值$
-    }
-
-    class LlmSchemaView {
-        OpenAI 标准 JSON Schema
-        {"type": "function", "function": {...}}
-    }
-
-    ToolDefinition --> PythonView : 投射 1
-    ToolDefinition --> DslView : 投射 2
-    ToolDefinition --> LlmSchemaView : 投射 3
+```python
+@tool(
+    name="read_kv",
+    dsl_name="读",
+    description="读取一个键值；默认值在未命中时返回",
+    safe=True,
+)
+async def read_kv(ctx: ToolCtx, scope: str, file: str, key: str, default=None):
+    return await ctx.kv.read(scope, file, key, default)
 ```
+
+框架底层自动派生出三端可用形态：
+- **形态 1（Python 原生）**：`ctx.tools.read_kv(...)`，用于内部扩展与测试；
+- **形态 2（中文 DSL）**：`$读 作用域/文件名 键名 默认值$`，直接嵌入 `.ling` 规则；
+- **形态 3（LLM Schema）**：自动导出符合 OpenAI 标准的 Function Calling JSON Schema。
 
 ---
 
