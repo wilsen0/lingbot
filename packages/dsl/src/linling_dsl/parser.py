@@ -54,7 +54,7 @@ class ParseError(Exception):
 # ``%`` by ``_parse_interpolated_text`` before the resulting Literal
 # escapes the parser.
 _URL_ESCAPE_RE = re.compile(r"\\%([0-9A-Fa-f]{2})")
-_PERCENT_SENTINEL = "\uE000"
+_PERCENT_SENTINEL = "\ue000"
 
 
 def _decode_url_escapes_for_parsing(text: str) -> str:
@@ -157,9 +157,7 @@ def _split_into_handler_blocks(
             # or more blanks is always a boundary. A single blank is
             # only a boundary when the next non-blank line cannot be
             # a body continuation.
-            if blank_run >= 2 or (
-                j < len(lines) and not _looks_like_body_continuation(lines[j])
-            ):
+            if blank_run >= 2 or (j < len(lines) and not _looks_like_body_continuation(lines[j])):
                 _flush()
                 i = j
                 continue
@@ -281,12 +279,11 @@ def _parse_handler(
             elif lowered in ("false", "0", "no", "off"):
                 expose_to_llm = False
             # else: leave ``None``, fall through to next directive.
-        else:
-            # ``summary_mode`` — only the two valid string values are
-            # accepted; everything else falls back to ``None`` and the
-            # LedgerWriter defaults to ``"with_result"``.
-            if value_str in ("trigger_only", "with_result"):
-                summary_mode = value_str
+        # ``summary_mode`` — only the two valid string values are
+        # accepted; everything else falls back to ``None`` and the
+        # LedgerWriter defaults to ``"with_result"``.
+        elif value_str in ("trigger_only", "with_result"):
+            summary_mode = value_str
         body_start += 1
 
     # Parse body (lines after the trigger and any metadata lines)
@@ -375,9 +372,7 @@ def _parse_body(
                 inner_body = _parse_body(if_body_lines, if_start + 1, filename, strict=strict)
                 stmts.append(
                     IfStmt(
-                        condition=Condition(
-                            text=cond_text, line=if_start, is_regex=is_regex_cond
-                        ),
+                        condition=Condition(text=cond_text, line=if_start, is_regex=is_regex_cond),
                         body=inner_body,
                         line=if_start,
                     )
@@ -388,9 +383,7 @@ def _parse_body(
             # Parse the if body
             inner_body = _parse_body(if_body_lines, if_start + 1, filename, strict=strict)
             stmt: Stmt = IfStmt(
-                condition=Condition(
-                    text=cond_text, line=if_start, is_regex=is_regex_cond
-                ),
+                condition=Condition(text=cond_text, line=if_start, is_regex=is_regex_cond),
                 body=inner_body,
                 line=if_start,
             )
@@ -446,9 +439,7 @@ def _parse_body(
         # ±fimg=src± — QQ flash image (ImageSegment with extras.flash=True).
         if stripped.startswith("±fimg=") and stripped.endswith("±"):
             src_text = stripped[len("±fimg=") : -1]
-            stmts.append(
-                OutputFlashImage(src=_parse_expr_text(src_text), line=lineno)
-            )
+            stmts.append(OutputFlashImage(src=_parse_expr_text(src_text), line=lineno))
             i += 1
             continue
 
@@ -467,9 +458,8 @@ def _parse_body(
         # — skip silently for now. They land in dicpro.txt-derived
         # rules occasionally; future adapters that care about them
         # can subscribe to the raw line through a side channel.
-        if (
-            stripped.startswith(("±bub ", "±strmsg ", "±bub=", "±strmsg="))
-            and stripped.endswith("±")
+        if stripped.startswith(("±bub ", "±strmsg ", "±bub=", "±strmsg=")) and stripped.endswith(
+            "±"
         ):
             i += 1
             continue
@@ -682,9 +672,7 @@ def _looks_like_assignment_value(value: str) -> bool:
     # punctuation) — these are unambiguously assignments. The Chinese
     # punctuation check is what stops ``tip:只有双方……\\n``-style output
     # from getting absorbed.
-    return not any(ch.isspace() for ch in stripped) and not _has_output_punct(
-        stripped
-    )
+    return not any(ch.isspace() for ch in stripped) and not _has_output_punct(stripped)
 
 
 # Punctuation that strongly signals "this is user-facing text, not a
@@ -893,9 +881,7 @@ def _parse_interpolated_text(text: str) -> list[Expr]:
     # the ``%var%`` scan honest.
     if _PERCENT_SENTINEL in text:
         parts = [
-            Literal(value=p.value.replace(_PERCENT_SENTINEL, "%"))
-            if isinstance(p, Literal)
-            else p
+            Literal(value=p.value.replace(_PERCENT_SENTINEL, "%")) if isinstance(p, Literal) else p
             for p in parts
         ]
 

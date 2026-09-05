@@ -10,18 +10,26 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=500"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+  - repo: local
     hooks:
       - id: ruff
-        args: ["--fix"]
+        name: ruff
+        entry: uv run ruff check
+        language: system
+        types: [python]
+        files: ^(packages/|tests/)
       - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+        files: ^(packages/|tests/)
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies:
-          - pydantic>=2.7
-        files: ^packages/
-        args: ["--config-file=pyproject.toml"]
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

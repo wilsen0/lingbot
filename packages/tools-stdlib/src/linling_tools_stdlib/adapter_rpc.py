@@ -244,7 +244,6 @@ async def group_add_request(
     return "ok"
 
 
-
 @tool(
     name="image_link",
     dsl_name="图片链接",

@@ -415,7 +415,7 @@ CREATE TABLE scheduled_task (
 ```yaml
 bot_id: susu_main
 name: 涂山苏苏
-admin_users: ["2078123478"]
+admin_users: ["10001"]
 main_group: "754800438"
 
 storage:

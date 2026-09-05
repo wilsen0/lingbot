@@ -34,7 +34,6 @@ from linling_core.scheduler import Scheduler
 from linling_dsl.parser import ParseError, parse
 from linling_dsl.vm import VM
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = REPO_ROOT / "bot" / "rules" / "main.ling"
 ADMIN_QQ = "2078123478"
@@ -256,9 +255,7 @@ async def case_run_gacha_ten_times(script: Any) -> None:
         rec_text = render_segments(rec_result.segments)
         record = await kv_peek(kv, "休闲系/珍品/扭蛋记录", TEST_QQ, "")
         if "扭哇扭哇" not in (record or ""):
-            raise AssertionError(
-                f"扭蛋记录应被记录 handler 重置为含 '扭哇扭哇', 实得 {record!r}"
-            )
+            raise AssertionError(f"扭蛋记录应被记录 handler 重置为含 '扭哇扭哇', 实得 {record!r}")
         if not rec_text:
             raise AssertionError(
                 f"十扭蛋记录 handler 应有输出, 实际 segments={rec_result.segments}"
@@ -295,9 +292,7 @@ async def case_run_gacha_fifty_times(script: Any) -> None:
 
         balance = await kv_peek(kv, "啊/灵玉系/灵玉", TEST_QQ, "0")
         if balance != "2612":
-            raise AssertionError(
-                f"扭蛋五十次后灵玉应是 5000-2388=2612, 实得 {balance!r}"
-            )
+            raise AssertionError(f"扭蛋五十次后灵玉应是 5000-2388=2612, 实得 {balance!r}")
         # 52 = 50 单抽 + 1 提示 + 1 五十扭蛋记录
         if scheduler.pending_count != 52:
             raise AssertionError(
@@ -365,8 +360,7 @@ async def case_susu_baidan_with_capture(script: Any) -> None:
     m = intent.match
     if m is None or m.handler.trigger != "苏苏(.*)笨蛋":
         raise AssertionError(
-            f"苏苏(.*)笨蛋 没匹配上: "
-            f"{m.handler.trigger if m else (intent.kind, intent.reason)}"
+            f"苏苏(.*)笨蛋 没匹配上: " f"{m.handler.trigger if m else (intent.kind, intent.reason)}"
         )
     if m.captures != ["你这个"]:
         raise AssertionError(f"苏苏(.*)笨蛋 捕获错误: {m.captures}")
@@ -414,9 +408,7 @@ async def case_susu_zaoan_run(script: Any) -> None:
                 return fake_now
 
         with patch("linling_dsl.vm.datetime", _FakeDT):
-            result = await vm.execute_handler(
-                handler, ev, captures=intent.match.captures
-            )
+            result = await vm.execute_handler(handler, ev, captures=intent.match.captures)
         text = render_segments(result.segments)
         if "早上好呀" not in text:
             raise AssertionError(f"苏苏早安 输出缺少 '早上好呀': {text!r}")

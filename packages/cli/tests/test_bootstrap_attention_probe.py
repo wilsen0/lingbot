@@ -12,16 +12,14 @@ free of resource leaks.
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
+from collections.abc import Iterable
 
 import pytest
 import structlog
-
 from linling_agent.agent_def import AgentDef
 from linling_agent.attention_probe import AttentionProbe
 from linling_cli.bootstrap import _build_attention_probe
 from linling_core.config import AgentConfig
-
 
 _PROBE_ENV_KEYS = (
     "ATTENTION_PROBE_API_KEY",
@@ -96,9 +94,9 @@ def test_auto_skip_treats_whitespace_only_keys_as_unset(
         probe = _build_attention_probe(agent_config=config, agent_def=_agent_def())
 
     assert probe is None
-    assert _filter_events(records, "group_batch.attention_probe.disabled")[0][
-        "reason"
-    ] == "no_api_key"
+    assert (
+        _filter_events(records, "group_batch.attention_probe.disabled")[0]["reason"] == "no_api_key"
+    )
 
 
 # ---------------------------------------------------------------------------

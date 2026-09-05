@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -8,20 +9,16 @@ from datetime import UTC, datetime
 from linling_agent.agent_def import AgentDef
 from linling_agent.context import ContextBudget
 from linling_agent.dispatcher import AgentChatDispatcher
-from linling_agent.group_batch import (
-    GroupBatchChatDispatcher,
-    GroupBatchConfig,
-    _llm_visible_text,
-)
+from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig
 from linling_agent.history import KVHistoryStore
-from linling_agent.llm import LLMResponse, Message, ToolCall, ToolSchema
+from linling_agent.llm import ContentPart, LLMResponse, Message, ToolCall, ToolSchema
 from linling_agent.runtime import AgentResult, AgentRuntime
+from linling_agent.segments_text import llm_visible_text
 from linling_core.events import Action, Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
 from linling_core.segments import (
     FaceSegment,
     ImageSegment,
-    ReplySegment,
     Segment,
     TextSegment,
     at,
@@ -187,9 +184,7 @@ class _HistoryAgentInner(_AgentInner):
             (
                 sender_id,
                 "\n".join(message.content for message in messages if message.role == "user"),
-                "\n".join(
-                    message.content for message in messages if message.role == "assistant"
-                ),
+                "\n".join(message.content for message in messages if message.role == "assistant"),
             )
         )
         session.history.extend(messages)
@@ -376,19 +371,19 @@ async def _wait_for(condition: Callable[[], bool]) -> None:
 
 def test_llm_visible_text_marks_non_text_segments() -> None:
     # Pure non-text → a marker, never an empty string.
-    assert _llm_visible_text([ImageSegment(url="https://x/a.png")]) == "[图片]"
+    assert llm_visible_text([ImageSegment(url="https://x/a.png")]) == "[图片]"
     # FaceSegment covers QQ basic face + mface/bface 商城表情包.
-    assert _llm_visible_text([FaceSegment(face_id="1")]) == "[表情]"
+    assert llm_visible_text([FaceSegment(face_id="1")]) == "[表情]"
     # Mixed text + image keeps both sides.
     assert (
-        _llm_visible_text([TextSegment(text="看这个"), ImageSegment(url="https://x/a.png")])
+        llm_visible_text([TextSegment(text="看这个"), ImageSegment(url="https://x/a.png")])
         == "看这个[图片]"
     )
     # At/Reply are modeled elsewhere (mentions_me / at_targets / reply_to_me),
     # never inlined into the LLM-visible text.
-    assert _llm_visible_text([at("u2"), TextSegment(text="你好")]) == "你好"
+    assert llm_visible_text([at("u2"), TextSegment(text="你好")]) == "你好"
     # Plain text passes through, stripped.
-    assert _llm_visible_text([TextSegment(text="  hi  ")]) == "hi"
+    assert llm_visible_text([TextSegment(text="  hi  ")]) == "hi"
 
 
 def test_to_buffered_marks_non_text_message() -> None:
@@ -404,9 +399,7 @@ def test_to_buffered_marks_non_text_message() -> None:
 
 
 async def test_group_batch_non_text_message_appears_as_marker_in_prompt() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -440,7 +433,6 @@ async def test_group_batch_non_text_message_appears_as_marker_in_prompt() -> Non
     assert "非文字内容" in system_prompt
     assert sent == []
     await dispatcher.stop()
-
 
 
 async def test_group_batch_toolcall_reply_action_and_history() -> None:
@@ -504,9 +496,7 @@ async def test_group_batch_toolcall_reply_action_and_history() -> None:
 
 
 async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -544,9 +534,7 @@ async def test_group_batch_tool_prompt_orders_by_send_time_and_includes_identity
 
 
 async def test_group_batch_tool_prompt_marks_member_at_as_target_not_me() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -581,9 +569,7 @@ async def test_group_batch_tool_prompt_marks_member_at_as_target_not_me() -> Non
 
 
 async def test_group_batch_llbot_self_id_at_is_mentions_me_not_at_target() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -616,9 +602,7 @@ async def test_group_batch_llbot_self_id_at_is_mentions_me_not_at_target() -> No
 
 
 async def test_group_batch_at_all_is_attention_but_not_mentions_me() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -648,9 +632,7 @@ async def test_group_batch_at_all_is_attention_but_not_mentions_me() -> None:
 
 
 async def test_group_batch_member_at_question_passes_at_targets_to_llm() -> None:
-    provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="no_reply"))]
-    )
+    provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="no_reply"))])
     inner = _AgentInner(provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -829,9 +811,7 @@ async def test_group_batch_plain_text_output_sends_group_message_and_history() -
                         ToolCall(
                             id="send1",
                             name="send_group",
-                            arguments=json.dumps(
-                                {"text": "在呀，苏苏听到啦"}, ensure_ascii=False
-                            ),
+                            arguments=json.dumps({"text": "在呀，苏苏听到啦"}, ensure_ascii=False),
                         ),
                         ToolCall(
                             id="ft1",
@@ -942,7 +922,6 @@ async def test_group_batch_reply_completed_phrase_is_not_sent_after_reply() -> N
     await dispatcher.stop()
 
 
-
 async def test_group_batch_direct_text_refreshes_attention_window() -> None:
     kv = SqliteKVStore(bot_id="bot1", db_path=":memory:")
     async with kv:
@@ -956,9 +935,7 @@ async def test_group_batch_direct_text_refreshes_attention_window() -> None:
                             ToolCall(
                                 id="send1",
                                 name="send_group",
-                                arguments=json.dumps(
-                                    {"text": "在呀"}, ensure_ascii=False
-                                ),
+                                arguments=json.dumps({"text": "在呀"}, ensure_ascii=False),
                             ),
                             ToolCall(
                                 id="ft1",
@@ -1031,9 +1008,7 @@ async def test_group_batch_probe_plain_done_drops_before_main_llm() -> None:
     main_provider = _ToolProvider(
         [LLMResponse(message=Message(role="assistant", content="不该到主模型"))]
     )
-    probe_provider = _ToolProvider(
-        [LLMResponse(message=Message(role="assistant", content="done"))]
-    )
+    probe_provider = _ToolProvider([LLMResponse(message=Message(role="assistant", content="done"))])
     inner = _AgentInner(main_provider)
     dispatcher = GroupBatchChatDispatcher(
         inner=inner,
@@ -1070,9 +1045,7 @@ async def test_group_batch_probe_plain_text_allows_main_llm() -> None:
                         ToolCall(
                             id="send1",
                             name="send_group",
-                            arguments=json.dumps(
-                                {"text": "主模型回复"}, ensure_ascii=False
-                            ),
+                            arguments=json.dumps({"text": "主模型回复"}, ensure_ascii=False),
                         ),
                         ToolCall(
                             id="ft1",
@@ -1274,7 +1247,9 @@ async def test_group_batch_toolcall_send_failure_does_not_record_history() -> No
     await dispatcher.stop()
 
 
-async def test_group_batch_toolcall_summarizes_shared_group_history_without_recording_noop() -> None:
+async def test_group_batch_toolcall_summarizes_shared_group_history_without_recording_noop() -> (
+    None
+):
     kv = SqliteKVStore(bot_id="bot1", db_path=":memory:")
     async with kv:
         history = KVHistoryStore(kv, max_turns=20)
@@ -1306,11 +1281,11 @@ async def test_group_batch_toolcall_summarizes_shared_group_history_without_reco
         )
         sent: list[Action] = []
         dispatcher.set_action_sink(sent.append)
-        group_session = await conversations.get_or_create(
-            ConversationKey("bot1", "g1", "")
-        )
+        group_session = await conversations.get_or_create(ConversationKey("bot1", "g1", ""))
         for i in range(6):
-            group_session.history.append(Message(role="user", content=f"old user {i} " + "很长" * 20))
+            group_session.history.append(
+                Message(role="user", content=f"old user {i} " + "很长" * 20)
+            )
             group_session.history.append(Message(role="assistant", content=f"old assistant {i}"))
 
         await dispatcher.run(_event("普通闲聊", eid="m1"), group_session)
@@ -1366,9 +1341,7 @@ async def test_group_batch_daily_summary_forces_once_per_day() -> None:
         )
         sent: list[Action] = []
         dispatcher.set_action_sink(sent.append)
-        group_session = await conversations.get_or_create(
-            ConversationKey("bot1", "g1", "")
-        )
+        group_session = await conversations.get_or_create(ConversationKey("bot1", "g1", ""))
         for i in range(3):
             group_session.history.append(Message(role="user", content=f"old user {i}"))
             group_session.history.append(Message(role="assistant", content=f"old assistant {i}"))
@@ -1385,11 +1358,14 @@ async def test_group_batch_daily_summary_forces_once_per_day() -> None:
             Message(role="user", content="old user 2"),
             Message(role="assistant", content="old assistant 2"),
         ]
-        assert sum(
-            1
-            for messages, _tools in provider.calls
-            if len(messages) == 1 and messages[0].content.startswith("Summarize")
-        ) == 1
+        assert (
+            sum(
+                1
+                for messages, _tools in provider.calls
+                if len(messages) == 1 and messages[0].content.startswith("Summarize")
+            )
+            == 1
+        )
 
         await dispatcher.run(
             _event("还是普通闲聊", eid="m2", at=datetime(2026, 6, 1, 13, tzinfo=UTC)),
@@ -1397,11 +1373,14 @@ async def test_group_batch_daily_summary_forces_once_per_day() -> None:
         )
 
         await _wait_for(lambda: len(provider.calls) >= 3)
-        assert sum(
-            1
-            for messages, _tools in provider.calls
-            if len(messages) == 1 and messages[0].content.startswith("Summarize")
-        ) == 1
+        assert (
+            sum(
+                1
+                for messages, _tools in provider.calls
+                if len(messages) == 1 and messages[0].content.startswith("Summarize")
+            )
+            == 1
+        )
         await dispatcher.stop()
 
 
@@ -1442,9 +1421,7 @@ async def test_group_batch_daily_summary_marker_waits_for_successful_compaction(
             bot_id="bot1",
             kv=kv,
         )
-        group_session = await conversations.get_or_create(
-            ConversationKey("bot1", "g1", "")
-        )
+        group_session = await conversations.get_or_create(ConversationKey("bot1", "g1", ""))
         for i in range(3):
             group_session.history.append(Message(role="user", content=f"old user {i}"))
             group_session.history.append(Message(role="assistant", content=f"old assistant {i}"))
@@ -1503,9 +1480,7 @@ async def test_group_batch_daily_summary_marks_done_when_history_too_short() -> 
             bot_id="bot1",
             kv=kv,
         )
-        group_session = await conversations.get_or_create(
-            ConversationKey("bot1", "g1", "")
-        )
+        group_session = await conversations.get_or_create(ConversationKey("bot1", "g1", ""))
         group_session.history.append(Message(role="user", content="recent user"))
         group_session.history.append(Message(role="assistant", content="recent assistant"))
 
@@ -1527,7 +1502,6 @@ async def test_group_batch_daily_summary_marks_done_when_history_too_short() -> 
             for messages, _tools in provider.calls
         )
         await dispatcher.stop()
-
 
 
 async def test_group_batch_drops_uninteresting_when_required() -> None:
@@ -1592,6 +1566,7 @@ async def test_group_batch_system_prompt_is_separate_from_candidate_messages() -
         inner=inner,
         config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
     )
+
     async def _ignore(action: Action) -> None:
         return None
 
@@ -1748,4 +1723,469 @@ async def test_group_batch_clear_history_marks_inflight_tool_batch_stale() -> No
 
     assert sent == []
     assert inner.recorded == []
+    await dispatcher.stop()
+
+
+# ---------------------------------------------------------------------------
+# Multimodal (vision) tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeImageResolver:
+    """Resolve image refs to fixed data URIs; records calls."""
+
+    def __init__(self, data_uris: list[str] | None = None) -> None:
+        self.data_uris = list(data_uris or [])
+        self.calls: list[tuple[list[str], int | None]] = []
+
+    async def resolve_batch(self, urls, *, limit=None):
+        self.calls.append((list(urls), limit))
+        return list(self.data_uris)
+
+
+class _VisionAgentInner(_AgentInner):
+    """AgentInner whose agent_def enables vision."""
+
+    def __init__(self, provider: object, content: str = "") -> None:
+        super().__init__(provider, content=content)
+        self._agent = type(
+            "Agent",
+            (),
+            {
+                "provider": provider,
+                "agent_def": AgentDef(
+                    name="batch-agent",
+                    model="mock",
+                    system="",
+                    vision_enabled=True,
+                ),
+            },
+        )()
+
+
+def _image_event(
+    *,
+    eid: str = "m1",
+    sender: str = "u1",
+    name: str = "小明",
+    url: str = "https://x/a.png",
+) -> Event:
+    return _event("", eid=eid, sender=sender, name=name, segments=[ImageSegment(url=url)])
+
+
+def test_buffered_message_image_refs_vision_off() -> None:
+    dispatcher = GroupBatchChatDispatcher(
+        inner=_Inner(""),
+        config=GroupBatchConfig(enabled=True),
+    )
+    msg = dispatcher._to_buffered(_image_event(url="https://x/a.png"))
+    assert msg.text == "[图片]"
+    assert msg.image_refs == ()
+
+
+def test_buffered_message_image_refs_vision_on() -> None:
+    provider = _ToolProvider([])
+    dispatcher = GroupBatchChatDispatcher(
+        inner=_VisionAgentInner(provider),
+        config=GroupBatchConfig(enabled=True),
+        image_resolver=_FakeImageResolver(["data:image/png;base64,AAAA"]),
+    )
+    msg = dispatcher._to_buffered(_image_event(url="https://x/a.png"))
+    assert msg.image_refs == ("https://x/a.png",)
+
+
+def test_group_batch_tool_schemas_vision() -> None:
+    from linling_agent.group_batch import _group_batch_tool_schemas
+
+    names_on = {s.name for s in _group_batch_tool_schemas(vision_enabled=True)}
+    assert {"save_sticker", "list_stickers", "send_sticker"} <= names_on
+
+    names_off = {s.name for s in _group_batch_tool_schemas()}
+    assert not {"save_sticker", "list_stickers", "send_sticker"} & names_off
+
+
+def test_sticker_tool_schemas_shape() -> None:
+    from linling_agent.group_batch import _sticker_tool_schemas
+
+    schemas = _sticker_tool_schemas()
+    assert [s.name for s in schemas] == ["save_sticker", "list_stickers", "send_sticker"]
+    save = schemas[0]
+    assert save.parameters["required"] == ["message_id", "name"]
+
+
+def test_marker_rule_vision_variant() -> None:
+    # Vision off: original marker rule explaining markers are invisible.
+    plain = GroupBatchChatDispatcher(
+        inner=_Inner(""),
+        config=GroupBatchConfig(enabled=True),
+    )
+    prompt_off = plain._build_tool_system_prompt([plain._to_buffered(_image_event())])
+    assert "不需要回复" in prompt_off
+    assert "save_sticker" not in prompt_off
+
+    # Vision on + images actually attached: the vision variant tells the
+    # model it can see the images and may collect stickers via save_sticker.
+    provider = _ToolProvider([])
+    vision = GroupBatchChatDispatcher(
+        inner=_VisionAgentInner(provider),
+        config=GroupBatchConfig(enabled=True),
+        image_resolver=_FakeImageResolver(["data:image/png;base64,AAAA"]),
+    )
+    prompt_on = vision._build_tool_system_prompt(
+        [vision._to_buffered(_image_event())], images_attached=True
+    )
+    assert "save_sticker" in prompt_on
+    assert "不需要回复" not in prompt_on
+
+    # Vision on but nothing actually attached (resolution failed): fall back
+    # to the plain rule — claiming visibility would mislead the model.
+    prompt_miss = vision._build_tool_system_prompt(
+        [vision._to_buffered(_image_event())], images_attached=False
+    )
+    assert "不需要回复" in prompt_miss
+    assert "save_sticker" not in prompt_miss
+
+
+async def test_multimodal_user_message_assembly() -> None:
+    """The vision-enabled tool selector sends a user message carrying
+    content parts (text + resolved image_urls) to the provider."""
+    resolver = _FakeImageResolver(["data:image/png;base64,AAAA"])
+    provider = _ToolProvider(
+        [
+            LLMResponse(
+                message=Message(
+                    role="assistant",
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="ft1",
+                            name="finish_turn",
+                            arguments='{"summary":"done"}',
+                        )
+                    ],
+                )
+            )
+        ]
+    )
+    inner = _VisionAgentInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True, window_s=0, require_attention=False),
+        image_resolver=resolver,
+    )
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    event = _image_event()
+    batch = [dispatcher._to_buffered(event)]
+    # Materialise the group state so the generation/current checks pass.
+    dispatcher._state_for(event)
+
+    await dispatcher._dispatch_batch_with_tools(
+        event, session, batch, generation=0, had_attention=True
+    )
+
+    assert len(provider.calls) == 1
+    user_msgs = [m for m in provider.calls[0][0] if m.role == "user"]
+    assert user_msgs
+    user_msg = user_msgs[-1]
+    assert user_msg.content_parts is not None
+    assert user_msg.content_parts[0].type == "text"
+    assert any(p.type == "image_url" for p in user_msg.content_parts)
+    await dispatcher.stop()
+
+
+class _RecordSink:
+    """Capture outbound actions so ``send_sticker`` delivery is observable."""
+
+    def __init__(self) -> None:
+        self.actions: list[Action] = []
+
+    def __call__(self, action: Action) -> None:
+        self.actions.append(action)
+
+
+def _sticker_dispatcher(tmp_path, *, max_replies: int = 3) -> GroupBatchChatDispatcher:
+    provider = _ToolProvider([])
+    return GroupBatchChatDispatcher(
+        inner=_VisionAgentInner(provider),
+        config=GroupBatchConfig(enabled=True, max_replies=max_replies),
+        kv=SqliteKVStore(bot_id="bot1", db_path=":memory:"),
+        image_resolver=_FakeImageResolver(["data:image/png;base64,AAAA"]),
+        sticker_dir=tmp_path / "stickers",
+    )
+
+
+# A minimal valid 1x1 transparent PNG — PIL must be able to decode it for
+# the collage thumbnails (the sticker-send tests only need arbitrary bytes,
+# but a valid image works for both).
+_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+async def _seed_sticker(dispatcher: GroupBatchChatDispatcher, name: str = "dog") -> str:
+    from linling_agent.sticker_store import StickerStore
+
+    store = StickerStore(dispatcher._kv, dispatcher._sticker_dir)
+    return await store.save(_PNG_BYTES, name=name)
+
+
+async def test_tool_sticker_send_respects_max_replies(tmp_path) -> None:
+    dispatcher = _sticker_dispatcher(tmp_path, max_replies=3)
+    await _seed_sticker(dispatcher)
+    sink = _RecordSink()
+    dispatcher.set_action_sink(sink)
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(_image_event())]
+    assistant = Message(role="assistant", content="")
+    tool_call = ToolCall(id="t1", name="send_sticker", arguments='{"name":"dog"}')
+
+    result, record, _read_used, terminal = await dispatcher._tool_sticker(
+        "send_sticker",
+        {"name": "dog"},
+        tool_call,
+        assistant,
+        event,
+        batch,
+        generation=0,
+        sent_count=3,
+    )
+    assert json.loads(result) == {"ok": False, "error": "reply limit reached"}
+    assert record is None
+    assert terminal is True
+    assert sink.actions == []
+
+
+async def test_tool_sticker_send_creates_record_and_delivers(tmp_path) -> None:
+    dispatcher = _sticker_dispatcher(tmp_path, max_replies=3)
+    await _seed_sticker(dispatcher)
+    sink = _RecordSink()
+    dispatcher.set_action_sink(sink)
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(_image_event())]
+    assistant = Message(role="assistant", content="")
+    tool_call = ToolCall(id="t1", name="send_sticker", arguments='{"name":"dog"}')
+
+    result, record, _read_used, terminal = await dispatcher._tool_sticker(
+        "send_sticker",
+        {"name": "dog"},
+        tool_call,
+        assistant,
+        event,
+        batch,
+        generation=0,
+        sent_count=0,
+    )
+    assert json.loads(result) == {"ok": True, "sent": "dog"}
+    assert record is not None
+    assert record.assistant_output == "[表情:dog]"  # history stays text-only
+    assert terminal is False
+    assert len(sink.actions) == 1
+    assert sink.actions[0].kind == "send"
+    assert sink.actions[0].segments
+    seg = sink.actions[0].segments[0]
+    assert isinstance(seg, ImageSegment)
+    # 原图语义(subType=1):避免 QQ 服务端把收藏的小图压缩放大。
+    assert seg.extras.get("subType") == 1
+
+
+async def test_tool_sticker_save_persists_image(tmp_path) -> None:
+    from linling_agent.sticker_store import StickerStore
+
+    dispatcher = _sticker_dispatcher(tmp_path)
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(_image_event(url="https://x/a.png"))]
+    assistant = Message(role="assistant", content="")
+    tool_call = ToolCall(id="t1", name="save_sticker", arguments='{"message_id":"m1","name":"cat"}')
+
+    result, record, _read_used, _terminal = await dispatcher._tool_sticker(
+        "save_sticker",
+        {"message_id": "m1", "name": "cat", "tags": "funny"},
+        tool_call,
+        assistant,
+        event,
+        batch,
+        generation=0,
+        sent_count=0,
+    )
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["saved"] == "cat"
+    store = StickerStore(dispatcher._kv, dispatcher._sticker_dir)
+    meta = await store.find_by_name("cat")
+    assert meta is not None
+    assert meta["tags"] == "funny"
+    assert record is None  # saves never produce an outbound record
+
+
+async def test_tool_sticker_rejected_when_vision_off(tmp_path) -> None:
+    dispatcher = GroupBatchChatDispatcher(
+        inner=_Inner(""),
+        config=GroupBatchConfig(enabled=True),
+        kv=SqliteKVStore(bot_id="bot1", db_path=":memory:"),
+        sticker_dir=tmp_path / "stickers",
+    )
+    event = _image_event()
+    dispatcher._state_for(event)
+    result, record, _read_used, _terminal = await dispatcher._execute_batch_tool(
+        ToolCall(id="t1", name="send_sticker", arguments='{"name":"dog"}'),
+        assistant=Message(role="assistant", content=""),
+        event=event,
+        batch=[],
+        generation=0,
+        sent_count=0,
+        read_calls=0,
+    )
+    assert json.loads(result) == {"ok": False, "error": "unknown tool: send_sticker"}
+    assert record is None
+
+
+def _collage_image_parts(user_msg: Message) -> list[ContentPart]:
+    """Image_url parts of the final user message (candidate + collage)."""
+    assert user_msg.content_parts is not None
+    return [p for p in user_msg.content_parts if p.type == "image_url"]
+
+
+async def test_collage_attached_when_stickers_saved(tmp_path) -> None:
+    """Vision on + saved stickers → the request carries the collage as the
+    last image part, and the system prompt explains it."""
+    dispatcher = _sticker_dispatcher(tmp_path)
+    await _seed_sticker(dispatcher)
+    inner = dispatcher._inner
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(event)]
+
+    await dispatcher._dispatch_batch_with_tools(
+        event, session, batch, generation=0, had_attention=True
+    )
+
+    provider = inner.agent.provider
+    assert len(provider.calls) == 1
+    user_msgs = [m for m in provider.calls[0][0] if m.role == "user"]
+    image_parts = _collage_image_parts(user_msgs[-1])
+    # 1 candidate image (from the fake resolver) + 1 collage.
+    assert len(image_parts) == 2
+    assert image_parts[-1].image_url.startswith("data:image/jpeg;base64,")
+    system_msgs = [m for m in provider.calls[0][0] if m.role == "system"]
+    assert any("九宫格" in m.content for m in system_msgs)
+    await dispatcher.stop()
+
+
+async def test_collage_omitted_when_no_stickers(tmp_path) -> None:
+    """Vision on but nothing saved → only the candidate image, no collage."""
+    dispatcher = _sticker_dispatcher(tmp_path)
+    inner = dispatcher._inner
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(event)]
+
+    await dispatcher._dispatch_batch_with_tools(
+        event, session, batch, generation=0, had_attention=True
+    )
+
+    provider = inner.agent.provider
+    assert len(provider.calls) == 1
+    user_msgs = [m for m in provider.calls[0][0] if m.role == "user"]
+    assert len(_collage_image_parts(user_msgs[-1])) == 1
+    system_msgs = [m for m in provider.calls[0][0] if m.role == "system"]
+    assert not any("九宫格" in m.content for m in system_msgs)
+    await dispatcher.stop()
+
+
+async def test_collage_omitted_when_vision_off(tmp_path) -> None:
+    """Vision off → no collage even with stickers saved."""
+    dispatcher = GroupBatchChatDispatcher(
+        inner=_Inner(""),
+        config=GroupBatchConfig(enabled=True),
+        kv=SqliteKVStore(bot_id="bot1", db_path=":memory:"),
+        image_resolver=_FakeImageResolver(["data:image/png;base64,AAAA"]),
+        sticker_dir=tmp_path / "stickers",
+    )
+    await _seed_sticker(dispatcher)
+    inner = dispatcher._inner
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(event)]
+
+    await dispatcher._dispatch_batch_with_tools(
+        event, session, batch, generation=0, had_attention=True
+    )
+
+    provider = inner.agent.provider
+    assert len(provider.calls) == 1
+    user_msgs = [m for m in provider.calls[0][0] if m.role == "user"]
+    # Vision off → no image refs collected, no collage: content_parts is None.
+    assert user_msgs[-1].content_parts is None
+    await dispatcher.stop()
+
+
+class _RecordingPrepareInner(_VisionAgentInner):
+    """Inner that records what ``prepare_context_history_with_status`` got."""
+
+    def __init__(self, provider: object) -> None:
+        super().__init__(provider)
+        self.prepare_calls: list[dict[str, object]] = []
+
+    async def prepare_context_history_with_status(
+        self,
+        *,
+        session,
+        scope_id,
+        sender_id,
+        prefix_messages=None,
+        extra_messages=None,
+        system_text="",
+        current_input_text="",
+        current_image_count=0,
+        reserve_tokens=0,
+        allow_compaction=True,
+        force_compaction=False,
+        summary_keep_recent_turns=None,
+        commit_replacement=False,
+    ) -> tuple[list, bool, int]:
+        self.prepare_calls.append(
+            {
+                "current_image_count": current_image_count,
+                "reserve_tokens": reserve_tokens,
+            }
+        )
+        return [], False, 0
+
+
+async def test_prepare_receives_image_count(tmp_path) -> None:
+    """The batch path passes the real image count (candidates + collage)
+    into history preparation so the token budget reserves image headroom."""
+    provider = _ToolProvider([])
+    inner = _RecordingPrepareInner(provider)
+    dispatcher = GroupBatchChatDispatcher(
+        inner=inner,
+        config=GroupBatchConfig(enabled=True),
+        kv=SqliteKVStore(bot_id="bot1", db_path=":memory:"),
+        image_resolver=_FakeImageResolver(["data:image/png;base64,AAAA"]),
+        sticker_dir=tmp_path / "stickers",
+    )
+    await _seed_sticker(dispatcher)
+    store = ConversationStore(rate_per_second=100, burst=100)
+    session = await store.get_or_create(ConversationKey("bot1", "g1", "u1"))
+    event = _image_event()
+    dispatcher._state_for(event)
+    batch = [dispatcher._to_buffered(event)]
+
+    await dispatcher._dispatch_batch_with_tools(
+        event, session, batch, generation=0, had_attention=True
+    )
+
+    assert inner.prepare_calls
+    # 1 candidate image + 1 collage = 2.
+    assert inner.prepare_calls[0]["current_image_count"] == 2
     await dispatcher.stop()

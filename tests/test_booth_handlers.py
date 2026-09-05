@@ -229,9 +229,7 @@ async def test_listing_happy_path_emits_id_and_news(script, classifier, kv):
     ev = _onebot_event("上架鱼竿5个单价10")
     intent = classifier.classify(ev)
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     assert "上架好啦～#" in text
     assert "鱼竿×5" in text
@@ -244,9 +242,7 @@ async def test_listing_happy_path_emits_id_and_news(script, classifier, kv):
 
 
 @pytest.mark.asyncio
-async def test_listing_insufficient_inventory_surfaces_error(
-    script, classifier, kv
-):
+async def test_listing_insufficient_inventory_surfaces_error(script, classifier, kv):
     """Listing more than the seller owns must return the tool's error,
     not the success message.
 
@@ -259,15 +255,11 @@ async def test_listing_insufficient_inventory_surfaces_error(
     await _seed_seller_with_rods(kv, qty=1)
     ev = _onebot_event("上架鱼竿99个单价10")
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     # The tool returns "error:你身上 鱼竿 不够啦" — this must be surfaced
     # verbatim rather than being swallowed by a dead if-check.
-    assert text.startswith("上架没成") or "不够" in text, (
-        f"expected inventory error, got: {text!r}"
-    )
+    assert text.startswith("上架没成") or "不够" in text, f"expected inventory error, got: {text!r}"
     assert "上架好啦" not in text, "success template leaked despite the error"
     # Inventory untouched.
     assert await kv.read("休闲系/钓鱼", "鱼竿", SENDER) == "1"
@@ -290,7 +282,9 @@ async def test_buy_happy_path_returns_tool_output(script, classifier, kv):
     from linling_tools_stdlib.trade_ops import _SCOPE_LISTING
 
     await kv.write(
-        _SCOPE_LISTING, "挂单", list_id,
+        _SCOPE_LISTING,
+        "挂单",
+        list_id,
         f'{{"seller":"{seller}","item":"鱼竿","total":3,"left":3,'
         f'"price_each":10,"status":"active","expire_at":9999999999}}',
     )
@@ -303,24 +297,18 @@ async def test_buy_happy_path_returns_tool_output(script, classifier, kv):
     # Result-oriented: the user typed a valid buy, the router should
     # classify it as a command (not chat fallback) AND the captured
     # id/qty must round-trip into the tool call.
-    assert intent.kind == "command", (
-        f"expected command, got {intent.kind!r} ({intent.reason!r})"
-    )
+    assert intent.kind == "command", f"expected command, got {intent.kind!r} ({intent.reason!r})"
     assert intent.match is not None
     # Trigger is `(买|购买|下单|拍下)([0-9A-Z]{4})([0-9]+)个$` — three
     # groups, but only 括号2/3 are used in the handler body. Verify the
     # whole list so a future regex change can't silently shift indices.
     assert list(intent.match.captures) == ["买", list_id, "2"]
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     # The tool now returns a natural sentence like
     # "付了 11 灵玉,到手 10 灵玉的 鱼竿" — the DSL strips ``ok:`` and
     # the rule body passes the rest through as-is.
-    assert "付了" in text and "灵玉" in text and "鱼竿" in text, (
-        f"unexpected success msg: {text!r}"
-    )
+    assert "付了" in text and "灵玉" in text and "鱼竿" in text, f"unexpected success msg: {text!r}"
     # 2 rods moved buyer-ward.
     assert await kv.read("休闲系/钓鱼", "鱼竿", SENDER) == "2"
     # In the escrow model, the seller's inventory was already
@@ -386,20 +374,18 @@ async def test_booth_help_renders_current_syntax(script, classifier, kv, msg):
         f"{msg!r}: expected command, got {intent.kind!r} ({intent.reason!r})"
     )
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     # The eight booth commands must each appear in their *current* form.
     for needle in (
-        "摊位",          # 全摊
-        "摊位鱼竿",      # 按物品
-        "摊位@某人",     # @某人
-        "我的摊位",      # 自己
-        "查挂单",        # 详情
-        "上架",          # 上架
-        "买ABCD1个",     # 买
-        "撤单ABCD",      # 撤单
+        "摊位",  # 全摊
+        "摊位鱼竿",  # 按物品
+        "摊位@某人",  # @某人
+        "我的摊位",  # 自己
+        "查挂单",  # 详情
+        "上架",  # 上架
+        "买ABCD1个",  # 买
+        "撤单ABCD",  # 撤单
         "4 位字母数字",  # ID 长度说明
     ):
         assert needle in text, f"{msg!r} output missing {needle!r}: {text!r}"
@@ -441,16 +427,12 @@ async def test_booth_page_footers_point_at_help(script, classifier, kv, msg):
 
     await _seed_seller_with_rods(kv, qty=5)
     seller_ctx = ToolCtx(kv=kv, event=_event_for(SENDER), bot_id="booth_test")
-    await trade_ops.marketplace_list(
-        seller_ctx, item="鱼竿", qty="2", price_each="10"
-    )
+    await trade_ops.marketplace_list(seller_ctx, item="鱼竿", qty="2", price_each="10")
 
     ev = _onebot_event(msg)
     intent = classifier.classify(ev)
     assert intent.match is not None, f"{msg!r} should match a booth page"
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     # The help pointer must be there …
     assert "摊位帮助" in text, f"{msg!r} footer should point at 摊位帮助: {text!r}"
@@ -475,9 +457,7 @@ async def test_booth_at_other_user_renders_seller_card(script, classifier, kv):
     intent = classifier.classify(ev)
     assert intent.match is not None
     assert intent.match.handler.trigger == "(摊位|摆摊)@.*"
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     assert "摊位" in text
     # The seller-card image is emitted even for the empty case
@@ -493,9 +473,7 @@ async def test_booth_at_self_redirects_to_my_stall(script, classifier, kv):
     ev = _onebot_event("摊位", at_user_id=SENDER)  # AT == sender
     intent = classifier.classify(ev)
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert "我的摊位" in _render(result.segments)
 
 
@@ -519,9 +497,7 @@ async def test_my_stall_with_no_listings_says_so(script, classifier, kv):
     ev = _onebot_event("我的摊位")
     intent = classifier.classify(ev)
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert _render(result.segments) == "你还没来摆过摊呢～"
 
 
@@ -536,14 +512,10 @@ async def test_my_stall_with_listings_renders_card(script, classifier, kv):
     # bot_id must match the kv fixture's bot_id, otherwise the
     # marketplace rows and the DSL reads live in separate tenants.
     seller_ctx = ToolCtx(kv=kv, event=_event_for(SENDER), bot_id="booth_test")
-    await trade_ops.marketplace_list(
-        seller_ctx, item="鱼竿", qty="2", price_each="10"
-    )
+    await trade_ops.marketplace_list(seller_ctx, item="鱼竿", qty="2", price_each="10")
     ev = _onebot_event("我的摊位")
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     assert "鱼竿" in text
     # 1 listing row, 2/2 left/total, 10 灵玉/个 — the tool's line format.
@@ -574,15 +546,15 @@ async def test_inspect_existing_listing_returns_formatted(script, classifier, kv
 
     list_id = "C3D4"
     await kv.write(
-        _SCOPE_LISTING, "挂单", list_id,
+        _SCOPE_LISTING,
+        "挂单",
+        list_id,
         '{"seller":"x","item":"鱼竿","total":1,"left":1,'
         '"price_each":10,"status":"active","expire_at":9999999999}',
     )
     ev = _onebot_event(f"查挂单 {list_id}")
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     # Title carries the listing id; body is the formatted summary.
     assert "挂单#" in text
@@ -599,9 +571,7 @@ async def test_inspect_unknown_listing_says_not_found(script, classifier, kv):
     """``查挂单 <bogus>`` returns the not-found message, not the body."""
     ev = _onebot_event("查挂单 ZZZZ")
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     assert "找不到了" in text, f"expected not-found msg, got: {text!r}"
     # The success-template line must NOT leak into the empty case.

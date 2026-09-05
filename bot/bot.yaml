@@ -1,20 +1,16 @@
 bot_id: linling
 name: 涂山苏苏
 admin_users:
-  - "2078123478"
+  - "${BOT_ADMIN_QQ:-10001}"
 
 storage:
-  kv: sqlite:///./data.sqlite
-  files: ./data
-  audit: sqlite:///./audit.sqlite
-  scheduler: sqlite:///./scheduler.sqlite
+  # 数据目录：自动统一管理 ./data 下的 kv.sqlite, audit.sqlite, scheduler.sqlite 及文件
+  data_dir: ./data
 
 adapters:
   - kind: cli
   - kind: onebot
-    # OneBot v11 服务端地址。linling 作为客户端主动去连。
-    # 当前指向 LLBot(LLOneBot) 的 :3003（见 docker/llbot/docker-compose.yml）。
-    # 留空用 ${ONEBOT_WS_URL}(见 .env)，dev/prod 同源。
+    # OneBot v11 服务端地址。若未配置将自动跳过并仅启用终端 CLI 交互
     ws_url: ${ONEBOT_WS_URL}
     access_token: ${ONEBOT_TOKEN}
 
@@ -34,14 +30,12 @@ agent:
   # 多条消息从第 2 条开始随机等待，避免连续消息秒发。
   multi_reply_delay_min_s: 2
   multi_reply_delay_max_s: 8
-  # LLM 兜底白名单(只影响群聊;私聊 DM 永远开放,因为是一对一对话):
-  # - 不写或注释掉 = 群聊也全员开放(老行为)
-  # - [] = 所有群聊都关掉 LLM,DSL 与 DM 仍然能用(联调期推荐)
-  # - ["群号1", "群号2"] = 仅这些群号接 LLM
-  # WebUI 默认走 dm 通路 (%群号%==0),所以白名单不影响 web 端聊天。
-  allowed_scopes:
-    - "271891388"
-    - "788375918"
+  # LLM 兜底白名单(只影响群聊;私聊 DM 永远开放):
+  # - 不写或注释掉 = 群聊全员开放(开箱即聊模式)
+  # - [] = 所有群聊都关掉 LLM
+  # - ["群号1", "群号2"] = 仅指定群号接入 LLM
+  # allowed_scopes:
+  #   - "123456789"
   # 群聊 LLM 采用窗口聚合：DSL 仍实时响应，只有兜底聊天会攒一小段时间
   # 后交给 LLM 选择性回复，避免每条群消息都触发一次模型。
   group_batch_enabled: true
@@ -55,7 +49,10 @@ agent:
   # 把这批消息交给主 LLM。关掉就回到老行为(直接丢弃)。配套的 API key /
   # base URL / model 在 .env 里设置(见 .env.example);.env 里没填 key
   # 也没问题——bootstrap 会静默跳过。
-  group_batch_attention_probe_enabled: true
+  # 已关闭:探针与主模型共用 mimo-v2.5 + max_tokens=10000 非流式,
+  # 8 秒超时必现 ReadTimeout,导致批次被 fail-closed 丢弃。恢复前请先配
+  # ATTENTION_PROBE_MODEL 等环境变量并收紧探针预算。
+  group_batch_attention_probe_enabled: false
   # 苏苏确认注意力窗口(秒): 当苏苏成功回复某人时,该用户在窗口内的
   # 下一条消息会被视为已通过规则关注门(无需再次提到苏苏/带问号等)。
   # 跟 main.ling 的 $写 啊/%群%/苏苏确认$ 共用一个 KV 命名空间,

@@ -297,9 +297,7 @@ class TestMultiHandler:
         assert l100.handler_trigger == "触发1"
 
     def test_lint_real_migrated_file_does_not_crash(self) -> None:
-        main_ling = (
-            Path(__file__).resolve().parents[3] / "bot" / "rules" / "main.ling"
-        )
+        main_ling = Path(__file__).resolve().parents[3] / "bot" / "rules" / "main.ling"
         if not main_ling.exists():
             pytest.skip("bot/rules/main.ling not present")
         source = main_ling.read_text(encoding="utf-8")

@@ -177,7 +177,7 @@ async def test_dm_kv_failure_is_failopen(kv) -> None:
 
     store = await _conv()
     session = await store.get_or_create(ConversationKey("bot1", "u1", "u1"))
-    actions = await dispatcher.run(_dm_event("hi"), session)
+    await dispatcher.run(_dm_event("hi"), session)
 
     assert _profile_blocks(provider.calls[-1]) == []
     assert provider.calls  # reply was still attempted
@@ -232,9 +232,7 @@ async def test_property_injection_conditions(
             ev = ev.model_copy(update={"raw": {"_linling_group_batch": True}})
 
         conv = ConversationStore(rate_per_second=100, burst=100)
-        session = await conv.get_or_create(
-            ConversationKey("bot1", ev.scope.id, ev.sender.id)
-        )
+        session = await conv.get_or_create(ConversationKey("bot1", ev.scope.id, ev.sender.id))
         await dispatcher.run(ev, session)
 
         injected = bool(_profile_blocks(provider.calls[-1]))

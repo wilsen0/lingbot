@@ -38,7 +38,6 @@ from linling_core.scheduler import Scheduler
 from linling_dsl.parser import parse
 from linling_dsl.vm import VM
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RULES_PATH = REPO_ROOT / "bot" / "rules" / "main.ling"
 ADMIN_QQ = "2078123478"
@@ -218,10 +217,7 @@ async def case_tisheng_yaoli_at(script: Any) -> None:
     classifier = MessageClassifier(script, command_prefixes=())
     ev = make_event("提升妖力10@xx", at=TARGET_QQ)
     intent = classifier.classify(ev)
-    if (
-        intent.match is None
-        or intent.match.handler.trigger != "提升妖力([0-9]+)@.*"
-    ):
+    if intent.match is None or intent.match.handler.trigger != "提升妖力([0-9]+)@.*":
         raise AssertionError(
             f"路由错误: {intent.match.handler.trigger if intent.match else intent.reason}"
         )
@@ -231,9 +227,7 @@ async def case_tisheng_yaoli_at(script: Any) -> None:
         await kv_seed(kv, "啊/灵玉系/灵玉", TEST_QQ, "2000")
         await kv_seed(kv, "啊/禁言系/妖力", TARGET_QQ, "5")
         vm = build_vm(kv)
-        result = await vm.execute_handler(
-            handler, ev, captures=intent.match.captures
-        )
+        result = await vm.execute_handler(handler, ev, captures=intent.match.captures)
         balance = await kv_peek(kv, "啊/灵玉系/灵玉", TEST_QQ, "0")
         yaoli = await kv_peek(kv, "啊/禁言系/妖力", TARGET_QQ, "0")
         if balance != "1340":  # 2000 - 10*66 = 1340
@@ -316,9 +310,7 @@ async def case_touyu_then_paolu(script: Any) -> None:
             )
         target_state_after = await kv_peek(kv, "偷玉游戏/偷玉对象", TEST_QQ, "0")
         if target_state_after != "0":
-            raise AssertionError(
-                f"逃跑后 偷玉对象 应被重置为 0, 实得 {target_state_after!r}"
-            )
+            raise AssertionError(f"逃跑后 偷玉对象 应被重置为 0, 实得 {target_state_after!r}")
     finally:
         await kv.close()
     _print(
@@ -360,9 +352,7 @@ async def case_route_record(script: Any) -> None:
 
         vm = build_vm(kv)
         with patch("linling_dsl.vm.datetime", _FakeDT):
-            res = await vm.execute_handler(
-                handler, ev, captures=intent.match.captures
-            )
+            res = await vm.execute_handler(handler, ev, captures=intent.match.captures)
         text = render(res.segments)
         if "已记录" not in text:
             raise AssertionError(f"路线记录失败 (没有 '已记录'): {text!r}")
@@ -421,9 +411,7 @@ async def case_throw_then_pickup_bottle(script: Any) -> None:
             await kv_seed(kv, "啊/漂流瓶/持有瓶子", TARGET_QQ, "0")
             ev_pick = make_event("捞瓶子", sender=TARGET_QQ)
             captures_pick = ["捞"]
-            result_pick = await vm.execute_handler(
-                h_pick, ev_pick, captures=captures_pick
-            )
+            result_pick = await vm.execute_handler(h_pick, ev_pick, captures=captures_pick)
             text_pick = render(result_pick.segments)
             if "捡到了一个瓶子" in text_pick:
                 break
@@ -456,7 +444,7 @@ async def case_throw_then_pickup_bottle(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"扔瓶→捞瓶→开瓶 全流程 + JSON 操作链 跑通; 内容 '大家好呀' 已传递",
+        "扔瓶→捞瓶→开瓶 全流程 + JSON 操作链 跑通; 内容 '大家好呀' 已传递",
     )
 
 
@@ -632,8 +620,7 @@ async def case_shuaiganqigan_run(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"甩杆→起杆 (>200 分钟差) 路由到 '钓到一般鱼'; "
-        f"是否甩杆 状态机 0→1→0 正确",
+        "甩杆→起杆 (>200 分钟差) 路由到 '钓到一般鱼'; " "是否甩杆 状态机 0→1→0 正确",
     )
 
 

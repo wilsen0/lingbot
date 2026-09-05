@@ -1,4 +1,4 @@
-"""第五轮: $回调$ 到正则 internal / 黑杰克全链路 / 卧底加入 / 重复触发器优先级.
+r"""第五轮: $回调$ 到正则 internal / 黑杰克全链路 / 卧底加入 / 重复触发器优先级.
 
 目标:
 1. ``$回调$`` 命中正则 [内部] handler — ``$回调 说话词语苹果$`` → 触发
@@ -25,10 +25,8 @@ import asyncio
 import re
 import sys
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import linling_tools_stdlib  # noqa
 from linling_core import (
@@ -167,9 +165,7 @@ captured=%括号1%
         res = await vm.execute_handler(script.handlers[0], ev)
         out = render(res.segments)
         if "captured=苹果" not in out:
-            raise AssertionError(
-                f"$回调 说话词语苹果$ 应触发正则 internal 并捕获 '苹果': {out!r}"
-            )
+            raise AssertionError(f"$回调 说话词语苹果$ 应触发正则 internal 并捕获 '苹果': {out!r}")
     finally:
         await kv.close()
     _print("OK", f"$回调$ 命中正则 internal handler; %括号1%=苹果; 输出={out.strip()!r}")
@@ -202,9 +198,7 @@ captured=%括号1%
         await vm.execute_handler(script.handlers[0], ev)
         # scheduler 排了 1 个 task
         if sched.pending_count != 1:
-            raise AssertionError(
-                f"应排 1 个 scheduler 任务, 实得 {sched.pending_count}"
-            )
+            raise AssertionError(f"应排 1 个 scheduler 任务, 实得 {sched.pending_count}")
         # 模拟 bootstrap 的 _on_scheduled_fire — 用 smart lookup 找 handler
         # + captures
         task = list(sched._queue)[0]  # type: ignore[attr-defined]
@@ -261,14 +255,18 @@ async def case_blackjack_kaishi_jump_loop(script: Any) -> None:
                 f"实得 {sched.pending_count}"
             )
         names = sorted(t.handler_name for t in list(sched._queue))  # type: ignore[attr-defined]
-        expected_names = sorted([
-            "发牌给X", "发牌给X", "发牌给Y", "发牌给Y",
-            "提示发牌", "发牌后",
-        ])
+        expected_names = sorted(
+            [
+                "发牌给X",
+                "发牌给X",
+                "发牌给Y",
+                "发牌给Y",
+                "提示发牌",
+                "发牌后",
+            ]
+        )
         if names != expected_names:
-            raise AssertionError(
-                f"scheduler 任务名错; 期望 {expected_names}, 实得 {names}"
-            )
+            raise AssertionError(f"scheduler 任务名错; 期望 {expected_names}, 实得 {names}")
         # 是否开始 应被设为 1
         flag = await kv_peek(kv, "啊/娱乐系/黑杰克", "是否开始", "")
         if flag != "1":
@@ -302,15 +300,14 @@ async def case_blackjack_genzhu(script: Any) -> None:
         await kv_seed(kv, "啊/娱乐系/黑杰克", f"奖池{TEST_GROUP}", "200")
         await kv_seed(kv, "啊/娱乐系/黑杰克", f"跟注次数{TEST_GROUP}", "0")
         sched = Scheduler()
-        vm = _build_vm(
-            kv, scheduler=sched, handler_lookup=make_smart_lookup(script)
-        )
+        vm = _build_vm(kv, scheduler=sched, handler_lookup=make_smart_lookup(script))
         ev = _make_event("跟注")
         result = await vm.execute_handler(handler, ev)
         text = render(result.segments)
         # "跟注成功" 是图片输出 (±img=$图文 跟注成功!$±) — 不在 text 里.
         # 检查 ImageSegment 存在 + text 含 [键] 格式.
         from linling_core import ImageSegment
+
         if not any(isinstance(s, ImageSegment) for s in result.segments):
             raise AssertionError(
                 f"跟注 应有 ImageSegment ('跟注成功!' 图片), 实际 segments={result.segments!r}"
@@ -333,7 +330,7 @@ async def case_blackjack_genzhu(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"黑杰克 跟注: 灵玉 1000→950; 奖池 200→250; 跟注次数=1; 输出 A/7 命中",
+        "黑杰克 跟注: 灵玉 1000→950; 奖池 200→250; 跟注次数=1; 输出 A/7 命中",
     )
 
 
@@ -354,9 +351,7 @@ async def case_woudi_jiaru(script: Any) -> None:
         await kv_seed(kv, f"{TEST_GROUP}/卧底/游戏房主", TEST_QQ, "1")
         await kv_seed(kv, "啊/苏苏状态/心情值", TEST_QQ, "0")
         sched = Scheduler()
-        vm = _build_vm(
-            kv, scheduler=sched, handler_lookup=make_smart_lookup(script)
-        )
+        vm = _build_vm(kv, scheduler=sched, handler_lookup=make_smart_lookup(script))
         users = ["111", "222", "333", "444"]
         for u in users:
             await kv_seed(kv, "啊/苏苏状态/心情值", u, "0")
@@ -402,7 +397,8 @@ async def case_woudi_citiao(script: Any) -> None:
         src_caller
         + "\n[内部]卧底词条\n"
         + "\n".join(
-            line for line in (
+            line
+            for line in (
                 "a:" + '{"0":["香蕉","苹果"]}',
                 "b:0",
                 "@a[%b%]",
@@ -524,7 +520,7 @@ done"""
             raise AssertionError(f"$发送$ 不该污染输出, 期望 'done', 实得 {out!r}")
     finally:
         await kv.close()
-    _print("OK", f"$发送 群 msg ...$ 静默无输出; 仅 'done'")
+    _print("OK", "$发送 群 msg ...$ 静默无输出; 仅 'done'")
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +580,7 @@ g1=%括号1% g2=%括号2%
             raise AssertionError(f"多捕获组 $回调$ 错: {out!r}")
     finally:
         await kv.close()
-    _print("OK", f"$回调$ 多 capture group; %括号1%=foo, %括号2%=bar")
+    _print("OK", "$回调$ 多 capture group; %括号1%=foo, %括号2%=bar")
 
 
 # ---------------------------------------------------------------------------

@@ -51,9 +51,7 @@ class _FakeProvider:
         self.aclose_count = 0
 
     def queue_response(self, content: str) -> None:
-        self._responses.append(
-            LLMResponse(message=Message(role="assistant", content=content))
-        )
+        self._responses.append(LLMResponse(message=Message(role="assistant", content=content)))
 
     def queue_exception(self, exc: BaseException) -> None:
         self._responses.append(exc)
@@ -91,9 +89,7 @@ class _FakeProvider:
 
 def _make_probe(fake: _FakeProvider) -> AttentionProbe:
     """Build an :class:`AttentionProbe` and swap its provider for a fake."""
-    probe = AttentionProbe(
-        api_key="sk-test", base_url="https://example.com/v1", model="probe-mini"
-    )
+    probe = AttentionProbe(api_key="sk-test", base_url="https://example.com/v1", model="probe-mini")
     probe._provider = fake  # type: ignore[assignment]
     return probe
 
@@ -150,9 +146,7 @@ def test_parse_verdict_yes_token_prefix_property(
     elif casing == "title":
         token = base_token.capitalize()
     elif casing == "mixed":
-        token = "".join(
-            ch.upper() if i % 2 == 0 else ch.lower() for i, ch in enumerate(base_token)
-        )
+        token = "".join(ch.upper() if i % 2 == 0 else ch.lower() for i, ch in enumerate(base_token))
     else:
         token = base_token
 
@@ -205,7 +199,7 @@ def test_parse_verdict_known_cases() -> None:
         "不需要",
         "不回复",
         "No, definitely not",
-        "{\"ok\": true}",  # malformed JSON shape — first token is "{"...
+        '{"ok": true}',  # malformed JSON shape — first token is "{"...
         "Sure thing",
     ]
     for s in yes_cases:
@@ -237,7 +231,9 @@ def test_build_user_prompt_caps_to_max_chars() -> None:
 @settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     texts=st.lists(
-        st.text(min_size=1, max_size=80, alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00)),
+        st.text(
+            min_size=1, max_size=80, alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00)
+        ),
         min_size=1,
         max_size=10,
     )
@@ -300,11 +296,7 @@ async def test_judge_collapses_failures_to_false_with_one_warning(
         verdict = await probe.judge(_batch("hi"), scope_id="g1")
 
     assert verdict is False
-    failures = [
-        r
-        for r in records
-        if r.get("event") == "group_batch.attention_probe.failed"
-    ]
+    failures = [r for r in records if r.get("event") == "group_batch.attention_probe.failed"]
     assert len(failures) == 1
     assert failures[0]["category"] == expected_category
     assert failures[0]["scope_id"] == "g1"
@@ -328,11 +320,7 @@ async def test_judge_malformed_output_emits_warning_and_returns_false() -> None:
         verdict = await probe.judge(_batch("hi"), scope_id="g1")
 
     assert verdict is False
-    failures = [
-        r
-        for r in records
-        if r.get("event") == "group_batch.attention_probe.failed"
-    ]
+    failures = [r for r in records if r.get("event") == "group_batch.attention_probe.failed"]
     assert len(failures) == 1
     assert failures[0]["category"] == "malformed"
 
@@ -346,9 +334,7 @@ async def test_judge_no_token_response_does_not_warn_malformed() -> None:
         verdict = await probe.judge(_batch("hi"), scope_id="g1")
 
     assert verdict is False
-    assert all(
-        r.get("event") != "group_batch.attention_probe.failed" for r in records
-    )
+    assert all(r.get("event") != "group_batch.attention_probe.failed" for r in records)
 
 
 # ---------------------------------------------------------------------------
@@ -377,17 +363,20 @@ async def test_judge_all_whitespace_batch_skips_http_call() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("content,expected", [
-    ("yes", True),
-    ("YES.", True),
-    ("是", True),
-    ("需要", True),
-    ("回复", True),
-    ("no", False),
-    ("否", False),
-    ("不需要", False),
-    ("not relevant", False),
-])
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("yes", True),
+        ("YES.", True),
+        ("是", True),
+        ("需要", True),
+        ("回复", True),
+        ("no", False),
+        ("否", False),
+        ("不需要", False),
+        ("not relevant", False),
+    ],
+)
 async def test_judge_returns_correct_verdict(content: str, expected: bool) -> None:
     fake = _FakeProvider()
     fake.queue_response(content)

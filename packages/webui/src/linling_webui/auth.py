@@ -122,9 +122,7 @@ class AuthStore:
             (username, password_hash, role, json.dumps(bots or []), now, now),
         )
         if existed:
-            self._conn.execute(
-                "UPDATE refresh_tokens SET revoked=1 WHERE username=?", (username,)
-            )
+            self._conn.execute("UPDATE refresh_tokens SET revoked=1 WHERE username=?", (username,))
         self._conn.commit()
 
     def delete_user(self, username: str) -> None:

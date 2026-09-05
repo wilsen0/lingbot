@@ -19,8 +19,6 @@ The DSL ledger primitives themselves are tested in
 
 from __future__ import annotations
 
-import asyncio
-from collections import deque
 from dataclasses import dataclass, field
 
 from linling_agent.llm import Message
@@ -34,7 +32,6 @@ from linling_core.pipeline import (
 )
 from linling_core.router import Router, RouterConfig
 from linling_core.segments import TextSegment
-
 
 # ---------------------------------------------------------------------------
 # Fakes (mirroring test_router.py to keep test_router.py untouched)
@@ -229,5 +226,5 @@ async def test_reset_resets_both_hydrated_flags() -> None:
     router, _ = _build_router(chats=chats, conversations=store)
     await router.handle(_event("/reset"))
 
-    assert getattr(session, "_linling_history_hydrated") is False
-    assert getattr(session, "_linling_ledger_hydrated") is False
+    assert session._linling_history_hydrated is False
+    assert session._linling_ledger_hydrated is False

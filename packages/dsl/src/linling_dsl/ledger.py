@@ -25,7 +25,6 @@ import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
-
 from linling_core.pipeline import DslEvent, ledger_scope_keys
 
 if TYPE_CHECKING:
@@ -151,7 +150,7 @@ class LedgerWriter:
     long-lived dispatcher's behaviour mid-flight (Requirement 3.4).
     """
 
-    __slots__ = ("_budget", "_default_expose", "_store")
+    __slots__ = ("_background_tasks", "_budget", "_default_expose", "_store")
 
     def __init__(
         self,
@@ -191,6 +190,7 @@ class LedgerWriter:
         self._budget = single_char_budget
         self._default_expose = bool(global_default_expose)
         self._store = store
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -271,10 +271,12 @@ class LedgerWriter:
             # task is scheduled, ``session.dsl_events`` may continue
             # to mutate from later dispatches.
             snapshot = list(session.dsl_events)
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._safe_save(scope_id, file_id, snapshot),
                 name="dsl_ledger_save",
             )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     async def _safe_save(
         self,

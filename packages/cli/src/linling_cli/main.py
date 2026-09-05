@@ -11,6 +11,8 @@ from dotenv import find_dotenv, load_dotenv
 from linling_dsl.migrator import MigrationConfig, migrate
 
 from linling_cli import __version__
+from linling_cli.commands.doctor import doctor
+from linling_cli.commands.init import init_cmd
 from linling_cli.commands.run import run
 from linling_cli.commands.serve_webui import serve_webui
 from linling_cli.lint_cmd import lint
@@ -47,6 +49,8 @@ app = typer.Typer(
 
 app.command("lint")(lint)
 app.command("run")(run)
+app.command("doctor")(doctor)
+app.command("init")(init_cmd)
 
 
 # ---------------------------------------------------------------------------

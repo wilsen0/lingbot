@@ -26,13 +26,9 @@ async def test_schedule_with_key_replaces_prior_task() -> None:
         fired.append(t.handler_name)
 
     # First registration.
-    sched.schedule(
-        after_seconds=10.0, handler_name="old", bot_id="b1", key="cooldown:u1"
-    )
+    sched.schedule(after_seconds=10.0, handler_name="old", bot_id="b1", key="cooldown:u1")
     # Second with same key replaces it.
-    sched.schedule(
-        after_seconds=0.05, handler_name="new", bot_id="b1", key="cooldown:u1"
-    )
+    sched.schedule(after_seconds=0.05, handler_name="new", bot_id="b1", key="cooldown:u1")
     assert sched.pending_count == 1
 
     runner = asyncio.create_task(sched.run(cb))

@@ -24,19 +24,17 @@ import asyncio
 import sys
 from pathlib import Path
 
+# Side-effect: register every built-in tool in the registry.
+import linling_core.tools_builtin  # noqa: F401
+import linling_tools_stdlib  # noqa: F401
 from linling_core.classifier import MessageClassifier
 from linling_core.config import BotConfig
 from linling_core.events import Event, Scope, User
 from linling_core.segments import ImageSegment, TextSegment
 from linling_core.storage.sqlite_kv import SqliteKVStore
 from linling_core.tools import registry
-
-# Side-effect: register every built-in tool in the registry.
-import linling_core.tools_builtin  # noqa: F401
-import linling_tools_stdlib  # noqa: F401
 from linling_dsl.parser import parse
 from linling_dsl.vm import VM
-
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -99,9 +97,7 @@ async def main() -> None:
             bot_id=cfg.bot_id,
             extras={"admin_users": tuple(cfg.admin_users)},
         )
-        result = await vm.execute_handler(
-            intent.match.handler, ev, captures=intent.match.captures
-        )
+        result = await vm.execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     finally:
         await kv.close()
 

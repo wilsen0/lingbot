@@ -1110,9 +1110,7 @@ class TestRemoteImagePreflight:
     is exactly the 2992611516 incident.
     """
 
-    def test_remote_url_inlined_on_success(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_remote_url_inlined_on_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import asyncio
         import base64 as _b64
 
@@ -1155,9 +1153,7 @@ class TestRemoteImagePreflight:
         assert url.startswith("base64://")
         assert _b64.b64decode(url[len("base64://") :]) == b"\xff\xd8\xff\xe0fakejpg"
 
-    def test_remote_url_failure_replaced_with_text(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_remote_url_failure_replaced_with_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import asyncio
 
         adapter = _make_adapter()
@@ -1198,14 +1194,11 @@ class TestRemoteImagePreflight:
         # segment is preserved so the user still sees the rule output.
         assert all(not isinstance(s, ImageSegment) for s in prepared.segments)
         assert any(
-            isinstance(s, TextSegment) and s.text == "[图片加载失败]"
-            for s in prepared.segments
+            isinstance(s, TextSegment) and s.text == "[图片加载失败]" for s in prepared.segments
         )
         assert prepared.segments[0].text == "珍品列表:"  # type: ignore[attr-defined]
 
-    def test_preflight_disabled_passes_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preflight_disabled_passes_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import asyncio
 
         adapter = _make_adapter()
@@ -1229,9 +1222,7 @@ class TestRemoteImagePreflight:
         assert isinstance(prepared.segments[0], ImageSegment)
         assert prepared.segments[0].url == "https://example.com/img.png"
 
-    def test_preflight_caches_negative_results(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_preflight_caches_negative_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The second hit for the same URL stays inside the negative
         TTL window and never re-issues the HTTP request — keeps a
         flapping host from blocking the hot path on every reply.
@@ -1272,9 +1263,7 @@ class TestRemoteImagePreflight:
         asyncio.run(_exercise())
         assert call_count["n"] == 1
 
-    def test_send_raises_on_onebot_failure_status(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_send_raises_on_onebot_failure_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``send`` raises ``OneBotSendError`` so the router's
         sink-failure path runs (instead of silently auditing ``ok``).
         """
@@ -1308,9 +1297,7 @@ class TestRemoteImagePreflight:
         assert exc_info.value.status == "failed"
         assert "image fetch failed" in str(exc_info.value)
 
-    def test_send_accepts_async_status(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_send_accepts_async_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """OneBot v11 also defines ``status="async"`` for fire-and-forget
         calls. We must not treat that as a failure."""
         import asyncio
@@ -1330,9 +1317,7 @@ class TestRemoteImagePreflight:
         result = asyncio.run(adapter.send(action))
         assert result["status"] == "async"
 
-    def test_send_raises_on_preflight_empty(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_send_raises_on_preflight_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If every segment was an unfetchable remote image and the
         operator disabled the textual fallback, ``send`` refuses to
         issue an empty ``send_msg`` — surfaces as a sink failure.

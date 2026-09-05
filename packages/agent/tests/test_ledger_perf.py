@@ -19,7 +19,6 @@ from statistics import quantiles
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, DslEvent, Session
 from linling_core.segments import TextSegment
-
 from linling_dsl.ast_nodes import Handler
 from linling_dsl.ledger import LedgerWriter
 

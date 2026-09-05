@@ -26,10 +26,8 @@ import asyncio
 import re
 import sys
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import linling_tools_stdlib  # noqa
 from linling_core import (
@@ -41,7 +39,6 @@ from linling_core import (
     User,
     registry,
 )
-from linling_core.classifier import MessageClassifier
 from linling_core.scheduler import Scheduler
 from linling_dsl.parser import parse
 from linling_dsl.vm import VM
@@ -161,9 +158,7 @@ async def case_saima_dayin_weizhi_inline(script: Any) -> None:
         vm = _build_vm(kv, handler_lookup=make_smart_lookup(script))
         # 模拟: 单独执行 [内部]赛马打印位置(.*) with %括号1% = "3"
         # 内部 loop: i=0; "。" emit; i=1; "。" emit; i=2; "。" emit; i=3; jump out
-        result = await vm.execute_handler(
-            handler, _make_event("trig"), captures=["3"]
-        )
+        result = await vm.execute_handler(handler, _make_event("trig"), captures=["3"])
         out = render(result.segments)
         # 应输出 3 个 "。"
         if out.count("。") != 3:
@@ -239,12 +234,10 @@ async def case_woudi_toupiao(script: Any) -> None:
         投 = await kv_peek(kv, f"{TEST_GROUP}/卧底/投票人", TEST_QQ, "")
         次 = await kv_peek(kv, f"{TEST_GROUP}/卧底/投票次数", "a", "")
         if 被 != "1" or 投 != "1" or 次 != "1":
-            raise AssertionError(
-                f"投票 KV state 错: 被={被} 投={投} 次={次} (期望 1/1/1)"
-            )
+            raise AssertionError(f"投票 KV state 错: 被={被} 投={投} 次={次} (期望 1/1/1)")
     finally:
         await kv.close()
-    _print("OK", f"卧底 投票@xx: 被投票=1, 投票人=1, 投票次数=1")
+    _print("OK", "卧底 投票@xx: 被投票=1, 投票人=1, 投票次数=1")
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +329,7 @@ $跳 :循环D$
         result = await vm.execute_handler(script.handlers[0], _make_event("trig"))
         out = render(result.segments).strip()
         if "got=1" not in out:
-            raise AssertionError(
-                f"说话词语 应返回 '苹果' 的索引 1, 实得 {out!r}"
-            )
+            raise AssertionError(f"说话词语 应返回 '苹果' 的索引 1, 实得 {out!r}")
     finally:
         await kv.close()
     _print(
@@ -381,9 +372,7 @@ $跳 :循环D$
         result = await vm.execute_handler(script.handlers[0], _make_event("trig"))
         out = render(result.segments).strip()
         if "got=-1" not in out:
-            raise AssertionError(
-                f"说话词语 没找到 '菠萝' 应返回 '-1', 实得 {out!r}"
-            )
+            raise AssertionError(f"说话词语 没找到 '菠萝' 应返回 '-1', 实得 {out!r}")
     finally:
         await kv.close()
     _print(
@@ -417,9 +406,7 @@ async def case_woudi_youxi_shanchu(script: Any) -> None:
         # 验证 KV 都被清空 (scope-level delete)
         v = await kv_peek(kv, f"{TEST_GROUP}/卧底/被投票", TEST_QQ, "MISS")
         if v != "MISS":
-            raise AssertionError(
-                f"游戏删除 应清空卧底 scope, 实得 {v!r}"
-            )
+            raise AssertionError(f"游戏删除 应清空卧底 scope, 实得 {v!r}")
     finally:
         await kv.close()
     _print(
@@ -464,7 +451,7 @@ async def case_blackjack_jiazhu(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"加注50 黑杰克: 灵玉 1000→950; 奖池 100→150; 加注量=50",
+        "加注50 黑杰克: 灵玉 1000→950; 奖池 100→150; 加注量=50",
     )
 
 
@@ -540,7 +527,7 @@ NOT_FOUND
         await kv.close()
     _print(
         "OK",
-        f"$调用 0 游戏判断 555$ scheduler-fire: space-joined 命中正则 trigger",
+        "$调用 0 游戏判断 555$ scheduler-fire: space-joined 命中正则 trigger",
     )
 
 
@@ -567,7 +554,7 @@ HELLO
             raise AssertionError(f"$回调 plain_handler$: {out!r}")
     finally:
         await kv.close()
-    _print("OK", f"$回调 plain_handler$ (literal): out=HELLO")
+    _print("OK", "$回调 plain_handler$ (literal): out=HELLO")
 
 
 # ---------------------------------------------------------------------------
@@ -588,9 +575,7 @@ async def case_susu_wenda_tongshi(script: Any) -> None:
         # 应无输出 (空 [])
         out = render(result.segments)
         if out.strip():
-            raise AssertionError(
-                f"[内部]苏苏问答通识 在 D=A=[] 时应无输出, 实得 {out!r}"
-            )
+            raise AssertionError(f"[内部]苏苏问答通识 在 D=A=[] 时应无输出, 实得 {out!r}")
     finally:
         await kv.close()
     _print("OK", "[内部]苏苏问答通识: D=A=[] 静默")
@@ -633,7 +618,7 @@ async def case_saima_jiesuan_yi_wins(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"赛马结算 选手1胜: 灵玉 100→1060 (奖池1000*0.96); 奖池 0",
+        "赛马结算 选手1胜: 灵玉 100→1060 (奖池1000*0.96); 奖池 0",
     )
 
 

@@ -32,13 +32,23 @@ _DEFAULT_WEBUI_HOST = "127.0.0.1"
 _DEFAULT_WEBUI_PORT = 8787
 
 
+def _find_default_config() -> Path | None:
+    candidates = [
+        Path("bot.yaml"),
+        Path("bot/bot.yaml"),
+        Path("config.yaml"),
+        Path("examples/minimal_bot/bot.yaml"),
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c.resolve()
+    return None
+
+
 def run(
-    config: Path = typer.Argument(  # noqa: B008
-        ...,
-        help="Path to bot.yaml",
-        exists=True,
-        dir_okay=False,
-        resolve_path=True,
+    config: Path | None = typer.Argument(  # noqa: B008
+        None,
+        help="Path to bot.yaml (auto-detects bot.yaml or bot/bot.yaml when omitted)",
     ),
     webui: bool = typer.Option(
         False,
@@ -59,9 +69,25 @@ def run(
     ),
 ) -> None:
     """Run a bot until Ctrl-C."""
-    cfg = BotConfig.from_yaml(config)
+    target_config = config
+    if target_config is None:
+        target_config = _find_default_config()
+        if target_config is None:
+            typer.echo(
+                "linling run: no config file found. Run `linling init` to create one or specify a path.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        typer.echo(f"linling run: using detected configuration at {target_config}")
+    else:
+        target_config = target_config.resolve()
+        if not target_config.is_file():
+            typer.echo(f"linling run: config file not found: {target_config}", err=True)
+            raise typer.Exit(code=2)
+
+    cfg = BotConfig.from_yaml(target_config)
     cfg = _apply_adapter_filter(cfg, only_adapters)
-    base_dir = config.parent
+    base_dir = target_config.parent
     asyncio.run(
         _run_bot(cfg, base_dir=base_dir, webui=webui, webui_host=webui_host, webui_port=webui_port)
     )
@@ -107,6 +133,12 @@ async def _run_bot(
     webui_port: int,
 ) -> None:
     bot = await bootstrap_bot(cfg, base_dir=base_dir)
+
+    if not bot.adapters and not webui:
+        from linling_adapter_cli.adapter import CliAdapter  # noqa: PLC0415
+
+        logger.info("run.fallback_to_cli_adapter", bot_id=cfg.bot_id)
+        bot.attach_adapter(CliAdapter(bot.bus, bot_id=cfg.bot_id))
 
     webui_server: uvicorn.Server | None = None
     webui_task: asyncio.Task[None] | None = None

@@ -224,9 +224,7 @@ rules:
 
         assert [m["content"] for m in snapshot.short_term] == ["记住这个", "记住啦"]
         assert snapshot.summary == "旧摘要"
-        assert snapshot.long_term == [
-            {"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}
-        ]
+        assert snapshot.long_term == [{"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}]
     finally:
         await bot.stop()
 

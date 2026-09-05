@@ -218,9 +218,7 @@ async def test_single_gift_happy_path(script, classifier, kv):
     ev = _onebot_event("赠送大飞龙", at_user_id=TARGET)
     intent = classifier.classify(ev)
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
 
     text = _render(result.segments)
     assert "赠送成功" in text
@@ -243,9 +241,7 @@ async def test_single_gift_to_self_rejected(script, classifier, kv):
     await kv.write("休闲系/珍品", "大飞龙", SENDER, "1")
     ev = _onebot_event("赠送大飞龙", at_user_id=SENDER)  # AT == sender
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert _render(result.segments) == "不能自己送给自己喔"
     assert await kv.read("休闲系/珍品", "大飞龙", SENDER) == "1"
 
@@ -255,9 +251,7 @@ async def test_single_gift_no_inventory(script, classifier, kv):
     """Sender doesn't own a 大飞龙 → friendly error; no KV mutation."""
     ev = _onebot_event("赠送大飞龙", at_user_id=TARGET)
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert "你还没有〔大飞龙〕" in _render(result.segments)
     assert await kv.read("休闲系/珍品", "大飞龙", SENDER) is None
     assert await kv.read("啊/灵玉系", "灵玉", TARGET) is None
@@ -278,9 +272,7 @@ async def test_bulk_gift_happy_path(script, classifier, kv):
     intent = classifier.classify(ev)
     assert intent.match is not None
     assert intent.match.captures == ["3"]
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     text = _render(result.segments)
     assert "赠送成功" in text
     assert "灵玉*1500" in text
@@ -295,9 +287,7 @@ async def test_bulk_gift_insufficient_inventory(script, classifier, kv):
     ev = _onebot_event("赠送大飞龙10", at_user_id=TARGET)
     intent = classifier.classify(ev)
     assert intent.match is not None
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert "数量不足" in _render(result.segments)
     # Inventory unchanged.
     assert await kv.read("休闲系/珍品", "大飞龙", SENDER) == "2"
@@ -317,9 +307,7 @@ async def test_single_gift_preserves_reserved_guardian(script, classifier, kv):
     await kv.write("休闲系/珍品", "个人守护", TARGET, "郫忧")
     ev = _onebot_event("赠送大飞龙", at_user_id=TARGET)
     intent = classifier.classify(ev)
-    result = await _vm(kv).execute_handler(
-        intent.match.handler, ev, captures=intent.match.captures
-    )
+    result = await _vm(kv).execute_handler(intent.match.handler, ev, captures=intent.match.captures)
     assert "赠送成功" in _render(result.segments)
     # 个人守护 stays "郫忧"; only 个人守护天 should be written.
     assert await kv.read("休闲系/珍品", "个人守护", TARGET) == "郫忧"

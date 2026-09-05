@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from pathlib import Path
 
 from PIL import Image
 
@@ -49,8 +48,8 @@ def describe(path: str) -> None:
     # (next ~420 if present), grid (rest minus footer 110), footer.
     regions = {
         "header": (0, 0, w, 160),
-        "hero":   (0, 160, w, 580),
-        "grid":   (0, 580, w, h - 110),
+        "hero": (0, 160, w, 580),
+        "grid": (0, 580, w, h - 110),
         "footer": (0, h - 110, w, h),
     }
     for name, box in regions.items():

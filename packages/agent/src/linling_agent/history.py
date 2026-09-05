@@ -112,7 +112,9 @@ class KVHistoryStore:
         return _history_messages(messages)
 
     async def save(self, scope_id: str, sender_id: str, messages: Iterable[Message]) -> None:
-        trimmed = [_message_to_history_item(m) for m in _trim_history_turns(messages, self._max_turns)]
+        trimmed = [
+            _message_to_history_item(m) for m in _trim_history_turns(messages, self._max_turns)
+        ]
         payload = json.dumps(trimmed, ensure_ascii=False)
         await self._kv.write(
             _history_scope(scope_id),
@@ -186,7 +188,11 @@ def _tool_calls_from_history_item(raw: object) -> list[ToolCall] | None:
         call_id = item.get("id")
         name = item.get("name")
         arguments = item.get("arguments")
-        if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, str):
+        if (
+            not isinstance(call_id, str)
+            or not isinstance(name, str)
+            or not isinstance(arguments, str)
+        ):
             continue
         tool_calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
     return tool_calls or None
@@ -200,8 +206,7 @@ def _message_to_history_item(message: Message) -> dict[str, object]:
         item["tool_call_id"] = message.tool_call_id
     if message.tool_calls:
         item["tool_calls"] = [
-            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-            for tc in message.tool_calls
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in message.tool_calls
         ]
     if message.reasoning_content is not None:
         item["reasoning_content"] = message.reasoning_content

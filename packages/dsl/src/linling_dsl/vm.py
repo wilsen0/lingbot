@@ -309,12 +309,14 @@ _JSON_MUTATING_SUBCOMMANDS = frozenset({"添加", "add", "append", "删除", "re
 # Tools listed here are the historically var-name-as-arg ones from
 # the QRDic standard library. Anything not on this list keeps its
 # arguments as literals.
-_LATE_BINDING_TOOL_DSL_NAMES = frozenset({
-    "JSON",  # $JSON 长度|获取|添加|删除|包含|键 var ...$
-    "替换",  # $替换 SEP TEXT PATTERN$
-    "正则",  # $正则 SEP TEXT PATTERN$
-    "取中间",  # $取中间 SEP BLOB$
-})
+_LATE_BINDING_TOOL_DSL_NAMES = frozenset(
+    {
+        "JSON",  # $JSON 长度|获取|添加|删除|包含|键 var ...$
+        "替换",  # $替换 SEP TEXT PATTERN$
+        "正则",  # $正则 SEP TEXT PATTERN$
+        "取中间",  # $取中间 SEP BLOB$
+    }
+)
 
 # DSL tools whose return value should be *emitted* as user-facing
 # text when invoked as a standalone ``$tool args$`` line. Most tools
@@ -327,20 +329,22 @@ _LATE_BINDING_TOOL_DSL_NAMES = frozenset({
 # ``$URLDecoder %x%$`` on its own line means "emit the decoded text".
 # ``$输出为 %x%$`` is the explicit emit primitive. ``$访问 url$``
 # fetches HTTP and renders the body.
-_EMIT_OUTPUT_TOOL_DSL_NAMES = frozenset({
-    "URLEncoder",
-    "URLDecoder",
-    "Base64Encoder",
-    "Base64Decoder",
-    "HexEncoder",
-    "HexDecoder",
-    "UnicodeDecoder",
-    "MD5",
-    "输出为",
-    "访问",  # HTTP fetch — body is the user-facing text
-    "时间",  # $时间 fmt$ when standalone — formatted timestamp
-    "图文",  # rendered image path; rare standalone but matches QRSpeed
-})
+_EMIT_OUTPUT_TOOL_DSL_NAMES = frozenset(
+    {
+        "URLEncoder",
+        "URLDecoder",
+        "Base64Encoder",
+        "Base64Decoder",
+        "HexEncoder",
+        "HexDecoder",
+        "UnicodeDecoder",
+        "MD5",
+        "输出为",
+        "访问",  # HTTP fetch — body is the user-facing text
+        "时间",  # $时间 fmt$ when standalone — formatted timestamp
+        "图文",  # rendered image path; rare standalone but matches QRSpeed
+    }
+)
 
 
 # Single-name context-variable resolvers. Looking up here is a single
@@ -846,9 +850,7 @@ class _ExecContext:
             # emitting their standalone return would leak internals.
             result = await self._call_tool(stmt.name, stmt.args)
             if result and self._tool_emits_output(stmt.name):
-                self.segments.append(
-                    TextSegment(text=_decode_qrdic_escapes(result))
-                )
+                self.segments.append(TextSegment(text=_decode_qrdic_escapes(result)))
                 self._check_output_limit()
 
         elif isinstance(stmt, OutputText):
@@ -875,9 +877,7 @@ class _ExecContext:
             # Adapters that don't know how to render the flash bit
             # silently render the image normally — same downgrade as
             # other QQ-specific extras.
-            self.segments.append(
-                ImageSegment(url=src, extras={"flash": True})
-            )
+            self.segments.append(ImageSegment(url=src, extras={"flash": True}))
             self._check_output_limit()
 
         elif isinstance(stmt, OutputReply):
@@ -1280,7 +1280,7 @@ class _ExecContext:
 
         if current is None:
             return ""
-        if isinstance(current, (dict, list)):
+        if isinstance(current, dict | list):
             return json.dumps(current, ensure_ascii=False)
         return str(current)
 
@@ -1367,12 +1367,7 @@ class _ExecContext:
         for arg in args:
             value = await self._eval_expr(arg)
             late_name: str | None = None
-            if (
-                late_binding_enabled
-                and isinstance(arg, Literal)
-                and value
-                and value == arg.value
-            ):
+            if late_binding_enabled and isinstance(arg, Literal) and value and value == arg.value:
                 stripped = value.strip()
                 if stripped and stripped in scope:
                     value = scope[stripped]

@@ -88,7 +88,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["PLR2004", "S101", "PLC0415", "PLR0913"]
+"**/tests/**" = ["PLR2004", "S101", "PLC0415", "PLR0913", "ASYNC240", "PLR1711"]
+"packages/cli/src/linling_cli/bootstrap.py" = ["PLC0415"]
 "**/__init__.py" = ["F401"]
 # FastAPI routers idiomatically place ``Depends(...)`` / ``Query(...)`` in
 # argument defaults — that's the framework's DI mechanism, not a bug.

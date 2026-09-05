@@ -38,7 +38,7 @@ def _parse_json_list(text: str) -> list[Any]:
         return value
     # Scalar fallback — preserve the value as a single-element list
     # so the caller's parallel ``values`` list still aligns.
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return [value]
     raise ValueError(f"expected JSON array, got {type(value).__name__}")
 

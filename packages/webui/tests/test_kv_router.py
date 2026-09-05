@@ -124,7 +124,6 @@ def test_requires_auth(app_client) -> None:
     assert r.status_code == 401
 
 
-
 def test_readonly_user_cannot_write_kv(tmp_path) -> None:
     """A readonly token must be rejected by ``PATCH /api/kv/...``.
 
@@ -146,9 +145,7 @@ def test_readonly_user_cannot_write_kv(tmp_path) -> None:
         login_rate_per_minute=1000,
     )
     app = create_app(config)
-    app.state.runtime.auth.upsert_user(
-        "viewer", "Viewer-Pwd-9!aB", role="readonly", bots=["b1"]
-    )
+    app.state.runtime.auth.upsert_user("viewer", "Viewer-Pwd-9!aB", role="readonly", bots=["b1"])
     kv = SqliteKVStore(bot_id="b1", db_path=str(tmp_path / "kv.db"))
     wire_bot(app, bot_id="b1", platform="onebot", name="b1", kv=kv)
 

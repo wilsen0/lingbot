@@ -210,7 +210,6 @@ def test_dsl_shims_hidden_from_llm_catalog():
     assert "dsl_rank_kv" not in llm_names
 
 
-
 # ---------------------------------------------------------------------------
 # QRSpeed P0 compatibility additions: %IMG*%, ##-comment, \%XX escapes
 # ---------------------------------------------------------------------------
@@ -350,7 +349,6 @@ async def test_qrspeed_inline_case_insensitive_trigger_matches() -> None:
     assert classifier.classify(_ev("留言板HELP")).kind == "command"
     assert classifier.classify(_ev("留言板help")).kind == "command"
     assert classifier.classify(_ev("留言板Hello")).kind == "chat"
-
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +516,6 @@ keys: $JSON 键 A$
     assert 'keys: ["a", "b"]' in text or 'keys: ["a","b"]' in text
 
 
-
 # ---------------------------------------------------------------------------
 # QRSpeed P2 compat: %FACE*%, %XML*%, %JSON*%, %FIMG*%, $图片链接$, $管理员 X$, $群头像$
 # ---------------------------------------------------------------------------
@@ -672,6 +669,4 @@ async def test_group_avatar_returns_qq_cdn_url(kv, vm) -> None:
     source = "f\nava: $群头像 754800438$"
     script = parse(source, strict=False)
     result = await vm.execute_handler(script.handlers[0], _event("f"))
-    assert (
-        result.segments[0].text == "ava: https://p.qlogo.cn/gh/754800438/754800438/0"
-    )
+    assert result.segments[0].text == "ava: https://p.qlogo.cn/gh/754800438/754800438/0"

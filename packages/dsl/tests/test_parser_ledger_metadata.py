@@ -14,13 +14,11 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 
-import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, Session
 from linling_core.segments import TextSegment
-
 from linling_dsl.ledger import LedgerWriter
 from linling_dsl.parser import parse
 
@@ -151,9 +149,7 @@ def test_property_3_expose_decision_on_parsed_handler(
 
     if expose_value == "true":
         appended = True
-    elif expose_value == "false":
-        appended = False
-    elif is_internal:
+    elif expose_value == "false" or is_internal:
         appended = False
     else:
         appended = default

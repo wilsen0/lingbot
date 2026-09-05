@@ -221,9 +221,7 @@ class SqliteSchedulerStore:
 
     def delete(self, task_id: str) -> bool:
         with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM scheduled_task WHERE id = ?", (task_id,)
-            )
+            cur = self._conn.execute("DELETE FROM scheduled_task WHERE id = ?", (task_id,))
             self._conn.commit()
             return (cur.rowcount or 0) > 0
 
@@ -317,9 +315,7 @@ class Scheduler:
     def pending_count(self) -> int:
         """Number of tasks waiting to fire (excludes cancelled)."""
         return sum(
-            1
-            for t in self._queue
-            if t.id not in self._cancelled and t.id in self._task_index
+            1 for t in self._queue if t.id not in self._cancelled and t.id in self._task_index
         )
 
     # -- legacy P0 surface -------------------------------------------

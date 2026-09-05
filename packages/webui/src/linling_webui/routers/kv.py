@@ -215,7 +215,9 @@ async def read_key_query(
     value = await store.read(scope, file, key)
     if value is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "key not found")
-    return KvRow(bot_id=bid, scope=scope, file=file, key=key, value=value, updated_at=int(time.time()))
+    return KvRow(
+        bot_id=bid, scope=scope, file=file, key=key, value=value, updated_at=int(time.time())
+    )
 
 
 @router.get("/{scope}/{file}/{key}", response_model=KvRow)

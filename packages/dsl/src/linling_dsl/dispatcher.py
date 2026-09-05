@@ -108,9 +108,7 @@ class DslCommandDispatcher:
             # concatenation of every ``TextSegment.text`` in
             # ``result.segments`` — non-text segments are ignored at
             # this stage; the LedgerWriter handles truncation.
-            raw_summary = "".join(
-                s.text for s in result.segments if isinstance(s, TextSegment)
-            )
+            raw_summary = "".join(s.text for s in result.segments if isinstance(s, TextSegment))
             self._ledger.append(
                 session=session,
                 handler=match.handler,

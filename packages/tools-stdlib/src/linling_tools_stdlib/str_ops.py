@@ -86,9 +86,7 @@ def _extract_from_to(sep: str, pattern: str) -> tuple[str, str]:
     schema={"sep": "string", "text": "string", "pattern": "string?"},
     safe=True,
 )
-async def replace_sep(
-    ctx: ToolCtx, sep: str = "", text: str = "", pattern: str = ""
-) -> str:
+async def replace_sep(ctx: ToolCtx, sep: str = "", text: str = "", pattern: str = "") -> str:
     """Replace every occurrence of ``FROM`` with ``TO`` inside ``TEXT``.
 
     Both calling forms (3-arg and 2-arg packed) work — see the module
@@ -109,9 +107,7 @@ async def replace_sep(
     schema={"sep": "string", "text": "string", "pattern": "string?"},
     safe=True,
 )
-async def regex_match(
-    ctx: ToolCtx, sep: str = "", text: str = "", pattern: str = ""
-) -> str:
+async def regex_match(ctx: ToolCtx, sep: str = "", text: str = "", pattern: str = "") -> str:
     """Return ``"1"`` if ``PATTERN`` is present in ``TEXT``, else ``"0"``.
 
     The 2-arg form packs ``TEXT<sep>PATTERN`` into the second arg;
@@ -143,9 +139,7 @@ async def regex_match(
     safe=True,
     llm_visible=False,
 )
-async def substring_between(
-    ctx: ToolCtx, sep: str = "", blob: str = "", tail: str = ""
-) -> str:
+async def substring_between(ctx: ToolCtx, sep: str = "", blob: str = "", tail: str = "") -> str:
     """Substring of ``TEXT`` between ``FROM`` and ``TO``.
 
     Real handlers write ``$取中间 @ %排%@1-@-1$`` (2-arg packed) where

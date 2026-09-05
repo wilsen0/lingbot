@@ -1,2 +1,8 @@
 packages:
   - "packages/webui/frontend"
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+onlyBuiltDependencies:
+  - esbuild
+  - vue-demi

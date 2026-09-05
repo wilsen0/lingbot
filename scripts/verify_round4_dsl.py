@@ -1,4 +1,4 @@
-"""第四轮: 黑杰克牌堆 / 妖力禁言 / 参数N / catch-all 兜底.
+r"""第四轮: 黑杰克牌堆 / 妖力禁言 / 参数N / catch-all 兜底.
 
 目标:
 1. 黑杰克 [内部]X加牌 — JSON 添加 + 算术 + 三档 if (J/Q/K, A, 普通)
@@ -20,10 +20,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import linling_tools_stdlib  # noqa
 from linling_core import (
@@ -186,7 +184,7 @@ async def case_blackjack_x_baopai(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"[内部]X是否爆牌: a=22 触发爆牌; scheduler=2 个任务",
+        "[内部]X是否爆牌: a=22 触发爆牌; scheduler=2 个任务",
     )
 
 
@@ -362,8 +360,7 @@ async def case_catchall_canshu2(script: Any) -> None:
         names = [t.handler_name for t in list(scheduler._queue)]  # type: ignore[attr-defined]
         if "整洁" not in names:
             raise AssertionError(
-                f"%参数2%==灵玉 应触发 ``$调用 60000 整洁$``, "
-                f"scheduler 实际={names}"
+                f"%参数2%==灵玉 应触发 ``$调用 60000 整洁$``, " f"scheduler 实际={names}"
             )
     finally:
         await kv.close()
@@ -408,18 +405,14 @@ async def case_yaoli_paihang(script: Any) -> None:
         for q, n in (("u1", 5), ("u2", 30), ("u3", 12)):
             await kv_seed(kv, "啊/禁言系/妖力", q, str(n))
         vm = _build_vm(kv)
-        result = await vm.execute_handler(
-            handler, _make_event("妖力排行"), captures=["妖力排行"]
-        )
+        result = await vm.execute_handler(handler, _make_event("妖力排行"), captures=["妖力排行"])
         text = render(result.segments)
         # 排行榜按数值反序: u2(30), u3(12), u1(5)
         # 行格式: "1绝世的-[键转昵称%群%]-30" 等; [键转昵称X] 是 QRDic
         # 自定义 rank-format token, 我们不识别, 保留字面. 关键字段
         # (序号 + 数值) 应有.
         if "30" not in text or "12" not in text or "5" not in text:
-            raise AssertionError(
-                f"妖力排行 应有 5/12/30 三个数值, 实得 {text!r}"
-            )
+            raise AssertionError(f"妖力排行 应有 5/12/30 三个数值, 实得 {text!r}")
         if "绝世的" not in text or "超神的" not in text:
             raise AssertionError(f"替换后的 头衔标签 缺失: {text!r}")
     finally:
@@ -525,9 +518,7 @@ async def case_yuju_fallback(script: Any) -> None:
     kv = SqliteKVStore(bot_id="susu_test", db_path=":memory:")
     try:
         vm = _build_vm(kv)
-        result = await vm.execute_handler(
-            handler, _make_event("我的渔具"), captures=["我的渔具"]
-        )
+        result = await vm.execute_handler(handler, _make_event("我的渔具"), captures=["我的渔具"])
         text = render(result.segments)
         if "鱼塘商店" not in text and "没有渔具" not in text:
             raise AssertionError(f"(渔具|我的渔具) 0 鱼竿应输出 '没有渔具': {text!r}")

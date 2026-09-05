@@ -16,7 +16,7 @@
 #   一次性检查：           ./scripts/llbot_watchdog.sh
 #   后台常驻（默认120s）： ./scripts/llbot_watchdog.sh --loop
 #   cron（每2分钟）：
-#     */2 * * * * /home/wilsen/apps/apps/linling/scripts/llbot_watchdog.sh >> /tmp/llbot_watchdog.log 2>&1
+#     */2 * * * * /path/to/linling/scripts/llbot_watchdog.sh >> /tmp/llbot_watchdog.log 2>&1
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

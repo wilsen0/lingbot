@@ -19,6 +19,7 @@ from linling_agent import (
     ToolSchema,
 )
 from linling_agent.errors import LLMAuthError, LLMRateLimitError
+from linling_agent.llm import ContentPart, count_image_parts, message_has_images
 
 # ---------------------------------------------------------------------------
 # Dataclass creation tests
@@ -495,3 +496,109 @@ class TestProtocolCompliance:
             model="local-model",
         )
         assert provider.name == "openai:local-model"
+
+
+# ---------------------------------------------------------------------------
+# Multimodal content (ContentPart / image parts)
+# ---------------------------------------------------------------------------
+
+
+class TestMultimodalContent:
+    def test_content_part_defaults(self):
+        part = ContentPart(type="text")
+        assert part.text == ""
+        assert part.image_url == ""
+
+    def test_message_content_parts_default_none(self):
+        msg = Message(role="user", content="Hello")
+        assert msg.content_parts is None
+
+    def test_count_image_parts(self):
+        # No parts at all.
+        assert count_image_parts(Message(role="user", content="hi")) == 0
+        # Pure text parts.
+        text_only = Message(
+            role="user",
+            content="",
+            content_parts=(ContentPart(type="text", text="look at this"),),
+        )
+        assert count_image_parts(text_only) == 0
+        # Two image_url parts mixed with text.
+        with_images = Message(
+            role="user",
+            content="",
+            content_parts=(
+                ContentPart(type="text", text="what is this?"),
+                ContentPart(type="image_url", image_url="data:image/png;base64,AAA"),
+                ContentPart(type="image_url", image_url="data:image/png;base64,BBB"),
+            ),
+        )
+        assert count_image_parts(with_images) == 2
+
+    def test_message_has_images(self):
+        plain = Message(role="user", content="hi")
+        assert message_has_images(plain) is False
+
+        with_image = Message(
+            role="user",
+            content="",
+            content_parts=(ContentPart(type="image_url", image_url="data:image/png;base64,AAA"),),
+        )
+        assert message_has_images(with_image) is True
+
+        text_only = Message(
+            role="user",
+            content="",
+            content_parts=(ContentPart(type="text", text="hi"),),
+        )
+        assert message_has_images(text_only) is False
+
+    def test_message_to_dict_plain_text_unchanged(self):
+        provider = OpenAIProvider(api_key="test-key")
+        msg = Message(role="user", content="Hello")
+        d = provider._message_to_dict(msg)
+        # Regression guard: without content_parts, content stays a plain string.
+        assert d["content"] == "Hello"
+        assert isinstance(d["content"], str)
+
+    def test_message_to_dict_multimodal(self):
+        provider = OpenAIProvider(api_key="test-key")
+        msg = Message(
+            role="user",
+            content="",
+            content_parts=(
+                ContentPart(type="text", text="what is this?"),
+                ContentPart(type="image_url", image_url="data:image/png;base64,AAAA"),
+            ),
+        )
+        d = provider._message_to_dict(msg)
+        assert d["content"] == [
+            {"type": "text", "text": "what is this?"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,AAAA", "detail": "low"},
+            },
+        ]
+
+    def test_message_to_dict_preserves_tool_fields(self):
+        provider = OpenAIProvider(api_key="test-key")
+        tc = ToolCall(id="call_1", name="get_weather", arguments='{"city": "NYC"}')
+        msg = Message(
+            role="assistant",
+            content="",
+            name="assistant_name",
+            tool_calls=[tc],
+            reasoning_content="thought",
+            content_parts=(ContentPart(type="text", text="hi"),),
+        )
+        d = provider._message_to_dict(msg)
+        assert d["content"] == [{"type": "text", "text": "hi"}]
+        assert d["name"] == "assistant_name"
+        assert d["tool_calls"] == [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
+            }
+        ]
+        assert d["reasoning_content"] == "thought"

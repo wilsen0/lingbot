@@ -11,6 +11,7 @@ import linling_tools_stdlib  # noqa: F401 — registers send_reply
 import pytest
 from linling_agent.agent_def import AgentDef, AgentGuardrails, AgentTrigger
 from linling_agent.llm import (
+    ContentPart,
     Delta,
     LLMResponse,
     Message,
@@ -315,10 +316,12 @@ class TestRuntimeSimpleResponse:
     async def test_nudge_then_finish(self, kv, tool_registry):
         """Agent returns plain text first (no tools), gets nudged, then calls finish_turn."""
         agent_def = AgentDef.from_dict({"name": "nudge-test", "tools": []})
-        provider = MockProvider([
-            make_text_response("some text"),
-            make_finish_turn_response("最终总结"),
-        ])
+        provider = MockProvider(
+            [
+                make_text_response("some text"),
+                make_finish_turn_response("最终总结"),
+            ]
+        )
         runtime = AgentRuntime(agent_def, provider, tool_registry, kv)
 
         result = await runtime.invoke("Hi")
@@ -638,6 +641,10 @@ class TestRuntimeToolSchemas:
             {
                 "name": "schema-test",
                 "tools": ["read_kv"],
+                # Explicit False: vision_enabled falls back to the
+                # LINLING_VISION_ENABLED env var otherwise, which some
+                # test orders (cli tests load .env) leave set to "true".
+                "vision_enabled": False,
             }
         )
 
@@ -675,6 +682,7 @@ class TestRuntimeToolSchemas:
             {
                 "name": "no-tools",
                 "tools": [],
+                "vision_enabled": False,
             }
         )
 
@@ -848,9 +856,7 @@ class TestSendReplyDelivery:
       sent text; ``AgentResult.sent_texts`` carries the real words.
     """
 
-    async def test_parallel_send_reply_and_finish_turn_delivers_message(
-        self, kv, tool_registry
-    ):
+    async def test_parallel_send_reply_and_finish_turn_delivers_message(self, kv, tool_registry):
         """send_reply + finish_turn in one message must still deliver.
 
         The natural "send, then finish" pattern must not drop the
@@ -870,7 +876,9 @@ class TestSendReplyDelivery:
             ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
-        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+        runtime = AgentRuntime(
+            agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink
+        )
 
         result = await runtime.invoke("hi", event=_dm_event())
 
@@ -897,7 +905,9 @@ class TestSendReplyDelivery:
             ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
-        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+        runtime = AgentRuntime(
+            agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink
+        )
 
         result = await runtime.invoke("hi", event=_dm_event())
 
@@ -923,10 +933,157 @@ class TestSendReplyDelivery:
             ),
             usage=TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
         )
-        runtime = AgentRuntime(agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink)
+        runtime = AgentRuntime(
+            agent_def, MockProvider([response]), tool_registry, kv, action_sink=sink
+        )
 
         await runtime.invoke("hi", event=_dm_event())
 
         # With awaited delivery the action is already in the sink — no
         # loop pumping needed.
         assert len(sink.actions) == 1
+
+
+class TestRuntimeVision:
+    """Vision-gated tool filtering and multimodal content parts.
+
+    Sticker tools are ``vision_only=True``: they must only appear in the
+    LLM tool catalog when the agent has ``vision_enabled=True``. These
+    tests register a throwaway vision-only tool on a fresh
+    :class:`ToolRegistry` instance (never the global registry) so the
+    global catalog stays unpolluted.
+    """
+
+    @staticmethod
+    def _vision_registry() -> ToolRegistry:
+        """A registry containing one vision_only tool and nothing else."""
+        from linling_core.tools import ToolDef
+
+        async def vision_tool(ctx: ToolCtx, **kwargs) -> str:
+            _ = ctx
+            return "ok"
+
+        reg = ToolRegistry()
+        reg.register(
+            ToolDef(
+                name="vision_capture",
+                dsl_name="",
+                description="Capture an image from the conversation",
+                schema={"note": "string?"},
+                safe=False,
+                vision_only=True,
+                fn=vision_tool,
+            )
+        )
+        return reg
+
+    async def test_vision_only_tool_hidden_when_disabled(self, kv) -> None:
+        """vision_enabled=False filters the vision-only tool out of schemas."""
+        reg = self._vision_registry()
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "vision-disabled",
+                "tools": ["vision_capture"],
+                "vision_enabled": False,
+            }
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([]), reg, kv)
+
+        schemas = runtime._build_tool_schemas()
+        names = [s.name for s in schemas]
+        assert "vision_capture" not in names
+        # finish_turn is always injected, even with every tool filtered out.
+        assert "finish_turn" in names
+
+    async def test_vision_only_tool_visible_when_enabled(self, kv) -> None:
+        """vision_enabled=True keeps the vision-only tool in the catalog."""
+        reg = self._vision_registry()
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "vision-enabled",
+                "tools": ["vision_capture"],
+                "vision_enabled": True,
+            }
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([]), reg, kv)
+
+        schemas = runtime._build_tool_schemas()
+        names = [s.name for s in schemas]
+        assert "vision_capture" in names
+        assert "finish_turn" in names
+
+    async def test_vision_only_tool_auto_attached_without_allowlist(self, kv) -> None:
+        """Vision on auto-attaches vision_only tools even if the allowlist omits them.
+
+        This is what lets the vision mode be operated purely from .env:
+        the agent YAML's ``tools`` list does not need to mention the
+        sticker tools — they are built-in capabilities of vision mode.
+        """
+        reg = self._vision_registry()
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "vision-env",
+                # Allowlist deliberately does NOT list vision_capture.
+                "tools": ["send_reply"],
+                "vision_enabled": True,
+            }
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([]), reg, kv)
+
+        schemas = runtime._build_tool_schemas()
+        names = [s.name for s in schemas]
+        assert "vision_capture" in names
+        assert "send_reply" not in names  # still allowlist-gated
+        assert "finish_turn" in names
+
+    async def test_vision_only_tool_not_duplicated(self, kv) -> None:
+        """A vision_only tool listed in the allowlist is attached exactly once."""
+        reg = self._vision_registry()
+        agent_def = AgentDef.from_dict(
+            {
+                "name": "vision-listed",
+                "tools": ["vision_capture"],
+                "vision_enabled": True,
+            }
+        )
+        runtime = AgentRuntime(agent_def, MockProvider([]), reg, kv)
+
+        schemas = runtime._build_tool_schemas()
+        assert [s.name for s in schemas].count("vision_capture") == 1
+
+    async def test_invoke_passes_content_parts(self, kv, tool_registry) -> None:
+        """user_content_parts are attached to the final user message sent to the LLM."""
+        agent_def = AgentDef.from_dict({"name": "vision-msg", "tools": []})
+
+        captured_messages: list[list[Message]] = []
+
+        class CapturingProvider:
+            @property
+            def name(self):
+                return "capturing"
+
+            async def chat(self, messages, **kwargs):
+                captured_messages.append(list(messages))
+                return make_finish_turn_response("ok")
+
+            async def chat_stream(self, messages, **kwargs):
+                raise NotImplementedError
+
+        runtime = AgentRuntime(agent_def, CapturingProvider(), tool_registry, kv)
+        parts = [
+            ContentPart(type="text", text="hi"),
+            ContentPart(type="image_url", image_url="data:image/png;base64,AAAA"),
+        ]
+        await runtime.invoke("hi", user_content_parts=parts)
+
+        assert len(captured_messages) == 1
+        msgs = captured_messages[0]
+        user_msg = msgs[-1]
+        assert user_msg.role == "user"
+        assert user_msg.content == "hi"
+        assert user_msg.content_parts is not None
+        assert len(user_msg.content_parts) == 2
+        assert user_msg.content_parts[0].type == "text"
+        assert user_msg.content_parts[0].text == "hi"
+        assert user_msg.content_parts[1].type == "image_url"
+        assert user_msg.content_parts[1].image_url == "data:image/png;base64,AAAA"

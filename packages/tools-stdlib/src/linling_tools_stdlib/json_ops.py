@@ -149,9 +149,7 @@ def _delete(text: str, key_or_idx: str) -> str:
     safe=True,
     llm_visible=False,
 )
-async def json_op(
-    ctx: ToolCtx, subcommand: str = "", text: str = "", arg: str = ""
-) -> str:
+async def json_op(ctx: ToolCtx, subcommand: str = "", text: str = "", arg: str = "") -> str:
     """Dispatch JSON operations by sub-command.
 
     The DSL writes ``$JSON 长度 <var>$`` / ``$JSON 获取 <var> <path>$``

@@ -9,7 +9,7 @@
 > 阅读受众：第一次接触代码的工程师、想接入新平台 / 新工具的二次开发者、
 > 排障时需要快速定位边界的运维。
 
-最后更新：2026-05（commit `0b06045`，前端改版 + 像素图本地化 + 注意力探针）。
+最后更新：2026-09（LLBot 协议迁移 + 三层记忆体系 + 玩家摊位交易 + 像素图与表情包本地化 + 注意力探针）。
 
 ---
 
@@ -451,7 +451,7 @@ DM event，stdout 渲染回复。开发联调和 spec 跑 dispatch 都用它。
   `prefers-reduced-motion: reduce` 下硬退化为静态。
 
 API 与契约对齐：
-[`docs/api-types.md`](./api-types.md) — backend 改 schema 时跑 `pnpm
+[`docs/webui/api-types.md`](./webui/api-types.md) — backend 改 schema 时跑 `pnpm
 api:update` 同步 `openapi.snapshot.json` + `openapi.types.ts`，drift 在
 pytest 与 `pnpm api:check` 双向阻断。
 
@@ -538,129 +538,26 @@ pytest 与 `pnpm api:check` 双向阻断。
 ## 16. 索引：去哪找什么
 
 * 顶层使用文档 → [`README.md`](../README.md)
+* 文档总览与导航 → [`docs/README.md`](./README.md)
 * 高层设计 / 路线图 → [`.kiro/specs/linling/design.md`](../.kiro/specs/linling/design.md)
 * 子系统设计：
   * WebUI → [`.kiro/specs/linling-webui/design.md`](../.kiro/specs/linling-webui/design.md)
   * Attention Probe → [`.kiro/specs/lightweight-attention-probe/design.md`](../.kiro/specs/lightweight-attention-probe/design.md)
   * DSL Action Ledger → [`.kiro/specs/dsl-action-ledger/`](../.kiro/specs/dsl-action-ledger/)
-* DSL 语法 → [`docs/dsl/grammar.md`](./dsl/grammar.md)
-* WebUI 主题 / API / a11y → [`docs/webui/`](./webui/)
-* 部署 → [`docker/llbot/docker-compose.yml`](../docker/llbot/docker-compose.yml)
-* 可观测 → [`docs/observability/`](./observability/)
-* OpenAPI 同步 → [`docs/api-types.md`](./api-types.md)
-
-## 玩家摊位（marketplace）
-
-玩家可以把数量型物品（**鱼竿 / 鱼饵 / 蛋壳**）以灵玉标价挂在全服摊位上。
-布尔型物品（锦囊、节日礼包、九张珍品）**不**上架——卖一次就清空，
-对玩家不公平；灵玉**不**当物品卖（自买自卖就是刷钱）。
-
-### 触发指令（DSL 规则，`bot/rules/main.ling` 末尾）
-
-| 玩家输入 | 动作 | 实现细节 |
-|---|---|---|
-| `摊位` / `摆摊` | **首屏菜单**：按物品分组的全服在售统计 | `$列出挂单$ agg=1` |
-| `摊位鱼竿` / `摊位鱼饵` / `摊位蛋壳` | 该分类下所有挂单（前 20 条） | `$列出挂单$ item=物品` |
-| `摊位@某人` | 该玩家摊位上的**全部**挂单（不限条数） | `$列出挂单$ seller=QQ` |
-| `我的摊位` / `我的挂单` | 自己挂的挂单索引 | 直接读 `啊/摊位/索引/卖家/<QQ>` |
-| `查挂单#<id>` | 单条挂单详情 | `$查挂单$` |
-| `上架<物品><数量>个单价<价格>` | 调 `$上架挂单$`，24h 默认 | 返回挂单号 |
-| `买#<id> [数量]` | 调 `$购买挂单$`，原子撮合 | — |
-| `撤单#<id>` | 调 `$撤单$`，库存退回卖家 | — |
-
-#### 首屏菜单样例
-
-```
-玩家: 摊位
-苏苏: ═════ 苏苏的摊位 ═════
-      全服在售 4 条 · 共 14 件
-        鱼竿 2 条 · 5 件
-        鱼饵 1 条 · 6 件
-        蛋壳 1 条 · 3 件
-      ┈┈┈┈┈┈┈
-      发「摊位鱼竿/鱼饵/蛋壳」看分类
-      发「摊位@某人」看 TA 的摊位
-      发「我的摊位」看自己挂的
-
-玩家: 摊位鱼竿
-苏苏: ═════ 苏苏的摊位 · 鱼竿 ═════
-      142301-MXQR 鱼竿 3/3 50 123456
-      142301-NPQR 鱼竿 2/2 55 789012
-      ┈┈┈┈┈┈┈
-      #<挂单号> 买<数量>
-
-玩家: 摊位@123456
-苏苏: ═════ 灵灵 的摊位 ═════
-      142301-MXQR 鱼竿 3/3 50 123456
-      142301-OPQR 蛋壳 1/1 100 123456
-      ┈┈┈┈┈┈┈
-      #<挂单号> 买<数量>
-```
-
-`agg=1` 模式同时承担**懒清理**职责——扫到过期挂单就退款、改 status、下全局索引，**不发后台扫描**。
-`摊位@某人` 模式**不**受 20 条全局上限约束（产品决策：该玩家摊位通常 <10 条，`@某人` 调用方想看全部）。
-
-#### 摊位图卡（market_card）
-
-首屏和 `摊位@某人` 两条 trigger 会**额外**调一次 `$市场图卡$` 工具，
-画一张 **150 像素宽**的 PNG 小卡片 inline 跟着文字发出。
-卡片直接用 Pillow 画到 `BytesIO`、base64 编码、以 `base64://` URL
-返回，**不**写磁盘、不依赖 linling 和 LLBot 容器之间的共享文件系统。
-
-* 标题用深棕色字：「苏苏的摊位」/「<QQ> 的摊位」
-* 每个分类一行 + 自己的色块（鱼竿黄 / 鱼饵绿 / 蛋壳白）
-* 行内：左物品名、右"N条·M件"（首屏）或"left/total 单价灵玉"（@某人）
-* 1px 米色边框、奶白底色，跟 QQ 聊天背景比较融合
-* 空菜单 / 没人挂单 → 仍然返回一张 150×60 的小占位图，避免
-  adapter 在缺图时降级成"图片加载失败"
-
-DSL 用法：
-
-```
-图:$市场图卡 $                   # agg
-图:$市场图卡 seller %AT0%$       # @某人
-±img=%图%±                       # emit 图（与文字同 handler，合并为一条多段消息）
-```
-
-`$市场图卡$` 同样承担**懒清理**——`摊位` 和 `摊位@某人` 是用户最常敲的命令，
-让它们顺手 sweep 过期挂单最经济。
-
-#### 图卡字体
-
-图卡用 Pillow 动态渲染中文，**不能**靠 Pillow 自带的位图兜底（位图只支持 ASCII，
-中文会渲染成豆腐）。字体发现顺序：
-
-1. `ctx.extras["market_card_font"]` —— 启动时显式注入的 TTF/OTF 路径
-2. `data/fonts/*.otf|ttf` —— **仓库自带的 [Noto Sans SC Regular 子集](https://github.com/notofonts/noto-cjk/tree/main/Sans/SubsetOTF/SC)**（OFL 协议可商用，~8 MB）
-3. Pillow `load_default()` —— 仅 10px ASCII 位图，**中文会成方块**，并打 warning 日志
-
-要换字体：把 `.otf`/`.ttf` 放进 `data/fonts/`，文件名命中首选列表
-（`NotoSansSC-Regular.otf` 等）即可，**或**显式 `ctx.extras["market_card_font"]` 指向任意路径。
-
-### 核心实现
-
-* 5 个工具在 [`packages/tools-stdlib/src/linling_tools_stdlib/trade_ops.py`](../packages/tools-stdlib/src/linling_tools_stdlib/trade_ops.py)
-  ——`$上架挂单$` / `$购买挂单$` / `$撤单$` / `$列出挂单$` / `$查挂单$`。
-* 所有写操作走 `SqliteKVStore.transaction()` 上下文管理器，配合单连接的 `_tx_lock`，
-  保证「检查库存 → 扣买家灵玉（含 4% 手续费）→ 加卖家灵玉 → 减挂单 left」
-  整套动作原子完成，杜绝超卖。
-* 4% 服务费沿用 `灵玉划转` 的传统（bot 账户 `1707476110` 收），
-  **卖家付**（卖家设置 `price_each` 是期望到手的净额，买家付 `ceil(price_each * 1.04)`）。
-* 过期懒清理：撮合/列出时检查 `expire_at`，过期则自动 `status="expired"` + 退库存。
-  无后台扫描器。
-* 防自买自卖、同 `(buyer, listing)` 1h 冷却、每卖家最多 10 条活跃挂单——
-  三道风控都在 Python 工具里强制，规则作者没法绕过。
-* 单笔 > 1999 灵玉会写 `啊/摊位/大额` 记录（参照 `灵玉划转` L1608-1610 范式，
-  后续可加管理员通知）。
-
-### KV 布局
-
-```
-啊/摊位/挂单/<list_id>      → JSON  {seller, item, total, left, price_each, ...}
-啊/摊位/索引/全局/active     → JSON  [list_id, ...]  全服活跃挂单
-啊/摊位/索引/卖家/<QQ>       → JSON  [list_id, ...]  卖家维度的索引
-啊/摊位/购买冷却/<list|buy>  → str   ts              1h 冷却
-啊/摊位/大额/<ts>            → JSON  记录              大额交易留痕
-```
-
-WebUI KV 浏览器会自动展示 `啊/摊位/` 命名空间——不需要新加路由。
+  * User Profile Memory → [`.kiro/specs/user-profile-memory/`](../.kiro/specs/user-profile-memory/)
+* DSL 规则与语法：
+  * DSL 语法参考 → [`docs/dsl/grammar.md`](./dsl/grammar.md)
+  * QRSpeed 兼容性实测对照 → [`docs/dsl/qrspeed-comparison.md`](./dsl/qrspeed-comparison.md)
+* WebUI 管理面板：
+  * WebUI 架构与快速上手 → [`packages/webui/README.md`](../packages/webui/README.md)
+  * REST & WebSocket 接口规范 → [`docs/webui/api.md`](./webui/api.md)
+  * 前端类型与 OpenAPI 漂移校验 → [`docs/webui/api-types.md`](./webui/api-types.md)
+  * 主题与视觉规范 → [`docs/webui/theme.md`](./webui/theme.md)
+  * 可访问性说明 → [`docs/webui/a11y.md`](./webui/a11y.md)
+* 业务与功能特性：
+  * 玩家摊位交易系统 → [`docs/marketplace.md`](./marketplace.md)
+  * 角色生图提示词与素材规格 → [`docs/susu_sticker_prompts.md`](./susu_sticker_prompts.md)
+* 部署与协议端：
+  * LLBot 协议端部署与配置 → [`docker/llbot/docker-compose.yml`](../docker/llbot/docker-compose.yml)
+* 可观测性与监控：
+  * 指标体系与看板 → [`docs/observability/README.md`](./observability/README.md)

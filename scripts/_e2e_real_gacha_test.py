@@ -30,9 +30,8 @@ from linling_core.events import Event, Scope, User
 from linling_core.tools import registry
 from linling_dsl.parser import parse
 from linling_dsl.vm import VM
-from PIL import Image
-
 from linling_tools_stdlib.gacha_image import _parse_record
+from PIL import Image
 
 
 def _event() -> Event:
@@ -90,9 +89,7 @@ async def _run_case(
         # is not a drop, so the count must equal the spin count exactly.
         if len(drops) != spins:
             print(f"  raw %录% = {record!r}")
-            raise SystemExit(
-                f"FAIL [{label}]: expected {spins} drops, parsed {len(drops)}"
-            )
+            raise SystemExit(f"FAIL [{label}]: expected {spins} drops, parsed {len(drops)}")
 
         result = await vm.execute_handler(handlers[settle_handler], ev)
         img_seg = next(

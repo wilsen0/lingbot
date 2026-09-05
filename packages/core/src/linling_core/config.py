@@ -79,6 +79,39 @@ def expand_env_recursive(obj: Any) -> Any:
     return obj
 
 
+# Accepted string spellings for :func:`coerce_bool` (case-insensitive).
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+
+def coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Parse a config value into a bool without the ``bool("false")`` trap.
+
+    Accepts native booleans, 0/1 ints, and common string spellings
+    (``true/false``, ``1/0``, ``yes/no``, ``on/off`` — case-insensitive,
+    whitespace-stripped). ``None`` falls back to ``default``. Anything
+    else raises ``ValueError`` so a misconfigured value fails loudly
+    instead of silently flipping on (``bool("false")`` is ``True``).
+
+    This matters because ``${VAR:-default}`` env expansion always yields
+    strings: a YAML field written as ``enabled: ${FLAG:-false}`` parses
+    to ``"false"``, not ``False``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        folded = value.strip().casefold()
+        if folded in _TRUE_STRINGS:
+            return True
+        if folded in _FALSE_STRINGS:
+            return False
+    raise ValueError(f"invalid boolean value: {value!r}")
+
+
 # Backwards-compatible aliases. The leading-underscore names predate
 # the cross-package use case (``AgentDef.from_yaml`` calls the public
 # spelling). Kept around so any out-of-tree caller that imported them
@@ -113,32 +146,29 @@ class AdapterConfig(BaseModel):
 class StorageConfig(BaseModel):
     """Storage backend configuration."""
 
+    data_dir: str = "./data"
     kv: str = "sqlite:///./data/kv.db"
     files: str = "./data/files"
     audit: str | None = None
-    """Where to persist the audit log.
-
-    * ``None`` (default) — keep audit rows in memory only. Easiest
-      starting point; rows die with the process.
-    * ``sqlite:///path/to/audit.db`` — durable SQLite. The WebUI's
-      ``/api/audit`` endpoint serves results out of this file, and
-      ``RuleSummary`` aggregations remain accurate across restarts.
-
-    Future backends (Postgres, Loki) plug in here without code
-    changes elsewhere.
-    """
-
     scheduler: str | None = None
-    """Where to persist scheduled tasks.
 
-    * ``None`` (default) — :class:`MemorySchedulerStore`; pending
-      delays / recurring jobs die with the process. Fine for dev.
-    * ``sqlite:///path/to/scheduler.db`` — :class:`SqliteSchedulerStore`.
-      Tasks survive restart; overdue tasks fire on next ``run()``.
-
-    Set this in production for any bot that uses ``$调用$`` delays or
-    config-driven recurring jobs.
-    """
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_data_dir(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data_dir = data.get("data_dir")
+        if data_dir:
+            clean = data_dir.rstrip("/")
+            if "kv" not in data:
+                data["kv"] = f"sqlite:///{clean}/kv.sqlite"
+            if "files" not in data:
+                data["files"] = f"{clean}/files"
+            if "audit" not in data:
+                data["audit"] = f"sqlite:///{clean}/audit.sqlite"
+            if "scheduler" not in data:
+                data["scheduler"] = f"sqlite:///{clean}/scheduler.sqlite"
+        return data
 
 
 class ClassifierConfig(BaseModel):
@@ -270,6 +300,30 @@ class AgentConfig(BaseModel):
     default_agent: str | None = None  # path to agent yaml
     fallback_reply: str = "Sorry, I don't have a chat brain configured."
     allowed_scopes: list[str] | None = None
+
+    # Inline agent definition (single-file bot.yaml ready):
+    name: str | None = None
+    provider: str = "openai"
+    model: str = "gpt-4o-mini"
+    system: str | None = None
+    temperature: float = 0.7
+    reasoning_effort: str | None = None
+    vision_enabled: bool = False
+    api_key: str = ""
+    base_url: str = ""
+    extra_headers: dict[str, str] = {}
+    tools: list[str] = []
+
+    @property
+    def has_inline_agent(self) -> bool:
+        """True when an inline agent is explicitly configured in bot.yaml."""
+        return (
+            self.system is not None
+            or bool(self.api_key)
+            or (self.name is not None)
+            or (self.model != "gpt-4o-mini")
+        )
+
     # DM / private-chat multi-message reply caps. The chat dispatcher
     # parses an optional ``{"actions":[...]}`` JSON wrapper from the
     # assistant's plain text and fans it out into multiple messages —
@@ -343,9 +397,7 @@ class AgentConfig(BaseModel):
         if self.group_batch_attention_window_s < 0:
             raise ValueError("group_batch_attention_window_s must be non-negative")
         if self.group_batch_daily_summary_keep_recent_turns < 0:
-            raise ValueError(
-                "group_batch_daily_summary_keep_recent_turns must be non-negative"
-            )
+            raise ValueError("group_batch_daily_summary_keep_recent_turns must be non-negative")
         return self
 
 

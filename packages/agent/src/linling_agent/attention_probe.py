@@ -43,12 +43,8 @@ logger = structlog.get_logger(__name__)
 # ``"需要"`` / ``"不需要"`` and ``"回复"`` / ``"不回复"`` cover the verb
 # forms a small instruction-tuned model tends to emit when asked
 # "should I reply".
-_YES_TOKENS: frozenset[str] = frozenset(
-    {"yes", "y", "true", "1", "是", "需要", "回复"}
-)
-_NO_TOKENS: frozenset[str] = frozenset(
-    {"no", "n", "false", "0", "否", "不需要", "不回复"}
-)
+_YES_TOKENS: frozenset[str] = frozenset({"yes", "y", "true", "1", "是", "需要", "回复"})
+_NO_TOKENS: frozenset[str] = frozenset({"no", "n", "false", "0", "否", "不需要", "不回复"})
 
 
 # Soft cap on how many bytes we ship in the user prompt. The dispatcher
@@ -219,17 +215,11 @@ class AttentionProbe:
         proxy: str | None = None,
     ) -> None:
         if timeout <= 0:
-            raise ValueError(
-                f"AttentionProbe timeout must be positive; got {timeout!r}"
-            )
+            raise ValueError(f"AttentionProbe timeout must be positive; got {timeout!r}")
         if timeout > _MAX_TIMEOUT_S:
-            raise ValueError(
-                f"AttentionProbe timeout must be <= {_MAX_TIMEOUT_S}; got {timeout!r}"
-            )
+            raise ValueError(f"AttentionProbe timeout must be <= {_MAX_TIMEOUT_S}; got {timeout!r}")
         if max_chars <= 0:
-            raise ValueError(
-                f"AttentionProbe max_chars must be positive; got {max_chars!r}"
-            )
+            raise ValueError(f"AttentionProbe max_chars must be positive; got {max_chars!r}")
         self._model = model
         self._base_url = base_url
         self._max_chars = max_chars
@@ -387,12 +377,7 @@ class AttentionProbe:
         # punctuation peel for every successful call.
         head = _normalise_token(response.message.content or "")
         verdict = head in _YES_TOKENS
-        if (
-            not verdict
-            and response.message.content
-            and head
-            and head not in _NO_TOKENS
-        ):
+        if not verdict and response.message.content and head and head not in _NO_TOKENS:
             # Distinguish "model said no" from "model said something
             # we couldn't parse" so an operator tuning the prompt can
             # see when the parser is rejecting unrecognised intent.

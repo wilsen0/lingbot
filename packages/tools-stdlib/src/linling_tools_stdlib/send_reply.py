@@ -8,14 +8,15 @@ not go through the global tool registry for sending.
 
 from __future__ import annotations
 
-import logging
+import asyncio
 from typing import Any
 
+import structlog
 from linling_core.events import Action, Scope
 from linling_core.segments import TextSegment
 from linling_core.tools import ToolCtx, tool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @tool(
@@ -83,6 +84,4 @@ async def send_reply(ctx: ToolCtx, text: str = "") -> str:
 
 
 def _is_awaitable(value: Any) -> bool:
-    import asyncio
-
     return asyncio.iscoroutine(value) or isinstance(value, asyncio.Future)

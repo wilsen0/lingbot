@@ -26,9 +26,8 @@ from xml.etree import ElementTree as ET
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from linling_core.pipeline import DslEvent
-
 from linling_agent.ledger import LedgerRenderer
+from linling_core.pipeline import DslEvent
 
 # ---------------------------------------------------------------------------
 # Strategies

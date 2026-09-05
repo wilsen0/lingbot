@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+import structlog
 from linling_core.events import Event
 from linling_core.metrics import (
     LLM_CALLS_TOTAL,
@@ -27,15 +28,14 @@ from linling_core.tools import ToolCtx, ToolRegistry, tool_parameters_schema
 
 from linling_agent.agent_def import AgentDef
 from linling_agent.context import fit_messages_to_budget
-from linling_agent.llm import LLMProvider, LLMResponse, Message, ToolSchema
+from linling_agent.images import ImageContentResolver
+from linling_agent.llm import ContentPart, LLMProvider, LLMResponse, Message, ToolSchema
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _MAX_TOOL_RESULT_CHARS = 8_000
 _NUDGE_LIMIT = 2
-_NUDGE_PROMPT = (
-    "用工具发送消息，或调用 finish_turn 结束本回合。"
-)
+_NUDGE_PROMPT = "用工具发送消息，或调用 finish_turn 结束本回合。"
 _FINISH_TURN_TOOL_NAME = "finish_turn"
 
 
@@ -67,6 +67,8 @@ class AgentRuntime:
         bot_id: str = "linling",
         metrics: MetricsSink | None = None,
         action_sink: Any | None = None,
+        image_resolver: ImageContentResolver | None = None,
+        sticker_dir: Path | None = None,
     ) -> None:
         self._agent_def = agent_def
         self._provider = provider
@@ -75,6 +77,8 @@ class AgentRuntime:
         self._bot_id = bot_id
         self._metrics: MetricsSink = metrics or NullMetrics()
         self._action_sink: Any | None = action_sink
+        self._image_resolver = image_resolver
+        self._sticker_dir = sticker_dir
 
     def set_action_sink(self, sink: Any) -> None:
         self._action_sink = sink
@@ -111,14 +115,25 @@ class AgentRuntime:
     def _build_tool_schemas(self) -> list[ToolSchema]:
         """Convert allowed tools from the agent def into ToolSchema list.
 
+        When ``vision_enabled`` is on, every ``vision_only`` tool in the
+        registry is additionally attached even if the agent's tools
+        allowlist does not mention it — the sticker tools are built-in
+        capabilities of vision mode, and they only do anything once the
+        bootstrap injects their ``image_resolver`` / ``sticker_dir``
+        extras, so there is no accidental exposure. With vision disabled
+        they stay filtered out as before.
+
         Always appends the ``finish_turn`` pseudo-tool — it is not in the
         global registry but must be visible to every LLM call so the model
         can explicitly end the turn.
         """
         schemas: list[ToolSchema] = []
+        added: set[str] = set()
         for tool_name in self._agent_def.tools:
             td = self._registry.get(tool_name)
             if td is None:
+                continue
+            if td.vision_only and not self._agent_def.vision_enabled:
                 continue
             schemas.append(
                 ToolSchema(
@@ -127,6 +142,17 @@ class AgentRuntime:
                     parameters=tool_parameters_schema(td),
                 )
             )
+            added.add(td.name)
+        if self._agent_def.vision_enabled:
+            for td in self._registry.all():
+                if td.vision_only and td.name not in added:
+                    schemas.append(
+                        ToolSchema(
+                            name=td.name,
+                            description=td.description,
+                            parameters=tool_parameters_schema(td),
+                        )
+                    )
         schemas.append(
             ToolSchema(
                 name=_FINISH_TURN_TOOL_NAME,
@@ -157,6 +183,7 @@ class AgentRuntime:
         history: list[Message] | None = None,
         context_max_tokens: int | None = None,
         action_sink: Any | None = None,
+        user_content_parts: list[ContentPart] | None = None,
     ) -> AgentResult:
         """Run the agent's ReAct loop until it calls ``finish_turn`` or hits limits.
 
@@ -172,7 +199,13 @@ class AgentRuntime:
             messages.append(Message(role="system", content=self._agent_def.system))
         if history:
             messages.extend(history)
-        messages.append(Message(role="user", content=user_input))
+        messages.append(
+            Message(
+                role="user",
+                content=user_input,
+                content_parts=tuple(user_content_parts) if user_content_parts else None,
+            )
+        )
 
         # Build tool schemas
         tool_schemas = [] if disable_tools else self._build_tool_schemas()
@@ -192,6 +225,10 @@ class AgentRuntime:
         sent_texts: list[str] = []
         effective_sink = self._action_sink if action_sink is None else action_sink
         extras: dict[str, Any] = {"action_sink": effective_sink, "sent_texts": sent_texts}
+        if self._image_resolver is not None:
+            extras["image_resolver"] = self._image_resolver
+        if self._sticker_dir is not None:
+            extras["sticker_dir"] = self._sticker_dir
 
         while True:
             # Check timeout
@@ -226,9 +263,7 @@ class AgentRuntime:
                     timeout=remaining,
                 )
             except TimeoutError:
-                self._metrics.counter_inc(
-                    LLM_CALLS_TOTAL, {**provider_labels, "outcome": "error"}
-                )
+                self._metrics.counter_inc(LLM_CALLS_TOTAL, {**provider_labels, "outcome": "error"})
                 self._metrics.histogram_observe(
                     LLM_DURATION_SECONDS,
                     provider_labels,

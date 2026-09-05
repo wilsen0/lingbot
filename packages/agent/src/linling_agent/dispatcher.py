@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from linling_core.events import Action, Event
@@ -26,11 +27,15 @@ from linling_core.pipeline import ledger_scope_keys
 from linling_core.segments import ReplySegment, TextSegment
 
 from linling_agent.action_delay import with_random_delay_before
-from linling_agent.actions_protocol import ParsedAction, parse_actions_envelope
+from linling_agent.actions_protocol import ParsedAction
 from linling_agent.context import ContextBudget, ContextManager, OnBeforeCompact, SummaryStore
-from linling_agent.llm import Message
+from linling_agent.images import ImageContentResolver, collect_image_refs
+from linling_agent.llm import ContentPart, Message
 from linling_agent.profile import ProfileStore, render_profile_block
 from linling_agent.runtime import AgentResult, AgentRuntime
+from linling_agent.segments_text import llm_visible_text
+from linling_agent.sticker_collage import StickerCollageBuilder
+from linling_agent.sticker_store import StickerStore
 
 if TYPE_CHECKING:
     from linling_core.pipeline import Session
@@ -73,6 +78,9 @@ class AgentChatDispatcher:
         max_reply_chars: int = 500,
         multi_reply_delay_min_s: float = 0.0,
         multi_reply_delay_max_s: float = 0.0,
+        image_resolver: ImageContentResolver | None = None,
+        kv: Any = None,
+        sticker_dir: Path | None = None,
     ) -> None:
         self._agent = agent
         self._empty_reply = empty_reply
@@ -99,6 +107,14 @@ class AgentChatDispatcher:
         self._max_reply_chars = max(1, max_reply_chars)
         self._multi_reply_delay_min_s = max(0.0, multi_reply_delay_min_s)
         self._multi_reply_delay_max_s = max(0.0, multi_reply_delay_max_s)
+        # Optional image-content resolver backing the multimodal (vision)
+        # path. ``None`` keeps the legacy text-only behaviour exactly.
+        self._image_resolver = image_resolver
+        # KV + sticker dir for the sticker-collection collage. ``None``
+        # for either disables the collage; the DM path then never attaches
+        # the saved-sticker grid.
+        self._kv: Any = kv
+        self._sticker_dir: Path | None = sticker_dir
         self._context = (
             ContextManager(
                 provider=agent.provider,
@@ -122,6 +138,11 @@ class AgentChatDispatcher:
         bypass the history rehydration this dispatcher owns.
         """
         return self._agent
+
+    @property
+    def vision_enabled(self) -> bool:
+        """True when the agent definition and resolver both allow vision."""
+        return self._agent.agent_def.vision_enabled and self._image_resolver is not None
 
     def set_action_sink(self, sink: object) -> None:
         """Propagate the action sink to the underlying runtime."""
@@ -176,8 +197,57 @@ class AgentChatDispatcher:
         layers (WebUI) acquire it themselves.
         """
         raw_user_input = event.text
+        # Vision path: a pure non-text message (image / sticker) that would
+        # otherwise be silently dropped is surfaced to the LLM as a
+        # placeholder ("[图片]") plus the resolved image content parts, so a
+        # vision-enabled model can actually see and react to it. When vision
+        # is off (or there's nothing image-like to resolve) behaviour is
+        # unchanged — the empty message is dropped.
+        user_content_parts: list[ContentPart] | None = None
         if not raw_user_input:
-            return None
+            if not self.vision_enabled:
+                return None
+            image_refs = collect_image_refs(event.segments)
+            if not image_refs:
+                return None
+            assert self._image_resolver is not None
+            data_uris = await self._image_resolver.resolve_batch(image_refs)
+            if not data_uris:
+                return None
+            raw_user_input = llm_visible_text(event.segments)
+            user_content_parts = [
+                ContentPart(type="text", text=raw_user_input),
+                *(ContentPart(type="image_url", image_url=uri) for uri in data_uris),
+            ]
+        elif self.vision_enabled:
+            # Mixed message (text + image): keep the text, attach resolved
+            # images so the model sees both. Failures degrade to text-only.
+            image_refs = collect_image_refs(event.segments)
+            if image_refs:
+                assert self._image_resolver is not None
+                data_uris = await self._image_resolver.resolve_batch(image_refs)
+                if data_uris:
+                    user_content_parts = [
+                        ContentPart(type="text", text=raw_user_input),
+                        *(ContentPart(type="image_url", image_url=uri) for uri in data_uris),
+                    ]
+
+        # Sticker collection collage: a 3x3 grid of the saved stickers (each
+        # cell labelled with its id and saved name) so the model can see what
+        # it collected and pick one by name to re-send. Attached on every
+        # vision request — text-only ones get a parts list with just the text
+        # plus the collage — and skipped when nothing is saved or storage is
+        # unavailable.
+        collage_attached = False
+        if self.vision_enabled and self._kv is not None and self._sticker_dir is not None:
+            collage_uri = await StickerCollageBuilder(
+                StickerStore(self._kv, self._sticker_dir)
+            ).build_data_uri()
+            if collage_uri:
+                if user_content_parts is None:
+                    user_content_parts = [ContentPart(type="text", text=raw_user_input)]
+                user_content_parts.append(ContentPart(type="image_url", image_url=collage_uri))
+                collage_attached = True
 
         # Clear any stale cancel flag from a prior turn. The event is a
         # single-shot signal: set by ``/cancel`` → observed here →
@@ -220,6 +290,17 @@ class AgentChatDispatcher:
             if profile_block:
                 prefix_messages.append(Message(role="system", content=profile_block))
             await self._touch_name_safe(event.sender.id, event.sender.display_name)
+        if collage_attached:
+            prefix_messages.append(
+                Message(
+                    role="system",
+                    content=(
+                        "消息末尾附了一张你收藏的表情包九宫格图，每格标了名字和 id。"
+                        "想回敬表情包就用 send_sticker(name=...)，只能发收藏里的；"
+                        "没有合适的就不用发。"
+                    ),
+                )
+            )
         reserve_tokens = self._agent.agent_def.guardrails.max_tokens
         user_input = raw_user_input
         if self._context is not None:
@@ -239,6 +320,12 @@ class AgentChatDispatcher:
             return AgentResult(content=self._empty_reply)
         replacement_history: list[Message] | None = None
         skip_history = bool(event.raw.get("_linling_skip_history"))
+        # How many image content parts the current turn carries — the
+        # context manager uses this to reserve token headroom for images
+        # before budgeting the visible text.
+        image_count = (
+            sum(1 for p in user_content_parts if p.type == "image_url") if user_content_parts else 0
+        )
         if self._context is not None:
             injected, replacement_history = await self._context.prepare(
                 scope_id=event.scope.id,
@@ -248,8 +335,10 @@ class AgentChatDispatcher:
                 extra_messages=extra_messages,
                 system_text=self._agent.agent_def.system,
                 current_input_text=user_input,
+                current_image_count=image_count,
                 reserve_tokens=reserve_tokens,
-                allow_compaction=not skip_history and not bool(event.raw.get("_linling_group_batch")),
+                allow_compaction=not skip_history
+                and not bool(event.raw.get("_linling_group_batch")),
             )
             injected = [*prefix_messages, *injected, *extra_messages]
         else:
@@ -263,6 +352,7 @@ class AgentChatDispatcher:
                 history=injected,
                 context_max_tokens=self._context.max_tokens if self._context is not None else None,
                 action_sink=action_sink,
+                user_content_parts=user_content_parts,
             ),
             name="agent_invoke",
         )
@@ -386,6 +476,7 @@ class AgentChatDispatcher:
         extra_messages: list[Message] | None = None,
         system_text: str = "",
         current_input_text: str = "",
+        current_image_count: int = 0,
         reserve_tokens: int = 0,
         allow_compaction: bool = True,
         force_compaction: bool = False,
@@ -398,21 +489,24 @@ class AgentChatDispatcher:
         loop, such as group batching, persist summary compaction even
         when they do not call :meth:`dispatch` for the current turn.
         """
-        visible, _replacement_committed, _source_history_len = (
-            await self.prepare_context_history_with_status(
-                session=session,
-                scope_id=scope_id,
-                sender_id=sender_id,
-                prefix_messages=prefix_messages,
-                extra_messages=extra_messages,
-                system_text=system_text,
-                current_input_text=current_input_text,
-                reserve_tokens=reserve_tokens,
-                allow_compaction=allow_compaction,
-                force_compaction=force_compaction,
-                summary_keep_recent_turns=summary_keep_recent_turns,
-                commit_replacement=commit_replacement,
-            )
+        (
+            visible,
+            _replacement_committed,
+            _source_history_len,
+        ) = await self.prepare_context_history_with_status(
+            session=session,
+            scope_id=scope_id,
+            sender_id=sender_id,
+            prefix_messages=prefix_messages,
+            extra_messages=extra_messages,
+            system_text=system_text,
+            current_input_text=current_input_text,
+            current_image_count=current_image_count,
+            reserve_tokens=reserve_tokens,
+            allow_compaction=allow_compaction,
+            force_compaction=force_compaction,
+            summary_keep_recent_turns=summary_keep_recent_turns,
+            commit_replacement=commit_replacement,
         )
         return visible
 
@@ -426,6 +520,7 @@ class AgentChatDispatcher:
         extra_messages: list[Message] | None = None,
         system_text: str = "",
         current_input_text: str = "",
+        current_image_count: int = 0,
         reserve_tokens: int = 0,
         allow_compaction: bool = True,
         force_compaction: bool = False,
@@ -444,6 +539,7 @@ class AgentChatDispatcher:
             extra_messages=extra_messages,
             system_text=system_text,
             current_input_text=current_input_text,
+            current_image_count=current_image_count,
             reserve_tokens=reserve_tokens,
             allow_compaction=allow_compaction,
             force_compaction=force_compaction,
@@ -520,9 +616,7 @@ class AgentChatDispatcher:
                     name="chat_rehydrate_history",
                 )
             )
-        if self._ledger_store is not None and not getattr(
-            session, _LEDGER_HYDRATED_FLAG, False
-        ):
+        if self._ledger_store is not None and not getattr(session, _LEDGER_HYDRATED_FLAG, False):
             tasks.append(
                 asyncio.create_task(
                     self._rehydrate_ledger(session, event),

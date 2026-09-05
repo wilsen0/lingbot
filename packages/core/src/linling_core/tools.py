@@ -102,6 +102,14 @@ class ToolDef:
     ``"path key default"`` shape.
     """
 
+    vision_only: bool = False
+    """If True, the tool is hidden unless the agent runs with
+    ``vision_enabled=True``. Filtering happens in
+    ``AgentRuntime._build_tool_schemas`` (NOT :meth:`ToolRegistry.llm_schemas`,
+    which exposes every ``llm_visible`` tool); keeping the registry catalog
+    complete lets the DSL and tests see all tools regardless of vision mode.
+    Used for sticker collection tools that require multimodal input."""
+
     signature: _ToolSignature = field(init=False)
     """Cached :func:`inspect`-derived view of ``fn``. Filled in
     automatically by :meth:`__post_init__` so the dispatch hot path
@@ -200,6 +208,7 @@ def tool(
     schema: dict[str, Any],
     safe: bool = False,
     llm_visible: bool = True,
+    vision_only: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator that registers a function into the global registry.
 
@@ -220,6 +229,8 @@ def tool(
     Pass ``llm_visible=False`` to hide the tool from LLM tool catalogs
     (useful for DSL compatibility shims whose signature would confuse the
     model).
+    Pass ``vision_only=True`` to restrict the tool to vision-enabled agents
+    (e.g. sticker collection tools that need image input).
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -231,6 +242,7 @@ def tool(
             safe=safe,
             fn=fn,
             llm_visible=llm_visible,
+            vision_only=vision_only,
         )
         registry.register(td)
         return fn

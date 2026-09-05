@@ -135,11 +135,14 @@ async def main() -> int:
     sem = asyncio.Semaphore(8)
 
     async def _probe(url: str) -> tuple[str, str, str, int]:
-        async with sem, httpx.AsyncClient(
-            timeout=_TIMEOUT,
-            follow_redirects=True,
-            headers={"User-Agent": "linling-image-audit/1.0"},
-        ) as client:
+        async with (
+            sem,
+            httpx.AsyncClient(
+                timeout=_TIMEOUT,
+                follow_redirects=True,
+                headers={"User-Agent": "linling-image-audit/1.0"},
+            ) as client,
+        ):
             status, ct, size = await _check_remote(client, url)
             return url, status, ct, size
 

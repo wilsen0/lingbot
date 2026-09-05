@@ -9,7 +9,7 @@ from typing import Protocol, runtime_checkable
 
 import structlog
 
-from linling_agent.llm import LLMResponse, Message
+from linling_agent.llm import LLMResponse, Message, count_image_parts
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +59,11 @@ def estimate_tokens(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+# OpenAI "detail: low" charges a fixed 85 tokens per image; we round up
+# to 100 to cover the per-part JSON overhead in the request envelope.
+_IMAGE_TOKEN_COST = 100
+
+
 def estimate_messages_tokens(messages: list[Message]) -> int:
     """Estimate tokens for a list of LLM messages."""
     # Small per-message overhead keeps budgeting from being too tight
@@ -72,6 +77,7 @@ def estimate_messages_tokens(messages: list[Message]) -> int:
             estimate_tokens(tc.id) + estimate_tokens(tc.name) + estimate_tokens(tc.arguments)
             for tc in (m.tool_calls or [])
         )
+        + count_image_parts(m) * _IMAGE_TOKEN_COST
         + 6
         for m in messages
     )
@@ -164,6 +170,7 @@ class ContextManager:
         extra_messages: list[Message] | None = None,
         system_text: str = "",
         current_input_text: str = "",
+        current_image_count: int = 0,
         reserve_tokens: int = 0,
         allow_compaction: bool = True,
         force_compaction: bool = False,
@@ -184,6 +191,7 @@ class ContextManager:
             + completion_reserved
             + estimate_messages_tokens(prefixes)
             + estimate_messages_tokens(extras)
+            + current_image_count * _IMAGE_TOKEN_COST
         )
         if not self._budget.enabled:
             return list(history), None
@@ -358,10 +366,7 @@ def _render_transcript(messages: list[Message]) -> str:
             continue
         if m.role == "assistant":
             if m.tool_calls:
-                calls = [
-                    f"{tc.name}({tc.arguments})"
-                    for tc in m.tool_calls
-                ]
+                calls = [f"{tc.name}({tc.arguments})" for tc in m.tool_calls]
                 content = m.content or ""
                 lines.append(f"assistant tool_calls: {'; '.join(calls)} {content}".rstrip())
             else:

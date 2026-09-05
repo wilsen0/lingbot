@@ -56,9 +56,7 @@ def _event(sender_id: str, *, balance: int = 0, items: dict[str, int] | None = N
     )
 
 
-async def _seed(
-    kv: SqliteKVStore, sender_id: str, *, balance: int, items: dict[str, int]
-) -> None:
+async def _seed(kv: SqliteKVStore, sender_id: str, *, balance: int, items: dict[str, int]) -> None:
     """Pre-populate a player's 灵玉 + inventory rows so listing/buying can run.
 
     For non-tradable items (test fixtures that exercise the
@@ -174,17 +172,13 @@ async def test_list_debits_inventory_and_writes_record(ctx_factory) -> None:
     assert result in gindex
 
     # Seller index updated.
-    sindex = json.loads(
-        await seller.kv.read(_SCOPE_SELLER_INDEX, "卖家", "seller-1", "[]")
-    )
+    sindex = json.loads(await seller.kv.read(_SCOPE_SELLER_INDEX, "卖家", "seller-1", "[]"))
     assert sindex == [result]
 
 
 async def test_list_rejects_non_whitelisted_item(ctx_factory) -> None:
     seller = await ctx_factory("seller-1", items={"啊/活动系/玫瑰花": 5})
-    result = await trade_ops.marketplace_list(
-        seller, item="玫瑰花", qty="1", price_each="10"
-    )
+    result = await trade_ops.marketplace_list(seller, item="玫瑰花", qty="1", price_each="10")
     assert result.startswith("error:")
     # Inventory untouched.
     inv = await seller.kv.read("啊/活动系", "玫瑰花", "seller-1", "0")
@@ -203,26 +197,20 @@ async def test_list_rejects_group_scoped_items(ctx_factory) -> None:
     """
     seller = await ctx_factory("seller-1", items={"鱼竿": 5})
     for forbidden in ("禁言卡", "玫瑰花", "锦囊", "灵玉", "锦囊"):
-        result = await trade_ops.marketplace_list(
-            seller, item=forbidden, qty="1", price_each="10"
-        )
+        result = await trade_ops.marketplace_list(seller, item=forbidden, qty="1", price_each="10")
         assert result.startswith("error:"), f"should reject {forbidden}"
 
 
 async def test_list_rejects_zero_or_negative_qty_or_price(ctx_factory) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 5})
     for q, p in [("0", "10"), ("-1", "10"), ("1", "0"), ("1", "-5")]:
-        r = await trade_ops.marketplace_list(
-            seller, item="鱼竿", qty=q, price_each=p
-        )
+        r = await trade_ops.marketplace_list(seller, item="鱼竿", qty=q, price_each=p)
         assert r.startswith("error:"), f"q={q} p={p} should error"
 
 
 async def test_list_rejects_when_insufficient_inventory(ctx_factory) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 2})
-    r = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="5", price_each="10"
-    )
+    r = await trade_ops.marketplace_list(seller, item="鱼竿", qty="5", price_each="10")
     assert r.startswith("error:")
     assert "鱼竿" in r and "不够" in r
     # Inventory untouched.
@@ -239,9 +227,7 @@ async def test_list_caps_active_per_seller(ctx_factory) -> None:
             seller, item="鱼竿", qty="1", price_each="10"
         )
         assert not last_result.startswith("error:")
-    r = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="10"
-    )
+    r = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="10")
     assert r.startswith("error:")
     assert "挂着" in r or "撤一些" in r
 
@@ -253,9 +239,7 @@ async def test_list_caps_active_per_seller(ctx_factory) -> None:
 
 async def test_buy_transfers_funds_and_goods(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 5})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="5", price_each="100"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="5", price_each="100")
     assert not list_id.startswith("error:")
 
     # Pre-credit the buyer.
@@ -287,9 +271,7 @@ async def test_buy_transfers_funds_and_goods(ctx_factory, kv) -> None:
 async def test_buy_rounds_up_partial_jiangweiyuan(ctx_factory, kv) -> None:
     """1 unit at 1 灵玉 should charge 2 灵玉 (ceil(1 * 1.04) = 2)."""
     seller = await ctx_factory("seller-1", items={"鱼饵": 1})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼饵", qty="1", price_each="1"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼饵", qty="1", price_each="1")
     assert not list_id.startswith("error:")
     await kv.write("啊/灵玉系", "灵玉", "buyer-1", "10")
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
@@ -302,9 +284,7 @@ async def test_buy_rounds_up_partial_jiangweiyuan(ctx_factory, kv) -> None:
 
 async def test_buy_sold_out_flips_status_and_drops_index(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 1})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="10")
     await kv.write("啊/灵玉系", "灵玉", "buyer-1", "100")
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
@@ -322,9 +302,7 @@ async def test_buy_sold_out_flips_status_and_drops_index(ctx_factory, kv) -> Non
 
 async def test_buy_rejects_self_purchase(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 5}, balance=1000)
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="10")
     # Same sender — must be rejected.
     r = await trade_ops.marketplace_buy(seller, list_id=list_id, qty="1")
     assert r.startswith("error:")
@@ -333,9 +311,7 @@ async def test_buy_rejects_self_purchase(ctx_factory, kv) -> None:
 
 async def test_buy_rejects_insufficient_funds(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 1})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="100"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="100")
     await kv.write("啊/灵玉系", "灵玉", "buyer-1", "50")
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
@@ -345,9 +321,7 @@ async def test_buy_rejects_insufficient_funds(ctx_factory, kv) -> None:
 
 async def test_buy_rejects_qty_beyond_left(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="3", price_each="10")
     await kv.write("啊/灵玉系", "灵玉", "buyer-1", "1000")
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="5")
@@ -363,9 +337,7 @@ async def test_buy_rejects_unknown_listing(ctx_factory) -> None:
 
 async def test_buy_enforces_1h_cooldown_per_pair(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 10})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="5", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="5", price_each="10")
     await kv.write("啊/灵玉系", "灵玉", "buyer-1", "1000")
     buyer = ToolCtx(kv=kv, event=_event("buyer-1"), bot_id="test-bot")
     r1 = await trade_ops.marketplace_buy(buyer, list_id=list_id, qty="1")
@@ -383,9 +355,7 @@ async def test_buy_enforces_1h_cooldown_per_pair(ctx_factory, kv) -> None:
 async def test_concurrent_buyers_cannot_oversell(ctx_factory, kv) -> None:
     """20 buyers race to grab 1 unit; only 1 wins, inventory == 0."""
     seller = await ctx_factory("seller-1", items={"鱼竿": 1})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="10")
 
     # Pre-seed 20 buyers with enough 灵玉 to all want this.
     for i in range(20):
@@ -422,9 +392,7 @@ async def test_concurrent_buyers_cannot_oversell(ctx_factory, kv) -> None:
 
 async def test_cancel_refunds_remaining(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 10})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="5", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="5", price_each="10")
     # Seller inventory now 5.
     assert await kv.read("休闲系/钓鱼", "鱼竿", "seller-1", "0") == "5"
 
@@ -442,9 +410,7 @@ async def test_cancel_refunds_remaining(ctx_factory, kv) -> None:
 
 async def test_cancel_rejects_non_owner(ctx_factory, kv) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 5})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="5", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="5", price_each="10")
     other = await ctx_factory("other", items={}, balance=1000)
     r = await trade_ops.marketplace_cancel(other, list_id=list_id)
     assert r.startswith("error:")
@@ -454,9 +420,7 @@ async def test_cancel_rejects_non_owner(ctx_factory, kv) -> None:
 async def test_expired_listing_refunds_on_buy_attempt(ctx_factory, kv) -> None:
     """Lazy expiration: the first buy after expiry refunds + rejects."""
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="3", price_each="10")
 
     # Force expiration by rewriting the listing blob.
     blob = json.loads(await kv.read(_SCOPE_LISTING, "挂单", list_id, ""))
@@ -488,9 +452,7 @@ async def test_concurrent_sweep_and_buy_does_not_double_refund(ctx_factory, kv) 
     is no longer ``active``.
     """
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="3", price_each="10")
 
     # Force expiration.
     blob = json.loads(await kv.read(_SCOPE_LISTING, "挂单", list_id, ""))
@@ -524,9 +486,7 @@ async def test_concurrent_sweep_and_buy_does_not_double_refund(ctx_factory, kv) 
 async def test_list_active_lazy_expires_stale_entries(ctx_factory, kv) -> None:
     """``$列出挂单$`` should sweep expired listings and refund escrow."""
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="3", price_each="10")
     blob = json.loads(await kv.read(_SCOPE_LISTING, "挂单", list_id, ""))
     blob["expire_at"] = 1
     await kv.write(_SCOPE_LISTING, "挂单", list_id, json.dumps(blob))
@@ -547,9 +507,7 @@ async def test_list_active_lazy_expires_stale_entries(ctx_factory, kv) -> None:
 
 async def test_inspect_returns_blob(ctx_factory) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="1", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="1", price_each="10")
     out = await trade_ops.marketplace_inspect(seller, list_id=list_id)
     parsed = json.loads(out)
     assert parsed["seller"] == "seller-1"
@@ -563,12 +521,8 @@ async def test_inspect_unknown_returns_empty(ctx_factory) -> None:
 
 async def test_list_active_filters_by_item(ctx_factory) -> None:
     seller = await ctx_factory("seller-1", items={"鱼竿": 5, "鱼饵": 5})
-    rod_id = await trade_ops.marketplace_list(
-        seller, item="鱼竿", qty="2", price_each="10"
-    )
-    bait_id = await trade_ops.marketplace_list(
-        seller, item="鱼饵", qty="3", price_each="5"
-    )
+    rod_id = await trade_ops.marketplace_list(seller, item="鱼竿", qty="2", price_each="10")
+    bait_id = await trade_ops.marketplace_list(seller, item="鱼饵", qty="3", price_each="5")
     out = await trade_ops.marketplace_list_active(seller, item="鱼竿")
     assert rod_id in out
     assert bait_id not in out
@@ -637,9 +591,7 @@ async def test_list_active_filters_by_seller(ctx_factory) -> None:
     s2_lid = await trade_ops.marketplace_list(s2, item="鱼竿", qty="1", price_each="20")
     other_lid = await trade_ops.marketplace_list(s1, item="鱼竿", qty="1", price_each="30")
 
-    out = await trade_ops.marketplace_list_active(
-        s1, item="", seller="seller-1"
-    )
+    out = await trade_ops.marketplace_list_active(s1, item="", seller="seller-1")
     assert s1_lid in out
     assert other_lid in out
     assert s2_lid not in out
@@ -659,14 +611,10 @@ async def test_list_active_seller_filter_does_not_cap_at_20(ctx_factory) -> None
     s1 = await ctx_factory("seller-1", items={"鱼竿": 100})
     ids = []
     for _ in range(10):  # at the per-seller cap
-        lid = await trade_ops.marketplace_list(
-            s1, item="鱼竿", qty="1", price_each="10"
-        )
+        lid = await trade_ops.marketplace_list(s1, item="鱼竿", qty="1", price_each="10")
         ids.append(lid)
 
-    out = await trade_ops.marketplace_list_active(
-        s1, item="", seller="seller-1"
-    )
+    out = await trade_ops.marketplace_list_active(s1, item="", seller="seller-1")
     for lid in ids:
         assert lid in out, f"seller filter dropped {lid} (cap shouldn't apply)"
     # And the seller branch did NOT apply the 20-row global cap
@@ -685,9 +633,7 @@ async def test_list_active_seller_filter_empty_returns_friendly(ctx_factory) -> 
     """
     s1 = await ctx_factory("seller-1", items={"鱼竿": 5})
     await trade_ops.marketplace_list(s1, item="鱼竿", qty="1", price_each="10")
-    out = await trade_ops.marketplace_list_active(
-        s1, item="", seller="somebody-else"
-    )
+    out = await trade_ops.marketplace_list_active(s1, item="", seller="somebody-else")
     # Friendly hint pointing to the missing-data case.
     assert "TA" in out or "没" in out
 
@@ -713,9 +659,7 @@ async def test_list_active_agg_lazy_expires_stale_entries(ctx_factory, kv) -> No
     ghost entries forever.
     """
     s1 = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        s1, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(s1, item="鱼竿", qty="3", price_each="10")
     # Force the listing to be expired.
     blob = json.loads(await kv.read(_SCOPE_LISTING, "挂单", list_id, ""))
     blob["expire_at"] = 1
@@ -804,9 +748,7 @@ async def test_market_card_agg_uses_per_item_pastel_colors(ctx_factory) -> None:
 
     from PIL import Image
 
-    s1 = await ctx_factory(
-        "seller-1", items={"鱼竿": 10, "鱼饵": 6, "蛋壳": 3}
-    )
+    s1 = await ctx_factory("seller-1", items={"鱼竿": 10, "鱼饵": 6, "蛋壳": 3})
     await trade_ops.marketplace_list(s1, item="鱼竿", qty="3", price_each="50")
     await trade_ops.marketplace_list(s1, item="鱼饵", qty="6", price_each="5")
     await trade_ops.marketplace_list(s1, item="蛋壳", qty="3", price_each="100")
@@ -833,9 +775,7 @@ async def test_market_card_lazy_expires_during_render(ctx_factory, kv) -> None:
     the text-based list_active).
     """
     s1 = await ctx_factory("seller-1", items={"鱼竿": 3})
-    list_id = await trade_ops.marketplace_list(
-        s1, item="鱼竿", qty="3", price_each="10"
-    )
+    list_id = await trade_ops.marketplace_list(s1, item="鱼竿", qty="3", price_each="10")
     # Force the listing to be expired.
     blob = json.loads(await kv.read(_SCOPE_LISTING, "挂单", list_id, ""))
     blob["expire_at"] = 1
@@ -860,9 +800,7 @@ async def test_market_card_size_under_adapter_cap(ctx_factory) -> None:
     """
     from linling_adapter_onebot.adapter import _ASSET_INLINE_MAX_BYTES
 
-    s1 = await ctx_factory(
-        "seller-1", items={"鱼竿": 100, "鱼饵": 100, "蛋壳": 100}
-    )
+    s1 = await ctx_factory("seller-1", items={"鱼竿": 100, "鱼饵": 100, "蛋壳": 100})
     for _ in range(10):
         await trade_ops.marketplace_list(s1, item="鱼竿", qty="1", price_each="10")
     out = await trade_ops.market_card(s1, seller="")
@@ -908,9 +846,7 @@ def test_card_load_font_picks_bundled_noto_sc() -> None:
     assert bundled.endswith((".otf", ".ttf", ".ttc"))
     from PIL import ImageFont
 
-    font = trade_ops._card_load_font(
-        ToolCtx(kv=None, event=None, bot_id="t")
-    )
+    font = trade_ops._card_load_font(ToolCtx(kv=None, event=None, bot_id="t"))
     # FreeTypeFont = real TTF/OTF; default bitmap returns plain ImageFont.
     assert isinstance(font, ImageFont.FreeTypeFont)
 
@@ -924,7 +860,9 @@ def test_card_load_font_explicit_override_wins() -> None:
     # explicit path to silently swallow a real TTF, but we also
     # don't want a typo to nuke the card.
     ctx = ToolCtx(
-        kv=None, event=None, bot_id="t",
+        kv=None,
+        event=None,
+        bot_id="t",
         extras={"market_card_font": "/nonexistent/does_not_exist.ttf"},
     )
     font = trade_ops._card_load_font(ctx)
@@ -944,9 +882,7 @@ def test_card_load_font_chinese_width_is_nonzero() -> None:
     """
     from linling_tools_stdlib import trade_ops
 
-    font = trade_ops._card_load_font(
-        ToolCtx(kv=None, event=None, bot_id="t")
-    )
+    font = trade_ops._card_load_font(ToolCtx(kv=None, event=None, bot_id="t"))
     bbox = font.getbbox("鱼竿")
     width = bbox[2] - bbox[0]
     # Even a heavily-italicized 12-px Chinese glyph is ≥ 12 px
@@ -990,9 +926,7 @@ def test_market_card_cjk_renders_above_tofu_size() -> None:
     """
     from linling_tools_stdlib import trade_ops
 
-    font = trade_ops._card_load_font(
-        ToolCtx(kv=None, event=None, bot_id="t")
-    )
+    font = trade_ops._card_load_font(ToolCtx(kv=None, event=None, bot_id="t"))
     # The CJK glyph advance is the smoking-gun signal: bitmap
     # fallback returns 0 width for any non-ASCII string. Catch
     # the failure mode here even when bundled font is missing
@@ -1026,19 +960,34 @@ async def test_non_sqlite_backend_fails_closed(ctx_factory) -> None:
     """
 
     class _FakeKV:
-        async def read(self, *a, **k): return ""
-        async def write(self, *a, **k): return None
-        async def delete(self, *a, **k): return 0
-        async def keys(self, *a, **k): return []
-        async def files(self, *a, **k): return []
-        async def scopes(self, *a, **k): return []
-        async def rank_rows(self, *a, **k): return []
-        async def rank(self, *a, **k): return ""
-        async def close(self): return None
+        async def read(self, *a, **k):
+            return ""
+
+        async def write(self, *a, **k):
+            return None
+
+        async def delete(self, *a, **k):
+            return 0
+
+        async def keys(self, *a, **k):
+            return []
+
+        async def files(self, *a, **k):
+            return []
+
+        async def scopes(self, *a, **k):
+            return []
+
+        async def rank_rows(self, *a, **k):
+            return []
+
+        async def rank(self, *a, **k):
+            return ""
+
+        async def close(self):
+            return None
 
     seller = await ctx_factory("seller-1", items={"鱼竿": 3})
     bad_ctx = ToolCtx(kv=_FakeKV(), event=seller.event, bot_id="test-bot")
     with pytest.raises(RuntimeError, match="requires SqliteKVStore"):
-        await trade_ops.marketplace_list(
-            bad_ctx, item="鱼竿", qty="1", price_each="10"
-        )
+        await trade_ops.marketplace_list(bad_ctx, item="鱼竿", qty="1", price_each="10")

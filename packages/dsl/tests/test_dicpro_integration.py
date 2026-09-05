@@ -67,7 +67,9 @@ def _vm(kv: SqliteKVStore, **extras: object) -> VM:
     return VM(tool_registry=registry, kv=kv, bot_id="susu_test", extras=dict(extras))
 
 
-async def _run(source: str, kv: SqliteKVStore, ev: Event, *, captures=None, **extras: object) -> str:
+async def _run(
+    source: str, kv: SqliteKVStore, ev: Event, *, captures=None, **extras: object
+) -> str:
     """Parse + execute a single handler block; return concatenated text output.
 
     The DSL convention puts the trigger on line 1 and the body
@@ -689,9 +691,7 @@ async def test_delete_scope_then_file(kv) -> None:
     out = await _run("$删除 啊/活动系$", kv, _event("clean"))
     assert out == ""
 
-    leftover = await _run(
-        "v:$读 啊/活动系/锦囊 12345 NONE$\n%v%", kv, _event("查")
-    )
+    leftover = await _run("v:$读 啊/活动系/锦囊 12345 NONE$\n%v%", kv, _event("查"))
     assert leftover == "NONE"
 
 
@@ -951,11 +951,7 @@ async def test_json_get_with_dict_then_dotted_path(kv) -> None:
     word. The dispatcher splits the path on ``.`` so each segment
     descends one level (dict key, then list index).
     """
-    body = (
-        'a:{"0":["香蕉","苹果"],"1":["状元","冠军"]}\n'
-        "v:$JSON 获取 a 0.0$\n"
-        "%v%"
-    )
+    body = 'a:{"0":["香蕉","苹果"],"1":["状元","冠军"]}\nv:$JSON 获取 a 0.0$\n%v%'
     out = await _run(body, kv, _event("x"))
     assert out == "香蕉"
 
@@ -1364,11 +1360,7 @@ async def test_roster_builds_across_separate_handler_runs(kv) -> None:
     overwrite the first's payload because ``R`` would still hold ``[]``
     after ``$JSON 添加$`` returned.
     """
-    body = (
-        "R:$读 卧底/玩家 roster []$\n"
-        "$JSON 添加 R %QQ%$\n"
-        "$写 卧底/玩家 roster %R%$\n"
-    )
+    body = "R:$读 卧底/玩家 roster []$\n$JSON 添加 R %QQ%$\n$写 卧底/玩家 roster %R%$\n"
     await _run(body, kv, _event("加入", sender="p1"))
     await _run(body, kv, _event("加入", sender="p2"))
 
@@ -1387,17 +1379,13 @@ async def test_vote_tally_across_three_voters(kv) -> None:
     """
     for voter in ("v1", "v2", "v3"):
         await _run(
-            "V:$读 卧底/票 target []$\n"
-            "$JSON 添加 V %QQ%$\n"
-            "$写 卧底/票 target %V%$\n",
+            "V:$读 卧底/票 target []$\n$JSON 添加 V %QQ%$\n$写 卧底/票 target %V%$\n",
             kv,
             _event("投", sender=voter),
         )
 
     out = await _run(
-        "V:$读 卧底/票 target []$\n"
-        "n:$JSON 长度 V$\n"
-        "%V%/%n%",
+        "V:$读 卧底/票 target []$\nn:$JSON 长度 V$\n%V%/%n%",
         kv,
         _event("查", sender="x"),
     )
@@ -1510,9 +1498,7 @@ async def test_badges_handler_with_seeded_top_user(kv) -> None:
     plus has a 花标 emits all three badges in declaration order.
     """
     await _run(
-        "$写 啊/禁言系/妖力 u 999$\n"
-        "$写 啊/灵玉系/灵玉 u 999$\n"
-        "$写 啊/活动系/花标 u 1$\n",
+        "$写 啊/禁言系/妖力 u 999$\n$写 啊/灵玉系/灵玉 u 999$\n$写 啊/活动系/花标 u 1$\n",
         kv,
         _event("seed", sender="u"),
     )
@@ -1583,7 +1569,7 @@ async def test_weighted_random_coerces_numeric_value_to_text(kv) -> None:
     rate is < 1e-50. We rely on the value coming back as the string
     ``"1"`` (numeric values are str()-cast, not JSON-encoded).
     """
-    body = 'r:$概率随机 [1000000000,1,1] [1,2,3]$\n%r%'
+    body = "r:$概率随机 [1000000000,1,1] [1,2,3]$\n%r%"
     outs = {await _run(body, kv, _event("x")) for _ in range(20)}
     assert outs == {"1"}
 
@@ -1849,11 +1835,7 @@ def test_config_directive_at_file_head_parses() -> None:
 @pytest.mark.asyncio
 async def test_toss_bottle_appends_to_shared_array(kv) -> None:
     """Two ``扔瓶子`` events accumulate into a 2-element JSON array."""
-    body = (
-        "R:$读 漂流瓶/瓶子 R []$\n"
-        "$JSON 添加 R %括号1%$\n"
-        "$写 漂流瓶/瓶子 R %R%$\n"
-    )
+    body = "R:$读 漂流瓶/瓶子 R []$\n$JSON 添加 R %括号1%$\n$写 漂流瓶/瓶子 R %R%$\n"
     for content in ("hello-world", "another-bottle"):
         await _run(body, kv, _event("扔"), captures=[content])
 
@@ -2508,10 +2490,7 @@ async def test_concurrent_increment_baseline_lost_updates(kv) -> None:
     await _run("$写 t/c k 0$", kv, _event("seed"))
 
     async def inc() -> None:
-        body = (
-            "玉:$读 t/c k 0$\n"
-            "$写 t/c k [%玉%+1]$\n"
-        )
+        body = "玉:$读 t/c k 0$\n$写 t/c k [%玉%+1]$\n"
         await _run(body, kv, _event("inc"))
 
     await asyncio.gather(*(inc() for _ in range(10)))
@@ -2621,9 +2600,7 @@ async def test_three_level_callback_chain_propagates_text(kv) -> None:
     composes into a single string showing the call path.
     """
     helper = parse(
-        "[内部]C\nC-result\n"
-        "\n[内部]B\nv:$回调 C$\nB-saw-%v%\n"
-        "\n[内部]A\nv:$回调 B$\nA-saw-%v%\n",
+        "[内部]C\nC-result\n\n[内部]B\nv:$回调 C$\nB-saw-%v%\n\n[内部]A\nv:$回调 B$\nA-saw-%v%\n",
         strict=False,
     )
     h_by = {h.trigger: h for h in helper.handlers}
@@ -2915,9 +2892,7 @@ async def test_router_dispatches_dsl_handler_to_sink(kv) -> None:
     assert len(actions) == 1
     action = actions[0]
     assert action.kind == "reply"
-    assert any(
-        isinstance(s, TextSegment) and s.text == "PONG" for s in action.segments
-    )
+    assert any(isinstance(s, TextSegment) and s.text == "PONG" for s in action.segments)
 
 
 @pytest.mark.asyncio
@@ -2955,9 +2930,7 @@ async def test_router_emits_unknown_command_reply(kv) -> None:
     await asyncio.sleep(0.05)
 
     assert len(actions) == 1
-    text = "".join(
-        s.text for s in actions[0].segments if isinstance(s, TextSegment)
-    )
+    text = "".join(s.text for s in actions[0].segments if isinstance(s, TextSegment))
     assert text == "UNKNOWN"
 
 
@@ -3097,9 +3070,7 @@ async def test_router_writes_audit_entry_per_dispatch(kv) -> None:
     audit = CollectingAudit()
     script = parse("ping\nPONG\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
 
     async def sink(_: Action) -> None:
         pass
@@ -4038,9 +4009,7 @@ async def test_dicpro_every_handler_executes_cleanly(kv, tmp_path) -> None:
         try:
             # Captures cover ``%括号1..5%``; handlers that ignore them
             # see no harm.
-            await vm.execute_handler(
-                handler, ev, captures=["1", "2", "3", "4", "5"]
-            )
+            await vm.execute_handler(handler, ev, captures=["1", "2", "3", "4", "5"])
         except Exception as exc:
             failures.append((handler.trigger, f"{type(exc).__name__}: {exc}"))
 
@@ -4396,9 +4365,8 @@ async def test_every_tool_survives_arg_fuzz(kv, tmp_path) -> None:
             except Exception as exc:
                 failures.append((tname, shape, f"{type(exc).__name__}: {exc}"))
 
-    assert not failures, (
-        "tool-arg fuzz raised unexpectedly: "
-        + "\n".join(f"  {t!r} shape={s!r}: {m}" for t, s, m in failures[:20])
+    assert not failures, "tool-arg fuzz raised unexpectedly: " + "\n".join(
+        f"  {t!r} shape={s!r}: {m}" for t, s, m in failures[:20]
     )
 
 
@@ -4490,10 +4458,7 @@ async def test_double_percent_does_not_form_var(kv) -> None:
 async def test_func_arg_interpolation_works_for_kv_key(kv) -> None:
     """Variable resolved inside func-call arg lands as the literal key."""
     out = await _run(
-        "k:hello\n"
-        "$写 t/x %k% world$\n"
-        "r:$读 t/x hello NONE$\n"
-        "%r%",
+        "k:hello\n$写 t/x %k% world$\nr:$读 t/x hello NONE$\n%r%",
         kv,
         _event("x"),
     )
@@ -4504,10 +4469,7 @@ async def test_func_arg_interpolation_works_for_kv_key(kv) -> None:
 async def test_arith_in_func_call_arg(kv) -> None:
     """``$写 t/x [%i%] v$`` evaluates ``[%i%]`` to ``"42"`` before writing."""
     out = await _run(
-        "i:42\n"
-        "$写 t/x [%i%] v$\n"
-        "r:$读 t/x 42 NONE$\n"
-        "%r%",
+        "i:42\n$写 t/x [%i%] v$\nr:$读 t/x 42 NONE$\n%r%",
         kv,
         _event("x"),
     )
@@ -4567,15 +4529,11 @@ async def test_router_serializes_same_sender_events_no_lost_updates(kv) -> None:
     from linling_dsl.dispatcher import DslCommandDispatcher
 
     script = parse(
-        "inc\n"
-        "玉:$读 t/c %QQ% 0$\n"
-        "$写 t/c %QQ% [%玉%+1]$\n",
+        "inc\n玉:$读 t/c %QQ% 0$\n$写 t/c %QQ% [%玉%+1]$\n",
         strict=False,
     )
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
 
     async def sink(_: Action) -> None:
         pass
@@ -4619,9 +4577,7 @@ async def test_router_serializes_same_sender_events_no_lost_updates(kv) -> None:
 
 
 @pytest.mark.asyncio
-async def test_production_literal_triggers_route_through_full_pipeline(
-    kv, tmp_path
-) -> None:
+async def test_production_literal_triggers_route_through_full_pipeline(kv, tmp_path) -> None:
     """Every literal (non-regex) public trigger from dicpro.txt dispatches
     through Bus → Router → Classifier → DslCommandDispatcher → Sink with
     zero exceptions. ~150 triggers in the live corpus.
@@ -4730,15 +4686,11 @@ async def test_router_stress_per_sender_isolation(kv) -> None:
     from linling_dsl.dispatcher import DslCommandDispatcher
 
     script = parse(
-        "inc\n"
-        "玉:$读 t/c %QQ% 0$\n"
-        "$写 t/c %QQ% [%玉%+1]$\n",
+        "inc\n玉:$读 t/c %QQ% 0$\n$写 t/c %QQ% [%玉%+1]$\n",
         strict=False,
     )
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
 
     async def sink(_: Action) -> None:
         pass
@@ -4811,9 +4763,7 @@ async def test_send_temp_message_routes_to_dm_scope(kv) -> None:
     action = captured[0]
     assert action.target.kind == "dm"
     assert action.target.id == "12345"
-    assert any(
-        isinstance(s, TextSegment) and s.text == "hello" for s in action.segments
-    )
+    assert any(isinstance(s, TextSegment) and s.text == "hello" for s in action.segments)
 
 
 # ---------------------------------------------------------------------------
@@ -4853,9 +4803,7 @@ async def test_onebot_poke_dispatches_zhuo_yi_zhuo_handler_e2e(kv) -> None:
         strict=False,
     )
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="bot1", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="bot1", extras={})
 
     actions: list[Action] = []
 
@@ -4916,9 +4864,7 @@ async def test_onebot_poke_dispatch_with_no_zhuo_yi_zhuo_handler_falls_through_s
     # No ``[戳一戳]`` handler in the script.
     script = parse("hello\nworld\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="bot1", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="bot1", extras={})
 
     actions: list[Action] = []
     chat_calls: list[Event] = []
@@ -5061,8 +5007,7 @@ async def test_undercover_vote_tie_triggers_revote_branch(kv) -> None:
 
     # Seed two players with identical vote counts.
     await _run(
-        "$写 g/卧底/被投票 susp1 2$\n"
-        "$写 g/卧底/被投票 susp2 2$\n",
+        "$写 g/卧底/被投票 susp1 2$\n$写 g/卧底/被投票 susp2 2$\n",
         kv,
         _event("seed"),
     )
@@ -5104,8 +5049,8 @@ async def test_sqlite_scheduler_persists_across_bot_restart(tmp_path) -> None:
         "bot_id: bot1\n"
         "name: tester\n"
         "storage:\n"
-        "  kv: \":memory:\"\n"
-        f"  scheduler: \"sqlite:///{db_path}\"\n"
+        '  kv: ":memory:"\n'
+        f'  scheduler: "sqlite:///{db_path}"\n'
         "rules:\n"
         '  - "rules/**/*.ling"\n'
     )
@@ -5118,9 +5063,7 @@ async def test_sqlite_scheduler_persists_across_bot_restart(tmp_path) -> None:
     bot1 = await bootstrap_bot(cfg, base_dir=tmp_path)
     try:
         assert bot1.scheduler is not None
-        bot1.scheduler.schedule(
-            after_seconds=0.3, handler_name="ping", bot_id="bot1"
-        )
+        bot1.scheduler.schedule(after_seconds=0.3, handler_name="ping", bot_id="bot1")
         # Confirm the task landed in the durable store.
         assert bot1.scheduler.pending_count == 1
     finally:
@@ -5156,15 +5099,8 @@ async def test_sqlite_scheduler_persists_across_bot_restart(tmp_path) -> None:
                 break
             await asyncio.sleep(0.1)
 
-        emitted = [
-            s.text
-            for a in captured
-            for s in a.segments
-            if isinstance(s, TextSegment)
-        ]
-        assert "PONG" in emitted, (
-            f"expected scheduler-fired PONG after restart, got {emitted!r}"
-        )
+        emitted = [s.text for a in captured for s in a.segments if isinstance(s, TextSegment)]
+        assert "PONG" in emitted, f"expected scheduler-fired PONG after restart, got {emitted!r}"
     finally:
         await bot2.stop()
 
@@ -5189,8 +5125,8 @@ async def test_sqlite_scheduler_cancel_persists_across_restart(tmp_path) -> None
         "bot_id: bot1\n"
         "name: tester\n"
         "storage:\n"
-        "  kv: \":memory:\"\n"
-        f"  scheduler: \"sqlite:///{db_path}\"\n"
+        '  kv: ":memory:"\n'
+        f'  scheduler: "sqlite:///{db_path}"\n'
         "rules:\n"
         '  - "rules/**/*.ling"\n'
     )
@@ -5201,9 +5137,7 @@ async def test_sqlite_scheduler_cancel_persists_across_restart(tmp_path) -> None
     bot1 = await bootstrap_bot(cfg, base_dir=tmp_path)
     try:
         assert bot1.scheduler is not None
-        tid = bot1.scheduler.schedule(
-            after_seconds=0.2, handler_name="ping", bot_id="bot1"
-        )
+        tid = bot1.scheduler.schedule(after_seconds=0.2, handler_name="ping", bot_id="bot1")
         cancelled = bot1.scheduler.cancel(tid)
         assert cancelled is True
     finally:
@@ -5428,10 +5362,7 @@ async def test_callback_with_handler_name_containing_brackets(kv) -> None:
 @pytest.mark.asyncio
 async def test_blackjack_raise_bet_atomic_step(kv) -> None:
     """``加注50`` atomically: 灵玉 -= 50, 奖池 += 50, 加注量 = 50."""
-    seed = (
-        "$写 啊/灵玉系/灵玉 player 1000$\n"
-        "$写 啊/娱乐系/黑杰克 奖池g 100$\n"
-    )
+    seed = "$写 啊/灵玉系/灵玉 player 1000$\n$写 啊/娱乐系/黑杰克 奖池g 100$\n"
     await _run(seed, kv, _event("seed", sender="player", group="g"))
 
     body = """玉:$读 啊/灵玉系/灵玉 %QQ% 0$
@@ -5460,8 +5391,7 @@ RAISED-%括号1%"""
 async def test_blackjack_raise_insufficient_balance_rejects(kv) -> None:
     """``加注50`` with 灵玉=10 → "不足" message; KV unchanged."""
     await _run(
-        "$写 啊/灵玉系/灵玉 player 10$\n"
-        "$写 啊/娱乐系/黑杰克 奖池g 100$\n",
+        "$写 啊/灵玉系/灵玉 player 10$\n$写 啊/娱乐系/黑杰克 奖池g 100$\n",
         kv,
         _event("seed", sender="player", group="g"),
     )
@@ -5519,18 +5449,12 @@ async def test_scheduler_fires_internal_with_positional_and_regex_captures(
     rules_dir = tmp_path / "rules"
     rules_dir.mkdir()
     (rules_dir / "regex.ling").write_text(
-        "kick\n$调用 0 echo-suffix arg2 arg3$\n\n"
-        "[内部]echo-(.*)\nGOT_%括号1%_%括号2%_%括号3%\n",
+        "kick\n$调用 0 echo-suffix arg2 arg3$\n\n[内部]echo-(.*)\nGOT_%括号1%_%括号2%_%括号3%\n",
         encoding="utf-8",
     )
     cfg_path = tmp_path / "bot.yaml"
     cfg_path.write_text(
-        "bot_id: bot1\n"
-        "name: tester\n"
-        "storage:\n"
-        "  kv: \":memory:\"\n"
-        "rules:\n"
-        '  - "rules/**/*.ling"\n',
+        'bot_id: bot1\nname: tester\nstorage:\n  kv: ":memory:"\nrules:\n  - "rules/**/*.ling"\n',
         encoding="utf-8",
     )
     cfg = BotConfig.from_yaml(cfg_path)
@@ -5564,15 +5488,11 @@ async def test_scheduler_fires_internal_with_positional_and_regex_captures(
         await bot.bus.publish(ev)
         # Wait for kick handler + scheduler tick + inner dispatch.
         for _ in range(40):
-            emitted = [
-                s.text for a in captured for s in a.segments if isinstance(s, _TS)
-            ]
+            emitted = [s.text for a in captured for s in a.segments if isinstance(s, _TS)]
             if any("GOT_suffix_arg2_arg3" in t for t in emitted):
                 break
             await asyncio.sleep(0.1)
-        emitted = [
-            s.text for a in captured for s in a.segments if isinstance(s, _TS)
-        ]
+        emitted = [s.text for a in captured for s in a.segments if isinstance(s, _TS)]
         assert any("GOT_suffix_arg2_arg3" in t for t in emitted), (
             f"expected GOT_suffix_arg2_arg3, got {emitted!r}"
         )
@@ -5629,9 +5549,7 @@ async def test_router_routes_unmatched_text_to_chat_dispatcher(kv) -> None:
     # Script has only a literal ``ping`` trigger — ``hello`` won't match.
     script = parse("ping\nPONG\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
     chats = _ChatProbeDispatcher()
 
     actions: list[Action] = []
@@ -5677,9 +5595,7 @@ async def test_router_dsl_match_does_not_call_chat(kv) -> None:
 
     script = parse("ping\nPONG\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
     chats = _ChatProbeDispatcher()
 
     actions: list[Action] = []
@@ -5728,9 +5644,7 @@ async def test_router_catch_all_handler_intercepts_chat_path(kv) -> None:
 
     script = parse("[\\s\\S]*\nCATCH:%参数-1%\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
     chats = _ChatProbeDispatcher()
 
     actions: list[Action] = []
@@ -5973,9 +5887,7 @@ async def test_cancel_sets_session_cancel_event(kv) -> None:
 
     script = parse("ping\nPONG\n", strict=False)
     classifier = MessageClassifier(script, command_prefixes=("/",))
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
     chats = _ChatProbeDispatcher()
     actions: list[Action] = []
 
@@ -6030,12 +5942,7 @@ async def test_reload_rules_swaps_handler_text(tmp_path) -> None:
 
     cfg_path = tmp_path / "bot.yaml"
     cfg_path.write_text(
-        "bot_id: bot1\n"
-        "name: tester\n"
-        "storage:\n"
-        "  kv: \":memory:\"\n"
-        "rules:\n"
-        '  - "rules/**/*.ling"\n',
+        'bot_id: bot1\nname: tester\nstorage:\n  kv: ":memory:"\nrules:\n  - "rules/**/*.ling"\n',
         encoding="utf-8",
     )
     cfg = BotConfig.from_yaml(cfg_path)
@@ -6092,9 +5999,7 @@ async def test_reload_rules_swaps_handler_text(tmp_path) -> None:
         await bot.bus.publish(ev2)
         await asyncio.sleep(0.1)
 
-        all_texts = [
-            s.text for a in captured for s in a.segments if isinstance(s, TextSegment)
-        ]
+        all_texts = [s.text for a in captured for s in a.segments if isinstance(s, TextSegment)]
         assert any("RELOADED" in t for t in all_texts), (
             f"expected RELOADED in {all_texts!r} after reload"
         )
@@ -6174,15 +6079,22 @@ async def test_send_falls_through_silently_for_unwired_platform(kv) -> None:
             return None
 
     rec_a = _Rec()
+
     # Only adapter A is wired; the event arrives from platform "test_b".
     # build_sink returns a sink that uses _multi-platform routing because
     # we register two adapters; test_b has no handler. Use a dummy
     # second adapter to force the multi-routing path.
     class _DummyRec:
         platform = "other"
-        async def run(self): return None
-        async def send(self, a): pass
-        async def stop(self): return None
+
+        async def run(self):
+            return None
+
+        async def send(self, a):
+            pass
+
+        async def stop(self):
+            return None
 
     sink = build_sink([rec_a, _DummyRec()])
 
@@ -6233,9 +6145,7 @@ async def test_audit_chat_verdict_emits_correct_entry(kv) -> None:
     # Empty script → no DSL match → chat verdict.
     script = parse("ping\nPONG\n", strict=False)
     classifier = MessageClassifier(script)
-    dispatcher = DslCommandDispatcher(
-        registry=registry, kv=kv, bot_id="susu_test", extras={}
-    )
+    dispatcher = DslCommandDispatcher(registry=registry, kv=kv, bot_id="susu_test", extras={})
     chats = _ChatProbeDispatcher()
 
     async def sink(_: Action) -> None:
@@ -6395,11 +6305,7 @@ async def test_send_then_callback_in_same_handler(kv) -> None:
     helper = parse("[内部]formatter\n[FORMATTED]\n", strict=False)
     h_by = {h.trigger: h for h in helper.handlers}
 
-    body = (
-        "$发送 群 msg 12345 outbound-text$\n"
-        "r:$回调 formatter$\n"
-        "GOT-%r%"
-    )
+    body = "$发送 群 msg 12345 outbound-text$\nr:$回调 formatter$\nGOT-%r%"
     ev = Event(
         id="e",
         platform="onebot",
@@ -6480,12 +6386,7 @@ async def test_reload_with_one_bad_file_keeps_old_handlers_for_others(
 
     cfg_path = tmp_path / "bot.yaml"
     cfg_path.write_text(
-        "bot_id: bot1\n"
-        "name: tester\n"
-        "storage:\n"
-        "  kv: \":memory:\"\n"
-        "rules:\n"
-        '  - "rules/**/*.ling"\n',
+        'bot_id: bot1\nname: tester\nstorage:\n  kv: ":memory:"\nrules:\n  - "rules/**/*.ling"\n',
         encoding="utf-8",
     )
     cfg = BotConfig.from_yaml(cfg_path)
@@ -6506,9 +6407,7 @@ async def test_reload_with_one_bad_file_keeps_old_handlers_for_others(
         report = await bot.reload_rules()
         assert report.applied is True
         # No errors when both files parse.
-        assert report.errors == [] or all(
-            "warning" in str(e).lower() for e in report.errors
-        )
+        assert report.errors == [] or all("warning" in str(e).lower() for e in report.errors)
         # Both triggers exist in the new script.
         triggers = {h.trigger for h in bot.script.handlers}
         assert "ping" in triggers

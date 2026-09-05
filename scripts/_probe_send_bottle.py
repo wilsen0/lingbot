@@ -44,7 +44,10 @@ async def main(user_id: int) -> None:
                         "message_type": "private",
                         "user_id": user_id,
                         "message": [
-                            {"type": "text", "data": {"text": "[漂流瓶 mixed test]\n捡到了一个瓶子"}},
+                            {
+                                "type": "text",
+                                "data": {"text": "[漂流瓶 mixed test]\n捡到了一个瓶子"},
+                            },
                             {"type": "image", "data": {"file": encoded}},
                             {"type": "image", "data": {"file": REMOTE_IMAGE}},
                         ],

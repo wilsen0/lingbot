@@ -362,7 +362,7 @@ class TestImageText:
         assert td is not None
         path = await td.fn(ctx, content="hello\nworld", font_size=16, padding=10)
         p = Path(path)
-        assert p.exists()  # noqa: ASYNC240 — cheap local FS check
+        assert p.exists()
         assert p.suffix == ".png"
         with Image.open(p) as img:
             assert img.format == "PNG"
@@ -404,9 +404,7 @@ class TestGachaImage:
         assert td is not None
         assert td.dsl_name == "扭蛋图"
 
-    async def test_ten_pull_with_ur_renders_png(
-        self, tmp_path: Path, ctx: ToolCtx
-    ) -> None:
+    async def test_ten_pull_with_ur_renders_png(self, tmp_path: Path, ctx: ToolCtx) -> None:
         from PIL import Image
 
         ctx.extras["image_text_cache_dir"] = tmp_path
@@ -434,6 +432,7 @@ class TestGachaImage:
         assert result.startswith("base64://")
         import base64 as _b64
         import io
+
         png = _b64.b64decode(result[len("base64://") :])
         with Image.open(io.BytesIO(png)) as img:
             assert img.format == "PNG"
@@ -443,9 +442,7 @@ class TestGachaImage:
             assert img.size[0] >= 800
             assert img.size[1] >= 1100  # hero strip present
 
-    async def test_parses_literal_backslash_n_record(
-        self, tmp_path: Path, ctx: ToolCtx
-    ) -> None:
+    async def test_parses_literal_backslash_n_record(self, tmp_path: Path, ctx: ToolCtx) -> None:
         """``%录%`` round-trips through KV with literal ``\\n``; parser must accept."""
         from linling_tools_stdlib.gacha_image import _parse_record
 
@@ -530,6 +527,7 @@ class TestGachaImage:
         assert result.startswith("base64://")
         import base64 as _b64
         import io
+
         png = _b64.b64decode(result[len("base64://") :])
         with Image.open(io.BytesIO(png)) as img:
             # 50-cell layout is wider than the 10-cell one (10 cols vs 5).
@@ -585,16 +583,12 @@ class TestAdapterRpc:
         assert await td.fn(ctx, field="font") == "default"
         assert await td.fn(ctx, field="missing", default="fallback") == "fallback"
 
-    async def test_group_list_returns_empty_array_without_adapter(
-        self, ctx: ToolCtx
-    ) -> None:
+    async def test_group_list_returns_empty_array_without_adapter(self, ctx: ToolCtx) -> None:
         td = registry.get("group_list")
         assert td is not None
         assert await td.fn(ctx) == "[]"
 
-    async def test_group_list_returns_json_array_via_adapter(
-        self, ctx: ToolCtx
-    ) -> None:
+    async def test_group_list_returns_json_array_via_adapter(self, ctx: ToolCtx) -> None:
         adapter = MagicMock()
         adapter.rpc = AsyncMock(
             return_value=[
@@ -609,7 +603,6 @@ class TestAdapterRpc:
         result = await td.fn(ctx)
         assert json.loads(result) == ["754800438", "11111"]
         adapter.rpc.assert_awaited_once_with("get_group_list")
-
 
     async def test_group_add_request_approves_via_flag(self, ctx: ToolCtx) -> None:
         """``$进群审核 group user 2001 11 reason$`` resolves the request via flag."""

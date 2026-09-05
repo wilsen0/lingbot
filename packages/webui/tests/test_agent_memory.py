@@ -109,9 +109,7 @@ def test_memory_prefers_wired_provider(app_client) -> None:
     body = r.json()
     assert body["short_term"] == [{"role": "user", "content": "真实历史"}]
     assert body["summary"] == "压缩摘要"
-    assert body["long_term"] == [
-        {"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}
-    ]
+    assert body["long_term"] == [{"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}]
 
 
 def test_memory_rejects_cross_user_for_non_superadmin(app_client) -> None:
@@ -162,6 +160,4 @@ def test_memory_superadmin_can_query_explicit_user(app_client) -> None:
 
     assert r.status_code == 200
     assert seen == {"user_id": "u1", "scope_id": "g1"}
-    assert r.json()["long_term"] == [
-        {"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}
-    ]
+    assert r.json()["long_term"] == [{"qq": "u1", "name": "小明", "profile": "喜欢钓鱼"}]

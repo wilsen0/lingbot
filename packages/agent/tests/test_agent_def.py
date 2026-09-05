@@ -157,9 +157,7 @@ provider_config:
     assert a.provider_config.base_url == "https://example.test/v1"
 
 
-def test_from_yaml_supports_default_in_dollar_brace(
-    clean_env: None, tmp_path: Path
-) -> None:
+def test_from_yaml_supports_default_in_dollar_brace(clean_env: None, tmp_path: Path) -> None:
     """``${VAR:-default}`` falls back to the default when VAR is unset."""
     yaml_path = tmp_path / "agent.yaml"
     yaml_path.write_text(
@@ -176,9 +174,7 @@ provider_config:
     assert a.provider_config.base_url == "https://default.test/v1"
 
 
-def test_from_yaml_unset_var_without_default_leaves_token(
-    clean_env: None, tmp_path: Path
-) -> None:
+def test_from_yaml_unset_var_without_default_leaves_token(clean_env: None, tmp_path: Path) -> None:
     """``${UNSET_VAR}`` (no default, no value) leaves the token in place.
 
     The agent layer doesn't gate on it — the provider will attempt
@@ -226,3 +222,77 @@ provider_config:
         "User-Agent": "linling-agent/1.0",
         "X-Org-Id": "tu-shan",
     }
+
+
+# ---------------------------------------------------------------------------
+# vision_enabled — YAML vs LINLING_VISION_ENABLED env fallback
+# ---------------------------------------------------------------------------
+
+
+def _unset_vision_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LINLING_VISION_ENABLED", raising=False)
+
+
+def test_vision_enabled_env_fallback_true(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No YAML key + LINLING_VISION_ENABLED=true → vision on (operable from .env)."""
+    monkeypatch.setenv("LINLING_VISION_ENABLED", "true")
+    a = AgentDef.from_dict({"name": "test"})
+    assert a.vision_enabled is True
+
+
+def test_vision_enabled_env_fallback_false(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No YAML key + unset env → vision off (the historical default)."""
+    _unset_vision_env(monkeypatch)
+    a = AgentDef.from_dict({"name": "test"})
+    assert a.vision_enabled is False
+
+
+def test_vision_enabled_string_forms(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """String spellings (env expansion output) parse correctly — never bool("false")==True."""
+    _unset_vision_env(monkeypatch)
+    assert AgentDef.from_dict({"name": "t", "vision_enabled": "false"}).vision_enabled is False
+    assert AgentDef.from_dict({"name": "t", "vision_enabled": "true"}).vision_enabled is True
+    assert AgentDef.from_dict({"name": "t", "vision_enabled": "TRUE"}).vision_enabled is True
+    assert AgentDef.from_dict({"name": "t", "vision_enabled": 1}).vision_enabled is True
+    assert AgentDef.from_dict({"name": "t", "vision_enabled": 0}).vision_enabled is False
+
+
+def test_vision_enabled_yaml_interpolation_form(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``vision_enabled: ${LINLING_VISION_ENABLED:-false}`` works end-to-end.
+
+    Env expansion (from_yaml) turns the YAML literal into the string
+    ``"false"``; coerce_bool must parse that to False — plain
+    ``bool("false")`` would flip it to True.
+    """
+    monkeypatch.setenv("LINLING_VISION_ENABLED", "false")
+    yaml_path = tmp_path / "agent.yaml"
+    yaml_path.write_text(
+        "name: test\nvision_enabled: ${LINLING_VISION_ENABLED:-false}\n",
+        encoding="utf-8",
+    )
+    assert AgentDef.from_yaml(yaml_path).vision_enabled is False
+
+
+def test_vision_enabled_yaml_wins_over_env(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit YAML value takes precedence over the environment variable."""
+    monkeypatch.setenv("LINLING_VISION_ENABLED", "true")
+    a = AgentDef.from_dict({"name": "test", "vision_enabled": False})
+    assert a.vision_enabled is False
+
+
+def test_vision_enabled_invalid_value_raises(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Garbage boolean values fail loudly instead of silently flipping on."""
+    _unset_vision_env(monkeypatch)
+    with pytest.raises(ValueError):
+        AgentDef.from_dict({"name": "test", "vision_enabled": "banana"})
+    monkeypatch.setenv("LINLING_VISION_ENABLED", "banana")
+    with pytest.raises(ValueError):
+        AgentDef.from_dict({"name": "test"})

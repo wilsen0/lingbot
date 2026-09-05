@@ -13,7 +13,7 @@ Android + QRSpeed 中文 DSL 机器人迁移成一个标准化、可跨 IM 平�
 
 ## 状态
 
-处于 P0 骨架建设阶段。Spec 在 [`.kiro/specs/linling/`](./.kiro/specs/linling/)。
+内核、DSL 引擎、LLM Agent 运行时、WebUI 控制台与 QQ 适配器均已就绪。详细设计与演进规划参见 [`.kiro/specs/linling/`](./.kiro/specs/linling/)。
 
 ## 包结构
 
@@ -21,12 +21,13 @@ Android + QRSpeed 中文 DSL 机器人迁移成一个标准化、可跨 IM 平�
 packages/
 ├── core/             # 内核：事件、工具注册表、路由、存储、调度
 ├── dsl/              # DSL 解析器 + 虚拟机 + 迁移器
-├── agent/            # Agent 框架：LLM 抽象、记忆、工具调用
+├── agent/            # Agent 框架：LLM 抽象、三层记忆、注意力探针
 ├── adapters/
-│   ├── onebot/       # QQ 适配器（OneBot v11）
+│   ├── onebot/       # QQ 适配器（OneBot v11 / LLBot）
 │   └── cli/          # 本地终端调试适配器
-├── tools-stdlib/     # 官方工具集
-└── cli/              # `linling` 命令行
+├── tools-stdlib/     # 标准工具库（KV、HTTP、字符串、交易集市等）
+├── webui/            # WebUI 管理面板（FastAPI + Vue 3 SPA）
+└── cli/              # `linling` 命令行与服务组装
 ```
 
 ## 开发
@@ -196,7 +197,15 @@ uv run linling serve webui --bot bot/bot.yaml --host 0.0.0.0 --port 8787
 
 ## 文档
 
-- [技术架构 / Architecture](docs/architecture.md) — 当前真实运行的组件与数据流
-- [Requirements](.kiro/specs/linling/requirements.md)
-- [Design](.kiro/specs/linling/design.md)
-- [Tasks](.kiro/specs/linling/tasks.md)
+- **[文档中心 / Documentation Hub](docs/README.md)** — 仓库完整文档导航与目录树
+- **[技术架构 / Architecture](docs/architecture.md)** — 系统架构、组件协作、启动流与关键数据模型
+- **[DSL 规则语法 / Grammar](docs/dsl/grammar.md)** — `.ling` 中文规则文件语法、控制流与工具调用
+- **[WebUI 管理面板 / WebUI](packages/webui/README.md)** — Web 控制台、REST/WS 接口规范与开发指引
+- **[玩家摊位系统 / Marketplace](docs/marketplace.md)** — 玩家摆摊交易、Pillow 卡片动态绘制与 KV 事务
+- **[可观测性与监控 / Observability](docs/observability/README.md)** — Prometheus 监控指标、Grafana 大盘与告警
+- **设计与规范 / Specs** — [需求](.kiro/specs/linling/requirements.md) · [设计方案](.kiro/specs/linling/design.md) · [任务清单](.kiro/specs/linling/tasks.md)
+
+## 开源协议与免责声明
+
+- **开源协议**：本项目遵循 [MIT License](LICENSE)。
+- **免责与版权声明**：本项目为对话智能体与中文 DSL 解释器技术研究项目，遵循开源技术共享原则。仓库内示例 Bot（涂山苏苏）涉及的角色设定、立绘及像素图素材，其著作权与商标权归属于原作者及版权方（腾讯动漫等），仅用于本地功能演练与研究测试，严禁用于任何商业牟利或侵权行为。

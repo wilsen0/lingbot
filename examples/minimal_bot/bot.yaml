@@ -1,0 +1,20 @@
+bot_id: minimal_bot
+name: MiniBot
+
+# 数据目录：自动统一管理 ./data 下的 kv.sqlite, audit.sqlite, scheduler.sqlite
+storage:
+  data_dir: ./data
+
+adapters:
+  # CLI 交互适配器：无需 QQ 号和 OneBot，直接在终端打字交互
+  - kind: cli
+
+rules:
+  - rules/**/*.ling
+
+# AI 智能体配置：支持单文件内联模式
+agent:
+  model: ${LINLING_MODEL:-gpt-4o-mini}
+  system: |
+    你是一个友善、简洁的 AI 助手 MiniBot。
+    回答简明扼要，乐于助人。

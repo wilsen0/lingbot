@@ -48,13 +48,12 @@ from _susu_lib import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def svg_doc(viewbox: str, body: str, *, defs: str = "",
-            label: str = "") -> str:
+def svg_doc(viewbox: str, body: str, *, defs: str = "", label: str = "") -> str:
     """Wrap ``body`` in a self-contained SVG document with our standard
     pixel-art rendering hints and the shared ``cheek`` gradient.
     """
     aria = f'role="img" aria-label="{label}"' if label else ""
-    return f'''<?xml version="1.0" encoding="UTF-8"?>
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="{viewbox}"
      shape-rendering="crispEdges" image-rendering="pixelated"
      {aria}>
@@ -63,7 +62,7 @@ def svg_doc(viewbox: str, body: str, *, defs: str = "",
   </defs>
 {body}
 </svg>
-'''
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +74,7 @@ def svg_doc(viewbox: str, body: str, *, defs: str = "",
 
 def gen_lingyu_icon() -> str:
     """The 灵玉 gem stand-alone, ~80×80 with sparkle."""
-    body = f'''
+    body = f"""
   <!-- soft halo -->
   <ellipse cx="40" cy="40" rx="34" ry="34" fill="#ffd0f0" opacity=".35"/>
   <g transform="translate(28 26)">
@@ -90,7 +89,7 @@ def gen_lingyu_icon() -> str:
       <animate attributeName="opacity" values="1;0;1" dur="2.4s" repeatCount="indefinite"/>
     </rect>
   </g>
-'''
+"""
     return svg_doc("0 0 80 80", body, label="灵玉宝石")
 
 
@@ -102,14 +101,14 @@ def gen_lingyu_icon() -> str:
 
 
 _DIGIT_STROKES = {
-    "0": [(0,0,4,1),(0,0,1,6),(3,0,1,6),(0,5,4,1)],
-    "1": [(2,0,1,6),(1,1,1,1),(1,5,3,1)],
-    "2": [(0,0,4,1),(3,1,1,2),(0,2,4,1),(0,3,1,2),(0,5,4,1)],
-    "3": [(0,0,4,1),(3,1,1,4),(1,2,2,1),(0,5,4,1)],
-    "4": [(0,0,1,3),(3,0,1,6),(0,2,4,1)],
-    "5": [(0,0,4,1),(0,1,1,2),(0,2,4,1),(3,3,1,2),(0,5,4,1)],
-    "6": [(0,0,4,1),(0,1,1,4),(0,2,4,1),(3,3,1,2),(0,5,4,1)],
-    "+": [(1,2,3,1),(2,1,1,3)],
+    "0": [(0, 0, 4, 1), (0, 0, 1, 6), (3, 0, 1, 6), (0, 5, 4, 1)],
+    "1": [(2, 0, 1, 6), (1, 1, 1, 1), (1, 5, 3, 1)],
+    "2": [(0, 0, 4, 1), (3, 1, 1, 2), (0, 2, 4, 1), (0, 3, 1, 2), (0, 5, 4, 1)],
+    "3": [(0, 0, 4, 1), (3, 1, 1, 4), (1, 2, 2, 1), (0, 5, 4, 1)],
+    "4": [(0, 0, 1, 3), (3, 0, 1, 6), (0, 2, 4, 1)],
+    "5": [(0, 0, 4, 1), (0, 1, 1, 2), (0, 2, 4, 1), (3, 3, 1, 2), (0, 5, 4, 1)],
+    "6": [(0, 0, 4, 1), (0, 1, 1, 4), (0, 2, 4, 1), (3, 3, 1, 2), (0, 5, 4, 1)],
+    "+": [(1, 2, 3, 1), (2, 1, 1, 3)],
 }
 
 
@@ -129,19 +128,19 @@ def gen_yufu_badge(n: int) -> str:
     grey to imply emptiness.
     """
     label = f"御妖符×{n}" if n < 6 else "御妖符×6+"
-    is_zero = (n == 0)
-    is_overflow = (n >= 6)
+    is_zero = n == 0
+    is_overflow = n >= 6
 
     base = "#fcd34d" if not is_zero else "#d8d8d8"
     base_dark = "#e0a92c" if not is_zero else "#a8a8a8"
     rune = "#a02030" if not is_zero else "#888"
     bg_grad_id = "yfbg"
-    defs = f'''
+    defs = f"""
     <linearGradient id="{bg_grad_id}" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"  stop-color="#fff5d8"/>
       <stop offset="100%" stop-color="#ffd6a8"/>
     </linearGradient>
-'''
+"""
 
     body = [
         f'<rect width="120" height="120" fill="url(#{bg_grad_id})"/>',
@@ -154,7 +153,7 @@ def gen_yufu_badge(n: int) -> str:
     for i in range(visible):
         ox = 24 + i * 6
         oy = 28 + (visible - 1 - i) * 6
-        body.append(f'''
+        body.append(f"""
   <g>
     <rect x="{ox}" y="{oy}" width="48" height="64" fill="{base}"/>
     <rect x="{ox}" y="{oy}" width="48" height="3" fill="{base_dark}"/>
@@ -174,15 +173,15 @@ def gen_yufu_badge(n: int) -> str:
     <rect x="{ox+12}" y="{oy+44}" width="24" height="1" fill="{rune}" opacity=".6"/>
     <rect x="{ox+14}" y="{oy+50}" width="20" height="1" fill="{rune}" opacity=".6"/>
   </g>
-''')
+""")
 
     # Count badge (top-right corner of the canvas)
     if not is_zero:
-        body.append(f'''
+        body.append(f"""
   <!-- count badge -->
   <circle cx="92" cy="28" r="14" fill="{PINK_LIGHT}"/>
   <circle cx="92" cy="28" r="14" fill="none" stroke="{PINK_DEEP}" stroke-width="2"/>
-''')
+""")
         if is_overflow:
             # 6+
             body.append(pixel_digit(85, 25, "6", "#fff"))
@@ -191,12 +190,12 @@ def gen_yufu_badge(n: int) -> str:
             body.append(pixel_digit(89, 25, str(n), "#fff"))
     else:
         # an X mark
-        body.append('''
+        body.append("""
   <circle cx="92" cy="28" r="14" fill="#888"/>
   <circle cx="92" cy="28" r="14" fill="none" stroke="#555" stroke-width="2"/>
   <rect x="86" y="22" width="12" height="2" fill="#fff" transform="rotate(45 92 28)"/>
   <rect x="86" y="22" width="12" height="2" fill="#fff" transform="rotate(-45 92 28)"/>
-''')
+""")
 
     return svg_doc("0 0 120 120", "\n".join(body), defs=defs, label=label)
 
@@ -212,16 +211,16 @@ def gen_rank_banner(kind: str) -> str:
     if kind == "财富":
         title = "财富排行榜"
         # gem icon left
-        icon_block = f'''
+        icon_block = f"""
   <g transform="translate(20 18)">
     {lingyu_gem(0, 0, scale=2)}
   </g>
-'''
+"""
         accent = "#ff8aa6"
     elif kind == "法力":
         title = "法力排行榜"
         # talisman icon
-        icon_block = '''
+        icon_block = """
   <g transform="translate(24 16)">
     <rect x="0" y="0" width="32" height="44" fill="#fcd34d"/>
     <rect x="0" y="0" width="32" height="2" fill="#e0a92c"/>
@@ -234,11 +233,11 @@ def gen_rank_banner(kind: str) -> str:
     <rect x="10" y="26" width="14" height="2" fill="#a02030" opacity=".7"/>
     <rect x="10" y="32" width="14" height="2" fill="#a02030" opacity=".7"/>
   </g>
-'''
+"""
         accent = "#ffe28a"
     else:  # 妖力
         title = "妖力排行榜"
-        icon_block = '''
+        icon_block = """
   <g transform="translate(20 14)">
     <!-- 妖力 aura swirl: orange with yellow center -->
     <circle cx="20" cy="24" r="18" fill="#ff8a3a" opacity=".5"/>
@@ -249,13 +248,13 @@ def gen_rank_banner(kind: str) -> str:
     <rect x="26" y="20" width="2" height="4" fill="#fff7c4"/>
     <rect x="18" y="30" width="4" height="2" fill="#fff7c4"/>
   </g>
-'''
+"""
         accent = "#ffb84a"
 
     # Stylised title rendered as pixel glyphs would be heavy — use a
     # simple text element with a CJK-friendly fallback. Browsers render
     # this alongside the vector graphics fine.
-    body = f'''
+    body = f"""
   <!-- backdrop -->
   <rect width="320" height="80" fill="#fff7e8"/>
   <rect width="320" height="80" fill="none" stroke="#a05a32" stroke-width="2"/>
@@ -287,7 +286,7 @@ def gen_rank_banner(kind: str) -> str:
     <rect x="304" y="64" width="2" height="2"/>
     <rect x="304" y="68" width="2" height="2"/>
   </g>
-'''
+"""
     return svg_doc("0 0 320 80", body, label=title)
 
 
@@ -297,7 +296,7 @@ def gen_rank_banner(kind: str) -> str:
 
 
 def gen_yufu_banner() -> str:
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff8d8"/>
     <stop offset="100%" stop-color="#ffd6a8"/>
@@ -321,7 +320,7 @@ def gen_yufu_banner() -> str:
   <text x="200" y="50" font-family="serif" font-size="32"
         font-weight="bold" text-anchor="middle"
         fill="{PINK_DEEP}">御妖符指南</text>
-'''
+"""
     return svg_doc("0 0 320 80", body, label="御妖符指南")
 
 
@@ -345,7 +344,7 @@ def gen_wallet_card(variant: str) -> str:
         accent = "#88c0e0"
         title = "我的灵玉"
         sub = ""
-    body = f'''
+    body = f"""
   <linearGradient id="wbg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff5fa"/>
     <stop offset="100%" stop-color="#ffe0ed"/>
@@ -360,7 +359,7 @@ def gen_wallet_card(variant: str) -> str:
         text-anchor="middle" fill="{PINK_DEEP}">{title}</text>
   <text x="138" y="60" font-family="serif" font-size="16"
         text-anchor="middle" fill="{accent}">{sub}</text>
-'''
+"""
     return svg_doc("0 0 220 80", body, label=title)
 
 
@@ -372,8 +371,7 @@ def gen_wallet_card(variant: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def torso_with_head(x: int, y: int, *, eye: str, mouth: str,
-                    blush: bool = True) -> str:
+def torso_with_head(x: int, y: int, *, eye: str, mouth: str, blush: bool = True) -> str:
     """Half-body Sūsū at (x,y). Bounding box ≈ 80×96.
 
     Layout: tail behind body → torso → head on top.
@@ -384,7 +382,7 @@ def torso_with_head(x: int, y: int, *, eye: str, mouth: str,
     # Torso (hanfu top)
     out.append(f'<g transform="translate({x+12} {y+44})">{hanfu_top(0, 0, w=60, h=32)}</g>')
     # Sleeves (just darker pink rectangles each side)
-    out.append(f'''
+    out.append(f"""
   <rect x="{x+0}" y="{y+50}" width="14" height="22" fill="{PINK}"/>
   <rect x="{x+0}" y="{y+50}" width="14" height="2" fill="{PINK_DARK}"/>
   <rect x="{x+0}" y="{y+70}" width="14" height="2" fill="{PINK_DARK}"/>
@@ -394,7 +392,7 @@ def torso_with_head(x: int, y: int, *, eye: str, mouth: str,
   <!-- white sleeve cuffs -->
   <rect x="{x+0}" y="{y+72}" width="14" height="6" fill="{WHITE}"/>
   <rect x="{x+72}" y="{y+72}" width="14" height="6" fill="{WHITE}"/>
-''')
+""")
     # Head — width 36, place centered above torso
     head_x = x + 18
     head_y = y + 4
@@ -407,13 +405,18 @@ def torso_with_head(x: int, y: int, *, eye: str, mouth: str,
 # ---------------------------------------------------------------------------
 
 
-def gen_emotion(name: str, *, eye: str, mouth: str,
-                accent: str = "#fff1e0",
-                accent_dark: str = "#ffd0d6",
-                ornaments: str = "") -> str:
+def gen_emotion(
+    name: str,
+    *,
+    eye: str,
+    mouth: str,
+    accent: str = "#fff1e0",
+    accent_dark: str = "#ffd0d6",
+    ornaments: str = "",
+) -> str:
     """A 200×220 emotion sprite of half-body Sūsū against a soft
     gradient circle. Optional `ornaments` SVG string is overlayed."""
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="{accent}"/>
     <stop offset="100%" stop-color="{accent_dark}"/>
@@ -424,7 +427,7 @@ def gen_emotion(name: str, *, eye: str, mouth: str,
     {torso_with_head(60, 60, eye=eye, mouth=mouth)}
   </g>
   {ornaments}
-'''
+"""
     return svg_doc("0 0 200 220", body, label=name)
 
 
@@ -436,7 +439,7 @@ def gen_emotion(name: str, *, eye: str, mouth: str,
 
 def gen_diaoyu_banner() -> str:
     """Fishing rod against pond water."""
-    body = '''
+    body = """
   <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#bce0ff"/>
     <stop offset="100%" stop-color="#7fc8ff"/>
@@ -471,13 +474,13 @@ def gen_diaoyu_banner() -> str:
   <text x="100" y="80" font-family="serif" font-size="32"
         font-weight="bold" text-anchor="middle" fill="#fff"
         stroke="#2d6a8c" stroke-width="2">🎣 鱼塘</text>
-'''
+"""
     return svg_doc("0 0 320 160", body, label="钓鱼鱼塘")
 
 
 def gen_woudi_banner() -> str:
     """Undercover game — masked silhouette + question mark."""
-    body = '''
+    body = """
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#3a3060"/>
     <stop offset="100%" stop-color="#5d4a8a"/>
@@ -504,13 +507,13 @@ def gen_woudi_banner() -> str:
         fill="#ff8aa6" opacity=".8">?</text>
   <text x="160" y="148" font-family="serif" font-size="24"
         font-weight="bold" text-anchor="middle" fill="#fff">谁是卧底</text>
-'''
+"""
     return svg_doc("0 0 320 160", body, label="卧底游戏")
 
 
 def gen_pickbottle() -> str:
     """Picking up a bottle on the beach — happy Sūsū holding bottle."""
-    bottle_inset = '''
+    bottle_inset = """
   <!-- bottle in hand at right side -->
   <g transform="translate(132 100)">
     <rect x="6" y="0" width="8" height="3" fill="#a06a3a"/>
@@ -522,7 +525,7 @@ def gen_pickbottle() -> str:
     <rect x="5" y="11" width="2" height="14" fill="#a3d3df"/>
     <rect x="13" y="11" width="2" height="14" fill="#5d8da0"/>
   </g>
-'''
+"""
     return gen_emotion(
         "捡到一个瓶子",
         eye="sparkle",
@@ -535,7 +538,7 @@ def gen_pickbottle() -> str:
 
 def gen_treasure_chest() -> str:
     """道具宝箱 — opened wooden chest with jewels overflowing."""
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#3a2c1a"/>
     <stop offset="100%" stop-color="#a0703a"/>
@@ -596,18 +599,18 @@ def gen_treasure_chest() -> str:
     <rect x="146" y="48" width="6" height="1"/>
     <rect x="149" y="44" width="1" height="6"/>
   </g>
-'''
+"""
     return svg_doc("0 0 200 160", body, label="道具宝箱")
 
 
 def gen_who_are_you() -> str:
     """`唉，你是？` — confused Sūsū tilting head with question mark."""
-    qmark = '''
+    qmark = """
   <text x="160" y="60" font-family="serif" font-size="48" font-weight="bold"
         fill="#ff8aa6">?</text>
   <text x="40" y="80" font-family="serif" font-size="32" font-weight="bold"
         fill="#ffb84a">?</text>
-'''
+"""
     return gen_emotion(
         "唉你是",
         eye="open",
@@ -620,7 +623,7 @@ def gen_who_are_you() -> str:
 
 def gen_lingyu_insufficient() -> str:
     """灵玉不足100 — gem with red X overlay."""
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff0e8"/>
     <stop offset="100%" stop-color="#ffd0c8"/>
@@ -636,13 +639,13 @@ def gen_lingyu_insufficient() -> str:
   </g>
   <text x="100" y="115" font-family="serif" font-size="14" font-weight="bold"
         text-anchor="middle" fill="{PINK_DEEP}">灵玉不足</text>
-'''
+"""
     return svg_doc("0 0 200 120", body, label="灵玉不足")
 
 
 def gen_jinyan_success() -> str:
     """禁言成功 — chain icon + sparkle."""
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff5e8"/>
     <stop offset="100%" stop-color="#ffd6a8"/>
@@ -676,13 +679,13 @@ def gen_jinyan_success() -> str:
   </g>
   <text x="100" y="130" font-family="serif" font-size="20" font-weight="bold"
         text-anchor="middle" fill="{PINK_DEEP}">禁言成功</text>
-'''
+"""
     return svg_doc("0 0 200 160", body, label="禁言成功")
 
 
 def gen_yunshi_card() -> str:
     """运势 sign — fortune slip with 卦 character."""
-    body = '''
+    body = """
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff8e8"/>
     <stop offset="100%" stop-color="#ffd6a8"/>
@@ -717,13 +720,13 @@ def gen_yunshi_card() -> str:
   <!-- tassel -->
   <rect x="86" y="190" width="6" height="20" fill="#d83a4d"/>
   <rect x="80" y="206" width="18" height="6" fill="#fcd34d"/>
-'''
+"""
     return svg_doc("0 0 180 220", body, label="运势")
 
 
 def gen_jibandash() -> str:
     """🦌羁绊+1 — soft sparkly heart with antlers ornament."""
-    body = f'''
+    body = f"""
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"  stop-color="#fff5fa"/>
     <stop offset="100%" stop-color="#ffd0e0"/>
@@ -758,7 +761,7 @@ def gen_jibandash() -> str:
         fill="{PINK_DEEP}">+1</text>
   <text x="100" y="140" font-family="serif" font-size="20" font-weight="bold"
         text-anchor="middle" fill="{PINK_DEEP}">🦌 羁绊</text>
-'''
+"""
     return svg_doc("0 0 200 160", body, label="羁绊+1")
 
 
@@ -769,39 +772,44 @@ def gen_jibandash() -> str:
 
 OUTPUTS: list[tuple[str, callable]] = [
     # icon
-    ("灵玉宝石.svg",   gen_lingyu_icon),
+    ("灵玉宝石.svg", gen_lingyu_icon),
     # 御妖符 inventory badges
-    ("御妖符0.svg",    lambda: gen_yufu_badge(0)),
-    ("御妖符1.svg",    lambda: gen_yufu_badge(1)),
-    ("御妖符2.svg",    lambda: gen_yufu_badge(2)),
-    ("御妖符3.svg",    lambda: gen_yufu_badge(3)),
-    ("御妖符4.svg",    lambda: gen_yufu_badge(4)),
-    ("御妖符5.svg",    lambda: gen_yufu_badge(5)),
-    ("御妖符6.svg",    lambda: gen_yufu_badge(6)),
+    ("御妖符0.svg", lambda: gen_yufu_badge(0)),
+    ("御妖符1.svg", lambda: gen_yufu_badge(1)),
+    ("御妖符2.svg", lambda: gen_yufu_badge(2)),
+    ("御妖符3.svg", lambda: gen_yufu_badge(3)),
+    ("御妖符4.svg", lambda: gen_yufu_badge(4)),
+    ("御妖符5.svg", lambda: gen_yufu_badge(5)),
+    ("御妖符6.svg", lambda: gen_yufu_badge(6)),
     # 排行榜 banners
     ("财富排行榜.svg", lambda: gen_rank_banner("财富")),
     ("法力排行榜.svg", lambda: gen_rank_banner("法力")),
     ("妖力排行榜.svg", lambda: gen_rank_banner("妖力")),
     # other banners
     ("御妖符指南.svg", gen_yufu_banner),
-    ("我的灵玉.svg",   lambda: gen_wallet_card("普通")),
+    ("我的灵玉.svg", lambda: gen_wallet_card("普通")),
     ("我的灵玉富.svg", lambda: gen_wallet_card("富")),
     ("我的灵玉浪漫.svg", lambda: gen_wallet_card("浪漫")),
     # scenes
-    ("钓鱼鱼塘.svg",   gen_diaoyu_banner),
-    ("卧底游戏.svg",   gen_woudi_banner),
+    ("钓鱼鱼塘.svg", gen_diaoyu_banner),
+    ("卧底游戏.svg", gen_woudi_banner),
     ("捡到一个瓶子.svg", gen_pickbottle),
-    ("道具宝箱.svg",   gen_treasure_chest),
-    ("唉你是.svg",     gen_who_are_you),
-    ("灵玉不足.svg",   gen_lingyu_insufficient),
-    ("禁言成功.svg",   gen_jinyan_success),
-    ("运势签.svg",     gen_yunshi_card),
-    ("羁绊加一.svg",   gen_jibandash),
+    ("道具宝箱.svg", gen_treasure_chest),
+    ("唉你是.svg", gen_who_are_you),
+    ("灵玉不足.svg", gen_lingyu_insufficient),
+    ("禁言成功.svg", gen_jinyan_success),
+    ("运势签.svg", gen_yunshi_card),
+    ("羁绊加一.svg", gen_jibandash),
     # emotion sprites
-    ("苏苏跳舞卖萌.svg", lambda: gen_emotion(
-        "跳舞卖萌", eye="closed", mouth="grin",
-        accent="#fff1d8", accent_dark="#ffc0d6",
-        ornaments='''
+    (
+        "苏苏跳舞卖萌.svg",
+        lambda: gen_emotion(
+            "跳舞卖萌",
+            eye="closed",
+            mouth="grin",
+            accent="#fff1d8",
+            accent_dark="#ffc0d6",
+            ornaments="""
   <g fill="#ffb6d4">
     <rect x="40"  y="36" width="3" height="3"/>
     <rect x="160" y="48" width="3" height="3"/>
@@ -812,24 +820,36 @@ OUTPUTS: list[tuple[str, callable]] = [
         font-weight="bold" fill="{PINK_DEEP}">♪</text>
   <text x="160" y="80" font-family="serif" font-size="22"
         font-weight="bold" fill="{PINK_DEEP}">♬</text>
-''',
-    )),
-    ("苏苏比心.svg", lambda: gen_emotion(
-        "比心心", eye="wink_left", mouth="heart",
-        accent="#ffe5ed", accent_dark="#ffb6d4",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏比心.svg",
+        lambda: gen_emotion(
+            "比心心",
+            eye="wink_left",
+            mouth="heart",
+            accent="#ffe5ed",
+            accent_dark="#ffb6d4",
+            ornaments="""
   <g fill="#ff5577">
     <rect x="22" y="60" width="4" height="4"/>
     <rect x="20" y="62" width="2" height="2"/>
     <rect x="174" y="100" width="4" height="4"/>
     <rect x="178" y="98" width="2" height="2"/>
   </g>
-''',
-    )),
-    ("苏苏吃糖.svg", lambda: gen_emotion(
-        "吃糖卖萌", eye="sparkle", mouth="o",
-        accent="#fff8d8", accent_dark="#ffd6a8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏吃糖.svg",
+        lambda: gen_emotion(
+            "吃糖卖萌",
+            eye="sparkle",
+            mouth="o",
+            accent="#fff8d8",
+            accent_dark="#ffd6a8",
+            ornaments="""
   <!-- candy (lollipop) at bottom-left -->
   <g transform="translate(30 130)">
     <rect x="6" y="0" width="2" height="22" fill="#fff"/>
@@ -837,57 +857,87 @@ OUTPUTS: list[tuple[str, callable]] = [
     <rect x="2" y="-12" width="10" height="10" fill="#ffb6d4"/>
     <rect x="4" y="-10" width="6" height="6" fill="#fff"/>
   </g>
-''',
-    )),
-    ("苏苏直接绑走.svg", lambda: gen_emotion(
-        "直接绑走", eye="sparkle", mouth="grin",
-        accent="#ffe0c8", accent_dark="#ff9aa8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏直接绑走.svg",
+        lambda: gen_emotion(
+            "直接绑走",
+            eye="sparkle",
+            mouth="grin",
+            accent="#ffe0c8",
+            accent_dark="#ff9aa8",
+            ornaments="""
   <!-- pink ribbon stretched diagonally -->
   <rect x="20" y="60" width="160" height="6" fill="#ff5577" transform="rotate(-15 100 60)"/>
   <rect x="20" y="60" width="160" height="2" fill="#a02030" transform="rotate(-15 100 60)"/>
-''',
-    )),
-    ("苏苏思考.svg", lambda: gen_emotion(
-        "萌苏思考", eye="open", mouth="line",
-        accent="#fff5d8", accent_dark="#ffd6a8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏思考.svg",
+        lambda: gen_emotion(
+            "萌苏思考",
+            eye="open",
+            mouth="line",
+            accent="#fff5d8",
+            accent_dark="#ffd6a8",
+            ornaments="""
   <text x="160" y="50" font-family="serif" font-size="32" font-weight="bold"
         fill="#a05a32">?</text>
   <g fill="#a05a32" opacity=".7">
     <circle cx="146" cy="80" r="3"/>
     <circle cx="156" cy="68" r="2"/>
   </g>
-''',
-    )),
-    ("苏苏推人.svg", lambda: gen_emotion(
-        "萌苏推人", eye="angry", mouth="pout",
-        accent="#fff0d8", accent_dark="#ff9aa8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏推人.svg",
+        lambda: gen_emotion(
+            "萌苏推人",
+            eye="angry",
+            mouth="pout",
+            accent="#fff0d8",
+            accent_dark="#ff9aa8",
+            ornaments="""
   <!-- swoosh lines -->
   <g fill="#a05a32" opacity=".5">
     <rect x="20" y="100" width="20" height="2"/>
     <rect x="22" y="106" width="14" height="2"/>
     <rect x="24" y="112" width="10" height="2"/>
   </g>
-''',
-    )),
-    ("苏苏喝汤.svg", lambda: gen_emotion(
-        "沉稳喝汤", eye="closed", mouth="o",
-        accent="#fff5d8", accent_dark="#e8c8a8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏喝汤.svg",
+        lambda: gen_emotion(
+            "沉稳喝汤",
+            eye="closed",
+            mouth="o",
+            accent="#fff5d8",
+            accent_dark="#e8c8a8",
+            ornaments="""
   <!-- soup bowl steam -->
   <g fill="#fff" opacity=".7">
     <rect x="98" y="36" width="2" height="6"/>
     <rect x="106" y="30" width="2" height="6"/>
     <rect x="92" y="30" width="2" height="6"/>
   </g>
-''',
-    )),
-    ("苏苏吃瓜.svg", lambda: gen_emotion(
-        "可爱吃瓜", eye="open", mouth="o",
-        accent="#fff5e0", accent_dark="#c8e8a8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏吃瓜.svg",
+        lambda: gen_emotion(
+            "可爱吃瓜",
+            eye="open",
+            mouth="o",
+            accent="#fff5e0",
+            accent_dark="#c8e8a8",
+            ornaments="""
   <!-- watermelon slice -->
   <g transform="translate(20 130)">
     <rect x="0" y="14" width="40" height="12" fill="#3aa05c"/>
@@ -899,12 +949,18 @@ OUTPUTS: list[tuple[str, callable]] = [
     <rect x="18" y="4" width="2" height="2" fill="#3a1c0a"/>
     <rect x="28" y="6" width="2" height="2" fill="#3a1c0a"/>
   </g>
-''',
-    )),
-    ("苏苏摸头.svg", lambda: gen_emotion(
-        "摸头", eye="closed", mouth="smile",
-        accent="#ffe5ed", accent_dark="#ffb6d4",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏摸头.svg",
+        lambda: gen_emotion(
+            "摸头",
+            eye="closed",
+            mouth="smile",
+            accent="#ffe5ed",
+            accent_dark="#ffb6d4",
+            ornaments="""
   <!-- gentle hand from above -->
   <g fill="#ffe2c4">
     <rect x="80" y="18" width="40" height="20"/>
@@ -923,20 +979,32 @@ OUTPUTS: list[tuple[str, callable]] = [
     <rect x="100" y="50" width="2" height="2"/>
     <rect x="98"  y="52" width="6" height="1"/>
   </g>
-''',
-    )),
-    ("苏苏盗图可耻.svg", lambda: gen_emotion(
-        "盗图可耻", eye="angry", mouth="grin",
-        accent="#ffe0d8", accent_dark="#ff8a8a",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏盗图可耻.svg",
+        lambda: gen_emotion(
+            "盗图可耻",
+            eye="angry",
+            mouth="grin",
+            accent="#ffe0d8",
+            accent_dark="#ff8a8a",
+            ornaments="""
   <text x="100" y="200" font-family="serif" font-size="18"
         font-weight="bold" text-anchor="middle" fill="#a02030">⚠ 盗图可耻 ⚠</text>
-''',
-    )),
-    ("苏苏没爱了.svg", lambda: gen_emotion(
-        "没爱了", eye="sad", mouth="pout",
-        accent="#e8e8f0", accent_dark="#a8a8c0",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏没爱了.svg",
+        lambda: gen_emotion(
+            "没爱了",
+            eye="sad",
+            mouth="pout",
+            accent="#e8e8f0",
+            accent_dark="#a8a8c0",
+            ornaments="""
   <!-- broken heart -->
   <g fill="#888">
     <rect x="160" y="40" width="3" height="3"/>
@@ -950,36 +1018,55 @@ OUTPUTS: list[tuple[str, callable]] = [
   <g stroke="#fff" stroke-width="2" fill="none">
     <polyline points="164,40 160,46 168,52 162,58"/>
   </g>
-''',
-    )),
-    ("苏苏不理你.svg", lambda: gen_emotion(
-        "不理你", eye="closed", mouth="line",
-        accent="#fff5d8", accent_dark="#ffc8a0",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏不理你.svg",
+        lambda: gen_emotion(
+            "不理你",
+            eye="closed",
+            mouth="line",
+            accent="#fff5d8",
+            accent_dark="#ffc8a0",
+            ornaments="""
   <!-- ⤵ humpf cloud -->
   <g fill="#fff" opacity=".7">
     <rect x="40" y="60" width="14" height="6"/>
     <rect x="36" y="64" width="22" height="6"/>
   </g>
   <text x="40" y="80" font-family="serif" font-size="14" fill="#a05a32">哼!</text>
-''',
-    )),
-    ("苏苏听到了.svg", lambda: gen_emotion(
-        "听到了听到了", eye="half", mouth="line",
-        accent="#fff5d8", accent_dark="#ffd6a8",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏听到了.svg",
+        lambda: gen_emotion(
+            "听到了听到了",
+            eye="half",
+            mouth="line",
+            accent="#fff5d8",
+            accent_dark="#ffd6a8",
+            ornaments="""
   <text x="160" y="60" font-family="serif" font-size="28"
         font-weight="bold" fill="#a05a32">…</text>
-''',
-    )),
-    ("苏苏耐心.svg", lambda: gen_emotion(
-        "耐心耗尽", eye="half", mouth="pout",
-        accent="#fff0d8", accent_dark="#ffb88a",
-        ornaments='''
+""",
+        ),
+    ),
+    (
+        "苏苏耐心.svg",
+        lambda: gen_emotion(
+            "耐心耗尽",
+            eye="half",
+            mouth="pout",
+            accent="#fff0d8",
+            accent_dark="#ffb88a",
+            ornaments="""
   <text x="160" y="80" font-family="serif" font-size="20"
         font-weight="bold" fill="{PINK_DEEP}">…?</text>
-''',
-    )),
+""",
+        ),
+    ),
 ]
 
 

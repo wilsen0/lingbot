@@ -76,17 +76,17 @@ _WINDOW_WEIGHTS: dict[str, tuple[float, float, float, float, float]] = {
 }
 
 # Active rod-enchant buff names (see the 附魔 handler in main.ling).
-BUFF_LUCKY = "幸运"   # legend/rare weight boost
+BUFF_LUCKY = "幸运"  # legend/rare weight boost
 BUFF_CLEAN = "驱垃圾"  # no junk
 BUFF_TIMELY = "守时"  # golden window reached sooner
-BUFF_PLUMP = "肥美"   # caught fish worth +50%
+BUFF_PLUMP = "肥美"  # caught fish worth +50%
 KNOWN_BUFFS: tuple[str, ...] = (BUFF_LUCKY, BUFF_CLEAN, BUFF_TIMELY, BUFF_PLUMP)
 
 # Window boundaries in *effective* seconds since cast.
-_W_EARLY = 25      # < this: 早
-_W_NORMAL = 80     # < this: 普通
-_W_GOLDEN = 200    # < this: 黄金
-_W_LATE = 420      # < this: 迟; >= this: gone (鱼跑了)
+_W_EARLY = 25  # < this: 早
+_W_NORMAL = 80  # < this: 普通
+_W_GOLDEN = 200  # < this: 黄金
+_W_LATE = 420  # < this: 迟; >= this: gone (鱼跑了)
 # Hard ceiling on real elapsed regardless of buff — after this the fish
 # has definitely escaped.
 _W_HARD_GONE = 900
@@ -121,10 +121,10 @@ def _apply_buff_to_weights(
     """Return buff-adjusted tier weights [legend, rare, common, junk, empty]."""
     w = list(weights)
     if buff == BUFF_LUCKY:
-        w[0] *= 3.0   # legend
-        w[1] *= 2.5   # rare
+        w[0] *= 3.0  # legend
+        w[1] *= 2.5  # rare
     if buff == BUFF_CLEAN:
-        w[3] = 0.0    # junk
+        w[3] = 0.0  # junk
     return w
 
 
@@ -213,8 +213,15 @@ async def fishing_draw(
     # Gone / empty short-circuit — no draw, no KV mutation.
     if window == "gone":
         return json.dumps(
-            {"result": "gone", "name": "", "emoji": "", "rarity": "",
-             "value": 0, "first": 0, "buff": buff},
+            {
+                "result": "gone",
+                "name": "",
+                "emoji": "",
+                "rarity": "",
+                "value": 0,
+                "first": 0,
+                "buff": buff,
+            },
             ensure_ascii=False,
         )
 
@@ -223,16 +230,30 @@ async def fishing_draw(
 
     if tier == _TIER_EMPTY:
         return json.dumps(
-            {"result": "empty", "name": "", "emoji": "", "rarity": "",
-             "value": 0, "first": 0, "buff": buff},
+            {
+                "result": "empty",
+                "name": "",
+                "emoji": "",
+                "rarity": "",
+                "value": 0,
+                "first": 0,
+                "buff": buff,
+            },
             ensure_ascii=False,
         )
 
     species = _pick_species(ctx, tier)
     if species is None:
         return json.dumps(
-            {"result": "empty", "name": "", "emoji": "", "rarity": "",
-             "value": 0, "first": 0, "buff": buff},
+            {
+                "result": "empty",
+                "name": "",
+                "emoji": "",
+                "rarity": "",
+                "value": 0,
+                "first": 0,
+                "buff": buff,
+            },
             ensure_ascii=False,
         )
 
@@ -245,10 +266,15 @@ async def fishing_draw(
         # No player id — return the roll without persisting. Keeps the
         # tool usable for previews/tests that don't supply %QQ%.
         return json.dumps(
-            {"result": "junk" if is_junk else "catch",
-             "name": species.name, "emoji": species.emoji,
-             "rarity": species.rarity.name, "value": value,
-             "first": 0, "buff": buff},
+            {
+                "result": "junk" if is_junk else "catch",
+                "name": species.name,
+                "emoji": species.emoji,
+                "rarity": species.rarity.name,
+                "value": value,
+                "first": 0,
+                "buff": buff,
+            },
             ensure_ascii=False,
         )
 
@@ -270,10 +296,15 @@ async def fishing_draw(
         await ctx.kv.write(_SCOPE, _VALUE_FILE, qq, str(total + value))
 
     return json.dumps(
-        {"result": "junk" if is_junk else "catch",
-         "name": species.name, "emoji": species.emoji,
-         "rarity": species.rarity.name, "value": value,
-         "first": first, "buff": buff},
+        {
+            "result": "junk" if is_junk else "catch",
+            "name": species.name,
+            "emoji": species.emoji,
+            "rarity": species.rarity.name,
+            "value": value,
+            "first": first,
+            "buff": buff,
+        },
         ensure_ascii=False,
     )
 

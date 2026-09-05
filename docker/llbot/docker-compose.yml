@@ -8,7 +8,7 @@
 #   3080  LLBot WebUI（扫码登录 / 改配置；token 见 llbot_config/webui_token.txt）
 #
 # 配置与登录态：
-#   /home/wilsen/.llbot/llbot_config        LLBot 配置（config_<QQ>.json / webui_token.txt）
+#   ${LLBOT_CONFIG_DIR:-~/.llbot/llbot_config}  LLBot 配置（config_<QQ>.json / webui_token.txt）
 #   qq_volume (docker named vol)  QQ 登录态缓存
 #
 # 用法：
@@ -23,12 +23,12 @@ services:
     privileged: true
     environment:
       - ENABLE_HEADLESS=false          # 有头更稳（无头省内存但易掉线）
-      - AUTO_LOGIN_QQ=1707476110
+      - AUTO_LOGIN_QQ=${ONEBOT_QQ:-10001}
     networks:
       - llbot_net
     volumes:
       - qq_volume:/root/.config/QQ
-      - /home/wilsen/.llbot/llbot_config:/app/llbot/data:rw
+      - ${LLBOT_CONFIG_DIR:-~/.llbot/llbot_config}:/app/llbot/data:rw
     restart: unless-stopped
 
   llbot:
@@ -46,9 +46,10 @@ services:
       - llbot_net
     volumes:
       - qq_volume:/root/.config/QQ
-      - /home/wilsen/.llbot/llbot_config:/app/llbot/data:rw
+      - ${LLBOT_CONFIG_DIR:-~/.llbot/llbot_config}:/app/llbot/data:rw
     depends_on:
       - pmhq
+
     restart: unless-stopped
 
 volumes:

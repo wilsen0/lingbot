@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import re
@@ -12,30 +13,27 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import count
+from pathlib import Path
 from typing import Any
 
 import structlog
-from linling_core.events import Action, Event, User
+from linling_core.events import Action, Event
 from linling_core.pipeline import ConversationKey, ConversationStore, Session
-from linling_core.segments import (
-    CardSegment,
-    FaceSegment,
-    FileSegment,
-    ImageSegment,
-    ReplySegment,
-    Segment,
-    TextSegment,
-    VideoSegment,
-    VoiceSegment,
-    XmlSegment,
-)
+from linling_core.segments import ImageSegment, ReplySegment, TextSegment
 
 from linling_agent.action_delay import with_random_delay_before
 from linling_agent.actions_protocol import ParsedAction
 from linling_agent.attention_probe import AttentionProbe, _ProbeBatchInput
 from linling_agent.context import fit_messages_to_budget
-from linling_agent.llm import Message, ToolCall, ToolSchema
+from linling_agent.images import ImageContentResolver, collect_image_refs
+from linling_agent.llm import ContentPart, Message, ToolCall, ToolSchema
 from linling_agent.profile import ProfileStore
+from linling_agent.segments_text import (
+    has_non_text_segment,
+    llm_visible_text,
+)
+from linling_agent.sticker_collage import StickerCollageBuilder
+from linling_agent.sticker_store import StickerStore
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +43,9 @@ _TOOL_SEND_GROUP = "send_group"
 _TOOL_FINISH_TURN = "finish_turn"
 _TOOL_READ_PROFILE = "read_user_profile"
 _TOOL_WRITE_PROFILE = "write_user_profile"
+_TOOL_SAVE_STICKER = "save_sticker"
+_TOOL_LIST_STICKERS = "list_stickers"
+_TOOL_SEND_STICKER = "send_sticker"
 _MAX_TOOL_ROUNDS = 8
 _MAX_READ_CALLS = 2
 _MAX_READ_MESSAGES = 5
@@ -106,7 +107,6 @@ def _parse_attention_stamp(
     diff = min(diff, 1440 - diff)
     window_minutes = max(1, int(window_s // 60))
     return diff <= window_minutes
-
 
 
 @dataclass(frozen=True)
@@ -196,13 +196,18 @@ class _BufferedMessage:
     # direct ``_BufferedMessage`` construction.
     at_user_ids: tuple[str, ...] = ()
     # True iff the original message carried any non-text content segment
-    # (image / face / mface sticker / voice / …) that ``_llm_visible_text``
+    # (image / face / mface sticker / voice / …) that ``llm_visible_text``
     # rendered as a ``[图片]``/``[表情]``/… marker. Drives whether the
     # system prompt bothers explaining the markers — skipped on pure-text
     # batches so the prompt stays byte-identical to the pre-marker behaviour
     # (important for tight token budgets in tests and for not cluttering the
     # common case).
     has_non_text: bool = False
+    # Image references (OneBot image/sticker URLs) carried by the original
+    # message, collected only when vision is enabled. Empty otherwise. Used
+    # by the multimodal prompt builder to attach resolved images and by the
+    # ``save_sticker`` tool to fetch a candidate message's image by id.
+    image_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -248,6 +253,8 @@ class GroupBatchChatDispatcher:
         bot_id: str = "linling",
         probe: AttentionProbe | None = None,
         kv: Any = None,
+        image_resolver: ImageContentResolver | None = None,
+        sticker_dir: Path | None = None,
     ) -> None:
         self._inner = inner
         self._cfg = config
@@ -272,6 +279,8 @@ class GroupBatchChatDispatcher:
         # combination still does nothing — bootstrap flips both
         # together.
         self._probe: AttentionProbe | None = probe
+        self._image_resolver: ImageContentResolver | None = image_resolver
+        self._sticker_dir: Path | None = sticker_dir
         self._states: defaultdict[str, _GroupState] = defaultdict(_GroupState)
         self._dispatch_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._action_sink: Any = None
@@ -282,15 +291,22 @@ class GroupBatchChatDispatcher:
     def agent(self) -> Any:
         return getattr(self._inner, "agent", None)
 
+    @property
+    def _vision_enabled(self) -> bool:
+        agent_def = getattr(self.agent, "agent_def", None)
+        return (
+            self._image_resolver is not None
+            and agent_def is not None
+            and bool(getattr(agent_def, "vision_enabled", False))
+        )
+
     def set_action_sink(self, sink: Any) -> None:
         self._action_sink = sink
         inner_setter = getattr(self._inner, "set_action_sink", None)
         if inner_setter is not None:
             inner_setter(sink)
 
-    async def _is_within_attention_window(
-        self, scope_id: str, sender_id: str
-    ) -> bool:
+    async def _is_within_attention_window(self, scope_id: str, sender_id: str) -> bool:
         """Return True iff ``sender_id`` was recently replied to by the bot.
 
         Reads ``啊/{scope_id}/苏苏确认`` and delegates the format check
@@ -298,11 +314,7 @@ class GroupBatchChatDispatcher:
         seconds we write and the HHmm form main.ling uses, so the two
         paths share state).
         """
-        if (
-            self._kv is None
-            or not sender_id
-            or self._cfg.attention_window_s <= 0
-        ):
+        if self._kv is None or not sender_id or self._cfg.attention_window_s <= 0:
             return False
         try:
             raw = await self._kv.read(
@@ -329,15 +341,9 @@ class GroupBatchChatDispatcher:
             window_s=self._cfg.attention_window_s,
         )
 
-    async def _refresh_attention_window(
-        self, scope_id: str, sender_id: str
-    ) -> None:
+    async def _refresh_attention_window(self, scope_id: str, sender_id: str) -> None:
         """Stamp ``(scope, sender) -> now`` after a successful bot reply."""
-        if (
-            self._kv is None
-            or not sender_id
-            or self._cfg.attention_window_s <= 0
-        ):
+        if self._kv is None or not sender_id or self._cfg.attention_window_s <= 0:
             return
         try:
             await self._kv.write(
@@ -430,9 +436,7 @@ class GroupBatchChatDispatcher:
         # the state lock so the KV read doesn't block message ingestion.
         # If this user is in the window, treat the batch as already
         # rule-attended — same as if `_is_attention_candidate` had fired.
-        within_window = await self._is_within_attention_window(
-            event.scope.id, event.sender.id
-        )
+        within_window = await self._is_within_attention_window(event.scope.id, event.sender.id)
         async with state.lock:
             state.messages.append(msg)
             self._trim_locked(state)
@@ -494,7 +498,11 @@ class GroupBatchChatDispatcher:
                     if not state.messages:
                         self._reset_state_locked(state, cancel_task=False)
                         return
-                    elapsed = 0.0 if state.first_seen_at is None else time.monotonic() - state.first_seen_at
+                    elapsed = (
+                        0.0
+                        if state.first_seen_at is None
+                        else time.monotonic() - state.first_seen_at
+                    )
                     has_attention = state.attention_seen
                     # When probe is wired, window_s expiry is enough to
                     # flush — the probe now runs inside _dispatch_batch_with_tools
@@ -540,7 +548,9 @@ class GroupBatchChatDispatcher:
                         continue
                     continue
                 try:
-                    await self._dispatch_batch(template_event, session, batch, generation, had_attention)
+                    await self._dispatch_batch(
+                        template_event, session, batch, generation, had_attention
+                    )
                 except Exception:
                     logger.exception("group_batch.flush_failed", key=key)
                 return
@@ -600,9 +610,12 @@ class GroupBatchChatDispatcher:
             generation,
             had_attention,
         )
-        if tool_selection is not None:
-            if tool_selection.records and await self._batch_is_current(event, generation):
-                await self._record_tool_history(batch_session, event, tool_selection.records)
+        if (
+            tool_selection is not None
+            and tool_selection.records
+            and await self._batch_is_current(event, generation)
+        ):
+            await self._record_tool_history(batch_session, event, tool_selection.records)
 
     async def _dispatch_batch_with_tools(
         self,
@@ -644,8 +657,39 @@ class GroupBatchChatDispatcher:
                     return _ToolSelection(records=[])
             return None
         await self._ensure_history(session, event)
-        tools = _group_batch_tool_schemas()
-        selector_prompt = self._build_tool_system_prompt(batch)
+        tools = _group_batch_tool_schemas(self._vision_enabled)
+        # Resolve candidate images up front (newest batch messages first) so
+        # the system prompt can state accurately whether image content was
+        # actually attached. Resolution can fail wholesale — expired URLs,
+        # oversized files, missing resolver — in which case the marker rule
+        # must not claim visibility of image content.
+        candidate_parts: list[ContentPart] = []
+        if self._vision_enabled and self._image_resolver is not None:
+            all_refs = [ref for msg in reversed(batch) for ref in msg.image_refs]
+            if all_refs:
+                data_uris = await self._image_resolver.resolve_batch(all_refs)
+                candidate_parts = [
+                    ContentPart(type="image_url", image_url=uri) for uri in data_uris
+                ]
+        # Sticker collection collage: a 3x3 grid of the saved stickers (each
+        # cell labelled with its id and saved name) so the model can see what
+        # it collected and pick one by name to re-send. Attached after the
+        # candidate images; skipped when nothing is saved or storage is
+        # unavailable.
+        image_parts = list(candidate_parts)
+        collage_attached = False
+        if self._vision_enabled and self._kv is not None and self._sticker_dir is not None:
+            collage_uri = await StickerCollageBuilder(
+                StickerStore(self._kv, self._sticker_dir)
+            ).build_data_uri()
+            if collage_uri:
+                image_parts.append(ContentPart(type="image_url", image_url=collage_uri))
+                collage_attached = True
+        selector_prompt = self._build_tool_system_prompt(
+            batch,
+            images_attached=bool(candidate_parts),
+            collage_attached=collage_attached,
+        )
         agent_system = str(getattr(agent_def, "system", "") or "")
         if agent_system:
             selector_prompt = f"{agent_system}\n\n{selector_prompt}"
@@ -663,6 +707,7 @@ class GroupBatchChatDispatcher:
             prefix_messages=[Message(role="system", content=selector_prompt)],
             current_input_text=user_prompt,
             reserve_tokens=max_tokens or 0,
+            current_image_count=len(image_parts),
             force_compaction=force_daily_summary,
             summary_keep_recent_turns=(
                 self._cfg.daily_summary_keep_recent_turns if force_daily_summary else None
@@ -670,10 +715,17 @@ class GroupBatchChatDispatcher:
         )
         if force_daily_summary and history_compacted:
             await self._mark_daily_summary(event.scope.id, daily_summary_date)
+        user_message = Message(
+            role="user",
+            content=user_prompt,
+            content_parts=(
+                (ContentPart(type="text", text=user_prompt), *image_parts) if image_parts else None
+            ),
+        )
         messages = [
             Message(role="system", content=selector_prompt),
             *history,
-            Message(role="user", content=user_prompt),
+            user_message,
         ]
         messages = fit_messages_to_budget(messages, self._context_max_tokens())
         # --- Pre-flight: probe runs only when the rule-based attention
@@ -696,11 +748,7 @@ class GroupBatchChatDispatcher:
         #      whole batch closed and silently drop replies.
         # The main LLM below still gets the full ``messages`` (with
         # history); only the probe is trimmed.
-        if (
-            not had_attention
-            and self._probe_wired()
-            and self._probe is not None
-        ):
+        if not had_attention and self._probe_wired() and self._probe is not None:
             probe_messages = [
                 Message(role="system", content=selector_prompt),
                 Message(role="user", content=user_prompt),
@@ -959,13 +1007,9 @@ class GroupBatchChatDispatcher:
         event: Event,
         batch: list[_BufferedMessage],
     ) -> None:
-        unique_sender_ids = _ordered_unique(
-            msg.sender_id for msg in batch if msg.sender_id
-        )
+        unique_sender_ids = _ordered_unique(msg.sender_id for msg in batch if msg.sender_id)
         candidate_sender_ids = _ordered_unique(
-            msg.sender_id
-            for msg in batch
-            if msg.sender_id and self._is_attention_candidate(msg)
+            msg.sender_id for msg in batch if msg.sender_id and self._is_attention_candidate(msg)
         )
         targets = candidate_sender_ids
         if not targets and len(unique_sender_ids) == 1:
@@ -1021,7 +1065,32 @@ class GroupBatchChatDispatcher:
             return _tool_json({"ok": True}), None, False, True
         if tool_call.name in (_TOOL_READ_PROFILE, _TOOL_WRITE_PROFILE):
             return await self._tool_profile(tool_call.name, args), None, False, False
-        return _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}), None, False, False
+        if tool_call.name in (_TOOL_SAVE_STICKER, _TOOL_LIST_STICKERS, _TOOL_SEND_STICKER):
+            # Sticker tools are only offered when vision is enabled; a stale
+            # call on a vision-disabled agent is an unknown tool.
+            if not self._vision_enabled:
+                return (
+                    _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}),
+                    None,
+                    False,
+                    False,
+                )
+            return await self._tool_sticker(
+                tool_call.name,
+                args,
+                tool_call,
+                assistant,
+                event,
+                batch,
+                generation,
+                sent_count,
+            )
+        return (
+            _tool_json({"ok": False, "error": f"unknown tool: {tool_call.name}"}),
+            None,
+            False,
+            False,
+        )
 
     async def _tool_profile(self, name: str, args: dict[str, object]) -> str:
         """Execute a profile read/write tool. Never produces an outbound action.
@@ -1053,6 +1122,167 @@ class GroupBatchChatDispatcher:
         except Exception:
             logger.warning("group_batch.profile_tool_failed", tool=name, qq=qq, exc_info=True)
             return _tool_json({"ok": False, "error": "profile tool failed"})
+
+    async def _tool_sticker(
+        self,
+        name: str,
+        args: dict[str, object],
+        tool_call: ToolCall,
+        assistant: Message,
+        event: Event,
+        batch: list[_BufferedMessage],
+        generation: int,
+        sent_count: int,
+    ) -> tuple[str, _ToolSendRecord | None, bool, bool]:
+        """Execute a sticker collection tool. Degrades to an error string.
+
+        ``save_sticker``/``list_stickers`` never produce an outbound action
+        or history record. ``send_sticker`` sends to the group exactly like
+        ``send_group``: it respects the ``max_replies`` cap, applies the
+        multi-reply delay, refreshes the attention window, and yields a
+        ``_ToolSendRecord`` so the send lands in session history.
+        """
+        if self._kv is None or self._sticker_dir is None:
+            return (
+                _tool_json({"ok": False, "error": "sticker storage unavailable"}),
+                None,
+                False,
+                False,
+            )
+        store = StickerStore(self._kv, self._sticker_dir)
+        try:
+            if name == _TOOL_LIST_STICKERS:
+                query = args.get("query")
+                items = await store.list(query if isinstance(query, str) else "")
+                if not items:
+                    return (
+                        _tool_json({"ok": True, "stickers": [], "note": "暂无收藏"}),
+                        None,
+                        False,
+                        False,
+                    )
+                return _tool_json({"ok": True, "stickers": items}), None, False, False
+            if name == _TOOL_SEND_STICKER:
+                if sent_count >= self._cfg.max_replies:
+                    return (
+                        _tool_json({"ok": False, "error": "reply limit reached"}),
+                        None,
+                        False,
+                        True,
+                    )
+                sname = args.get("name")
+                if not isinstance(sname, str) or not sname:
+                    return (
+                        _tool_json({"ok": False, "error": "name is required"}),
+                        None,
+                        False,
+                        False,
+                    )
+                meta = await store.find_by_name(sname)
+                if meta is None:
+                    return (
+                        _tool_json({"ok": False, "error": f"no sticker named '{sname}'"}),
+                        None,
+                        False,
+                        False,
+                    )
+                raw = await store.load_bytes(meta["id"])
+                if raw is None:
+                    return (
+                        _tool_json({"ok": False, "error": "sticker file missing"}),
+                        None,
+                        False,
+                        False,
+                    )
+                if not await self._batch_is_current(event, generation):
+                    return _tool_json({"ok": False, "error": "stale batch"}), None, False, True
+                seg = ImageSegment(
+                    b64=base64.b64encode(raw).decode("ascii"),
+                    # 原图语义(subType=1):QQ 服务端对普通图(0)会压缩重编码、
+                    # 小图被放大;按原图发才保留收藏时的原始像素尺寸。
+                    extras={"subType": 1},
+                )
+                action = Action(kind="send", target=event.scope, segments=[seg])
+                action = self._with_multi_reply_delay(action, sent_count=sent_count)
+                sent, error = await self._send_action(action, event)
+                if not sent:
+                    return (
+                        _tool_json({"ok": False, "error": error or "send failed"}),
+                        None,
+                        False,
+                        True,
+                    )
+                await self._refresh_attention_for_group_send(event, batch)
+                tool_result = _tool_json({"ok": True, "sent": sname})
+                summary = _batch_history_summary(batch)
+                record = _ToolSendRecord(
+                    messages=_tool_history_messages(
+                        summary,
+                        assistant=assistant,
+                        tool_call=tool_call,
+                        tool_result=tool_result,
+                    ),
+                    user_input=summary,
+                    # History stays text-only (noise reduction): the sticker
+                    # bytes live in the action, the record carries a marker.
+                    assistant_output=f"[表情:{sname}]",
+                )
+                return tool_result, record, False, False
+            # save
+            message_id = args.get("message_id")
+            sname = args.get("name")
+            if not isinstance(message_id, str) or not isinstance(sname, str) or not sname:
+                return (
+                    _tool_json({"ok": False, "error": "message_id and name are required"}),
+                    None,
+                    False,
+                    False,
+                )
+            msg = _message_by_id(batch).get(message_id)
+            if msg is None or not msg.image_refs:
+                return (
+                    _tool_json({"ok": False, "error": "message has no image to save"}),
+                    None,
+                    False,
+                    False,
+                )
+            if self._image_resolver is None:
+                return (
+                    _tool_json({"ok": False, "error": "image resolver unavailable"}),
+                    None,
+                    False,
+                    False,
+                )
+            data_uris = await self._image_resolver.resolve_batch(list(msg.image_refs), limit=1)
+            if not data_uris:
+                return (
+                    _tool_json({"ok": False, "error": "could not download the image"}),
+                    None,
+                    False,
+                    False,
+                )
+            data_uri = data_uris[0]
+            # data:<mime>;base64,<payload>
+            try:
+                header, payload = data_uri.split(",", 1)
+                mime = header[len("data:") :].split(";", 1)[0] or "image/jpeg"
+                image_bytes = base64.b64decode(payload)
+            except Exception:
+                return _tool_json({"ok": False, "error": "bad image data"}), None, False, False
+            tags = args.get("tags")
+            sticker_id = await store.save(
+                image_bytes,
+                name=sname,
+                tags=tags if isinstance(tags, str) else "",
+                source_qq=msg.sender_id,
+                mime=mime,
+            )
+            return _tool_json({"ok": True, "saved": sname, "id": sticker_id}), None, False, False
+        except ValueError as exc:
+            return _tool_json({"ok": False, "error": str(exc)}), None, False, False
+        except Exception:
+            logger.warning("group_batch.sticker_tool_failed", tool=name, exc_info=True)
+            return _tool_json({"ok": False, "error": "sticker tool failed"}), None, False, False
 
     async def _tool_reply_to_message(
         self,
@@ -1185,9 +1415,7 @@ class GroupBatchChatDispatcher:
         name_by_id = _batch_name_index(batch)
         lines: list[str] = []
         for _line_num, msg in selected:
-            lines.append(
-                f"[message_id={msg.message_id}] {_render_candidate_line(msg, name_by_id)}"
-            )
+            lines.append(f"[message_id={msg.message_id}] {_render_candidate_line(msg, name_by_id)}")
         return _tool_json({"ok": True, "messages": lines})
 
     async def _send_action(self, action: Action, event: Event) -> tuple[bool, str]:
@@ -1257,12 +1485,11 @@ class GroupBatchChatDispatcher:
         prefix_messages: list[Message],
         current_input_text: str,
         reserve_tokens: int,
+        current_image_count: int = 0,
         force_compaction: bool = False,
         summary_keep_recent_turns: int | None = None,
     ) -> tuple[list[Message], bool]:
-        prepare_with_status = getattr(
-            self._inner, "prepare_context_history_with_status", None
-        )
+        prepare_with_status = getattr(self._inner, "prepare_context_history_with_status", None)
         if prepare_with_status is None:
             prepare = getattr(self._inner, "prepare_context_history", None)
             if prepare is None:
@@ -1279,6 +1506,8 @@ class GroupBatchChatDispatcher:
                     "commit_replacement": True,
                 }
                 prepare_params = inspect.signature(prepare).parameters
+                if "current_image_count" in prepare_params:
+                    prepare_kwargs["current_image_count"] = current_image_count
                 if "force_compaction" in prepare_params:
                     prepare_kwargs["force_compaction"] = force_compaction
                 if "summary_keep_recent_turns" in prepare_params:
@@ -1295,6 +1524,7 @@ class GroupBatchChatDispatcher:
                 prefix_messages=prefix_messages,
                 current_input_text=current_input_text,
                 reserve_tokens=reserve_tokens,
+                current_image_count=current_image_count,
                 allow_compaction=True,
                 force_compaction=force_compaction,
                 summary_keep_recent_turns=summary_keep_recent_turns,
@@ -1335,7 +1565,7 @@ class GroupBatchChatDispatcher:
             message_id=event.id,
             sender_id=event.sender.id,
             sender_name=event.sender.display_name or event.sender.id,
-            text=_clip_text(_llm_visible_text(event.segments), self._cfg.max_chars),
+            text=_clip_text(llm_visible_text(event.segments), self._cfg.max_chars),
             timestamp=_format_time(event.time),
             sent_at=_event_sort_timestamp(event.time),
             received_seq=next(self._message_seq),
@@ -1343,7 +1573,8 @@ class GroupBatchChatDispatcher:
             mentions_all=_mentions_all(event),
             reply_to_bot=_reply_to_bot(event),
             at_user_ids=_other_at_user_ids(event),
-            has_non_text=_has_non_text_segment(event.segments),
+            has_non_text=has_non_text_segment(event.segments),
+            image_refs=(tuple(collect_image_refs(event.segments)) if self._vision_enabled else ()),
         )
 
     def _trim_locked(self, state: _GroupState) -> None:
@@ -1395,7 +1626,13 @@ class GroupBatchChatDispatcher:
             lines.append(_render_candidate_line(m, name_by_id))
         return "\n".join(lines)
 
-    def _build_tool_system_prompt(self, batch: list[_BufferedMessage]) -> str:
+    def _build_tool_system_prompt(
+        self,
+        batch: list[_BufferedMessage],
+        *,
+        images_attached: bool = False,
+        collage_attached: bool = False,
+    ) -> str:
         directed = sum(1 for m in batch if m.mentions_bot or m.reply_to_bot)
         silence_hint = (
             "没有消息在直接找你。不发言完全没问题，"
@@ -1419,18 +1656,27 @@ class GroupBatchChatDispatcher:
                 "- 被点名要好好聊，别只回一句就走；可以多问一句、多关心一句",
                 "- 看到有人难过、吐槽、开心，都可以主动接一下",
                 "- 选择性发言：不每句都回，但说了就要有温度、有内容",
-                *([_NON_TEXT_MARKER_RULE] if any(m.has_non_text for m in batch) else []),
+                *(
+                    # Only claim image visibility when the resolved images
+                    # actually made it into the request (``images_attached``);
+                    # otherwise fall back to the plain "you can't see it" rule
+                    # so the prompt never contradicts what the model sees.
+                    [_NON_TEXT_MARKER_RULE_VISION if images_attached else _NON_TEXT_MARKER_RULE]
+                    if any(m.has_non_text for m in batch)
+                    else []
+                ),
+                *([_COLLAGE_RULE] if collage_attached else []),
                 "",
                 "## 消息协议（重要）",
                 "所有消息必须通过工具发送，不能直接输出文本。",
                 "",
                 "| 意图 | 工具 |",
                 "|---|---|",
-                "| 跟群里说话 | `send_group(text=\"...\")` |",
-                "| 引用回复某条消息（@+引用框） | `reply_to_message(message_id=\"...\", text=\"...\")` |",
+                '| 跟群里说话 | `send_group(text="...")` |',
+                '| 引用回复某条消息（@+引用框） | `reply_to_message(message_id="...", text="...")` |',
                 "| 查看被截断消息的完整内容 | `read_batch_messages(message_ids=[...])` |",
                 "| 连发多条 | 多次调用 `send_group` 或 `reply_to_message` |",
-                "| 结束回合（或没话说） | `finish_turn(summary=\"...\")` |",
+                '| 结束回合（或没话说） | `finish_turn(summary="...")` |',
                 "",
                 "每回合结束必须调用 `finish_turn`，即使你选择不说话。",
                 f"每回合最多回复 {self._cfg.max_replies} 条消息，一次一条。",
@@ -1472,6 +1718,7 @@ class GroupBatchChatDispatcher:
                     reply_to_bot=msg.reply_to_bot,
                     at_user_ids=msg.at_user_ids,
                     has_non_text=msg.has_non_text,
+                    image_refs=msg.image_refs,
                 )
                 if len(clipped) < len(msg.text)
                 else msg
@@ -1594,9 +1841,7 @@ def _batch_name_index(batch: list[_BufferedMessage]) -> dict[str, str]:
     return index
 
 
-def _render_at_targets(
-    at_user_ids: tuple[str, ...], name_by_id: dict[str, str]
-) -> list[str]:
+def _render_at_targets(at_user_ids: tuple[str, ...], name_by_id: dict[str, str]) -> list[str]:
     """Render @-target ids as names, falling back to a neutral marker.
 
     Resolves each id against the batch-local name index. Unknown targets
@@ -1617,9 +1862,7 @@ def _render_at_targets(
     return out
 
 
-def _render_candidate_line(
-    msg: _BufferedMessage, name_by_id: dict[str, str]
-) -> str:
+def _render_candidate_line(msg: _BufferedMessage, name_by_id: dict[str, str]) -> str:
     """Render a buffered message as a single natural-language line with relevance tag.
 
     Examples::
@@ -1705,53 +1948,6 @@ def _looks_like_question(text: str) -> bool:
     return bool(re.search(r"(吗|嘛|么|怎么|如何|为啥|为什么|能不能|可不可以|是不是)", text))
 
 
-# Non-text segments → short LLM-visible markers, in segment order. We render
-# these into the buffered message ``text`` so a pure-sticker / image / voice
-# message no longer appears as empty content (which made the LLM ask "what did
-# you send?"). ``AtSegment`` / ``ReplySegment`` / ``PokeSegment`` are modeled
-# separately (mentions_me / at_targets / reply_to_me) and deliberately not
-# inlined here — they must not show up as stray text in the candidate.
-_NON_TEXT_MARKERS: tuple[tuple[type[Segment], str], ...] = (
-    (ImageSegment, "[图片]"),
-    (FaceSegment, "[表情]"),  # QQ basic face + mface/bface 商城表情包/贴纸
-    (VoiceSegment, "[语音]"),
-    (VideoSegment, "[视频]"),
-    (FileSegment, "[文件]"),
-    (CardSegment, "[卡片]"),
-    (XmlSegment, "[卡片]"),
-)
-
-
-def _llm_visible_text(segments: list[Segment]) -> str:
-    """Render segments as the text the LLM should see.
-
-    ``TextSegment``s pass through verbatim; each known non-text segment becomes
-    its marker (``[图片]`` / ``[表情]`` / …). Unknown segment kinds contribute
-    nothing. Leading/trailing whitespace is stripped, so a pure non-text message
-    yields exactly its marker (e.g. ``"[表情]"``) rather than an empty string.
-    """
-    parts: list[str] = []
-    for seg in segments:
-        if isinstance(seg, TextSegment):
-            parts.append(seg.text)
-            continue
-        for kind, marker in _NON_TEXT_MARKERS:
-            if isinstance(seg, kind):
-                parts.append(marker)
-                break
-    return "".join(parts).strip()
-
-
-def _has_non_text_segment(segments: list[Segment]) -> bool:
-    """True iff ``segments`` carry any non-text content we render as a marker."""
-    for seg in segments:
-        if isinstance(seg, TextSegment):
-            continue
-        if any(isinstance(seg, kind) for kind, _ in _NON_TEXT_MARKERS):
-            return True
-    return False
-
-
 # Shared guidance explaining the non-text markers to the LLM. Only injected
 # when the current batch actually contains a non-text message (see
 # ``_BufferedMessage.has_non_text``), so pure-text batches keep the exact
@@ -1765,6 +1961,21 @@ _NON_TEXT_MARKER_RULE = (
     "也不要追问对方发了什么。"
 )
 
+_NON_TEXT_MARKER_RULE_VISION = (
+    "候选消息里的 [图片]/[表情] 标记对应的图片内容已附在本条消息末尾，你能直接看到。"
+    "其余标记（如 [语音]/[视频]/[文件]）你看不到实际内容，不要追问。"
+    "如果觉得某个表情包有意思，可以用 save_sticker 收藏起来以后用。"
+)
+
+# Explains the sticker-collection collage attached at the end of the
+# message parts. Injected only when the collage actually made it into the
+# request (``collage_attached``), mirroring the honesty of the marker rule.
+_COLLAGE_RULE = (
+    "消息末尾附了一张你收藏的表情包九宫格图，每格标了名字和 id。"
+    "想回敬表情包就用 send_sticker(name=...)，只能发收藏里的；"
+    "没有合适的就不用发。"
+)
+
 
 def _clip_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
@@ -1772,9 +1983,16 @@ def _clip_text(text: str, max_chars: int) -> str:
     return text[:max_chars].rstrip()
 
 
-def _group_batch_tool_schemas() -> list[ToolSchema]:
-    """Full tool set for the main selective-replier loop."""
-    return [*_reply_tool_schemas(), *_profile_tool_schemas()]
+def _group_batch_tool_schemas(vision_enabled: bool = False) -> list[ToolSchema]:
+    """Full tool set for the main selective-replier loop.
+
+    ``vision_enabled`` (default False keeps the zero-arg call sites and
+    tests stable) additionally offers the sticker collection tools.
+    """
+    tools = [*_reply_tool_schemas(), *_profile_tool_schemas()]
+    if vision_enabled:
+        tools += _sticker_tool_schemas()
+    return tools
 
 
 def _reply_tool_schemas() -> list[ToolSchema]:
@@ -1800,8 +2018,14 @@ def _reply_tool_schemas() -> list[ToolSchema]:
                         "items": {"type": "integer"},
                         "description": "List of candidate line numbers to read (1-based).",
                     },
-                    "start_line": {"type": "integer", "description": "Start line number of range to read."},
-                    "end_line": {"type": "integer", "description": "End line number of range to read."},
+                    "start_line": {
+                        "type": "integer",
+                        "description": "Start line number of range to read.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "End line number of range to read.",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -1812,7 +2036,10 @@ def _reply_tool_schemas() -> list[ToolSchema]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "message_id": {"type": "string", "description": "The candidate message ID to reply to."},
+                    "message_id": {
+                        "type": "string",
+                        "description": "The candidate message ID to reply to.",
+                    },
                     "text": {"type": "string", "description": "Short reply text to send."},
                 },
                 "required": ["message_id", "text"],
@@ -1858,7 +2085,10 @@ def _profile_tool_schemas() -> list[ToolSchema]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "qq": {"type": "string", "description": "The user's QQ number (sender_id from candidate messages)."},
+                    "qq": {
+                        "type": "string",
+                        "description": "The user's QQ number (sender_id from candidate messages).",
+                    },
                 },
                 "required": ["qq"],
                 "additionalProperties": False,
@@ -1872,9 +2102,61 @@ def _profile_tool_schemas() -> list[ToolSchema]:
                 "properties": {
                     "qq": {"type": "string", "description": "The user's QQ number."},
                     "profile": {"type": "string", "description": "Complete new profile text."},
-                    "name": {"type": "string", "description": "The user's display name (optional)."},
+                    "name": {
+                        "type": "string",
+                        "description": "The user's display name (optional).",
+                    },
                 },
                 "required": ["qq", "profile"],
+                "additionalProperties": False,
+            },
+        ),
+    ]
+
+
+def _sticker_tool_schemas() -> list[ToolSchema]:
+    """Sticker collection tools, only offered when vision is enabled."""
+    return [
+        ToolSchema(
+            name=_TOOL_SAVE_STICKER,
+            description="Save a sticker/image from a candidate message into your collection. Provide the candidate message_id that carries the image, plus a memorable name.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "Candidate message ID whose image to save.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "A short memorable name for this sticker.",
+                    },
+                    "tags": {"type": "string", "description": "Optional comma-separated tags."},
+                },
+                "required": ["message_id", "name"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_LIST_STICKERS,
+            description="List your collected stickers. Optionally filter by a name/tag keyword.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Optional keyword to filter by."},
+                },
+                "additionalProperties": False,
+            },
+        ),
+        ToolSchema(
+            name=_TOOL_SEND_STICKER,
+            description="Send a collected sticker to the group by name.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the sticker to send."},
+                },
+                "required": ["name"],
                 "additionalProperties": False,
             },
         ),

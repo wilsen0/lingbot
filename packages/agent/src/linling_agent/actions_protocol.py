@@ -112,7 +112,7 @@ def _try_decode_envelope(content: str) -> dict[str, object] | None:
     if text.startswith("```"):
         text = _FENCE_OPEN_RE.sub("", text, count=1)
         text = _FENCE_CLOSE_RE.sub("", text, count=1).strip()
-    if "\"actions\"" not in text:
+    if '"actions"' not in text:
         return None
 
     # Fast path for a clean JSON-only response.

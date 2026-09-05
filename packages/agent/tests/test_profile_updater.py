@@ -87,10 +87,28 @@ def _updater(provider, kv):
 async def test_multi_user_distillation() -> None:
     async with SqliteKVStore("bot1", ":memory:") as kv:
         script = [
-            Message(role="assistant", content="", tool_calls=[_tc("1", "read_user_profile", '{"qq":"123"}')]),
-            Message(role="assistant", content="", tool_calls=[_tc("2", "write_user_profile", '{"qq":"123","profile":"小明，喜欢钓鱼"}')]),
-            Message(role="assistant", content="", tool_calls=[_tc("3", "read_user_profile", '{"qq":"456"}')]),
-            Message(role="assistant", content="", tool_calls=[_tc("4", "write_user_profile", '{"qq":"456","profile":"小红"}')]),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[_tc("1", "read_user_profile", '{"qq":"123"}')],
+            ),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    _tc("2", "write_user_profile", '{"qq":"123","profile":"小明，喜欢钓鱼"}')
+                ],
+            ),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[_tc("3", "read_user_profile", '{"qq":"456"}')],
+            ),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[_tc("4", "write_user_profile", '{"qq":"456","profile":"小红"}')],
+            ),
             Message(role="assistant", content="好了"),
         ]
         provider = _ScriptedProvider(script)

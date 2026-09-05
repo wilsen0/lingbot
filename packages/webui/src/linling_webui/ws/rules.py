@@ -29,9 +29,7 @@ async def rules_ws(ws: WebSocket, token: str = Query(default="")) -> None:
 
     role = claims.get("role", "readonly")
     raw_bots = claims.get("bots")
-    visible: set[str] | None = (
-        None if role == "superadmin" or raw_bots is None else set(raw_bots)
-    )
+    visible: set[str] | None = None if role == "superadmin" or raw_bots is None else set(raw_bots)
 
     state = ws.app.state.runtime
     if state.audit is None:

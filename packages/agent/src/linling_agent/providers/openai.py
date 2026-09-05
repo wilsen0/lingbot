@@ -14,6 +14,7 @@ import httpx
 
 from linling_agent.errors import LLMAuthError, LLMError, LLMRateLimitError
 from linling_agent.llm import (
+    ContentPart,
     Delta,
     LLMResponse,
     Message,
@@ -21,6 +22,13 @@ from linling_agent.llm import (
     ToolCall,
     ToolSchema,
 )
+
+
+def _content_part_to_dict(part: ContentPart) -> dict[str, Any]:
+    """Convert a multimodal ContentPart to the OpenAI content-array format."""
+    if part.type == "image_url":
+        return {"type": "image_url", "image_url": {"url": part.image_url, "detail": "low"}}
+    return {"type": "text", "text": part.text}
 
 
 class OpenAIProvider:
@@ -131,7 +139,11 @@ class OpenAIProvider:
     @staticmethod
     def _message_to_dict(msg: Message) -> dict[str, Any]:
         """Convert a Message to the OpenAI API dict format."""
-        d: dict[str, Any] = {"role": msg.role, "content": msg.content}
+        d: dict[str, Any] = {"role": msg.role}
+        if msg.content_parts:
+            d["content"] = [_content_part_to_dict(p) for p in msg.content_parts]
+        else:
+            d["content"] = msg.content
         if msg.name is not None:
             d["name"] = msg.name
         if msg.tool_call_id is not None:

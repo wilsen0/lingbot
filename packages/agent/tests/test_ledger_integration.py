@@ -16,7 +16,6 @@ Covers tasks:
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 
 import pytest
 from linling_agent.agent_def import AgentDef
@@ -155,9 +154,7 @@ async def test_full_pipeline_dsl_then_chat_sees_ledger(kv) -> None:
     # Ledger system message is in the input. There may be other system
     # messages (the agent's own ``system`` prompt) — filter on content.
     ledger_msgs = [
-        m
-        for m in sent
-        if m.role == "system" and m.content.startswith("<recent_user_actions>")
+        m for m in sent if m.role == "system" and m.content.startswith("<recent_user_actions>")
     ]
     assert len(ledger_msgs) == 1
     # In group scope, ``by="u1"`` should appear.
@@ -187,9 +184,7 @@ async def test_dm_scope_omits_actor_attribute(kv) -> None:
 
     sent = provider.calls[0]
     ledger_msgs = [
-        m
-        for m in sent
-        if m.role == "system" and m.content.startswith("<recent_user_actions>")
+        m for m in sent if m.role == "system" and m.content.startswith("<recent_user_actions>")
     ]
     assert len(ledger_msgs) == 1
     assert "by=" not in ledger_msgs[0].content
@@ -240,9 +235,7 @@ async def test_rehydrate_concurrent_history_and_ledger(kv) -> None:
     sent = provider.calls[0]
     user_msgs = [m for m in sent if m.role == "user"]
     ledger_msgs = [
-        m
-        for m in sent
-        if m.role == "system" and m.content.startswith("<recent_user_actions>")
+        m for m in sent if m.role == "system" and m.content.startswith("<recent_user_actions>")
     ]
     assert any(m.content == "prev" for m in user_msgs)
     assert ledger_msgs and ledger_msgs[0].content.startswith("<recent_user_actions>")
@@ -283,8 +276,7 @@ async def test_rehydrate_ledger_load_failure_falls_back_empty(kv) -> None:
     # No ledger system message was injected (nothing in the deque).
     sent = provider.calls[0]
     assert all(
-        not (m.role == "system" and m.content.startswith("<recent_user_actions>"))
-        for m in sent
+        not (m.role == "system" and m.content.startswith("<recent_user_actions>")) for m in sent
     )
 
 
@@ -392,7 +384,9 @@ async def test_ledger_msg_position_after_history_before_user(kv) -> None:
         for i, m in enumerate(sent)
         if m.role == "system" and m.content.startswith("<recent_user_actions>")
     )
-    history_user_idx = next(i for i, m in enumerate(sent) if m.role == "user" and m.content == "earlier")
+    history_user_idx = next(
+        i for i, m in enumerate(sent) if m.role == "user" and m.content == "earlier"
+    )
     # Ledger sits after the prior user/assistant turn.
     assert system_idx > history_user_idx
 

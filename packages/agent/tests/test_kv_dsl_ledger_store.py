@@ -16,23 +16,21 @@ and unknown-scope-kind log behaviour (Req 6.3 / 6.7 / 8.2 / 8.3 /
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from linling_core.events import Event, Scope, User
-from linling_core.pipeline import DslEvent, ledger_scope_keys
-from linling_core.segments import TextSegment
-from linling_core.storage.sqlite_kv import SqliteKVStore
-
 from linling_agent.history import KVHistoryStore
 from linling_agent.ledger_store import (
     KVDslLedgerStore,
     LedgerStore,
 )
+from linling_core.events import Event, Scope, User
+from linling_core.pipeline import DslEvent, ledger_scope_keys
+from linling_core.segments import TextSegment
+from linling_core.storage.sqlite_kv import SqliteKVStore
 
 # ---------------------------------------------------------------------------
 # Fixtures + helpers

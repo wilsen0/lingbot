@@ -1086,4 +1086,3 @@ JSON payload 格式:
 **采纳:`ConversationStore.__init__(ledger_maxlen=20)`**(与 `history_turns` 并列)。
 
 理由:`history_turns` 已经是 `ConversationStore` 的参数,用于初始化 `Session.history` 的 deque maxlen;`ledger_maxlen` 行为完全对称(初始化 `Session.dsl_events` 的 deque maxlen)。新字段会迫使 caller 多记一处配置,违反"对称的东西放一起"原则。配置项暴露给 bootstrap 层后,可由命令行/环境变量在该层统一读取。
-

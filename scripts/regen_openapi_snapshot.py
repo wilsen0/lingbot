@@ -18,15 +18,7 @@ from linling_webui.app import create_app
 from linling_webui.config import WebUIConfig
 
 ROOT = Path(__file__).resolve().parents[1]
-SNAPSHOT = (
-    ROOT
-    / "packages"
-    / "webui"
-    / "frontend"
-    / "src"
-    / "api"
-    / "openapi.snapshot.json"
-)
+SNAPSHOT = ROOT / "packages" / "webui" / "frontend" / "src" / "api" / "openapi.snapshot.json"
 
 
 def main() -> None:

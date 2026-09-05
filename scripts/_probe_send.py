@@ -1,7 +1,9 @@
 """Try to send a private message via LLBot to verify outbound path."""
+
 import asyncio
 import json
 import sys
+
 import websockets
 
 URL = "ws://127.0.0.1:3001"

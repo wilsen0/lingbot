@@ -50,8 +50,7 @@ def test_every_referenced_tool_is_registered() -> None:
     missing = [
         name
         for name in counter
-        if registry.get_by_dsl_name(name) is None
-        and registry.get(name) is None
+        if registry.get_by_dsl_name(name) is None and registry.get(name) is None
     ]
     assert not missing, (
         "dicpro.txt references DSL tools with no registered implementation. "

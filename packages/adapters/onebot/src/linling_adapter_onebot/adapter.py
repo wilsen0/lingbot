@@ -53,6 +53,7 @@ class OneBotSendError(RuntimeError):
         self.retcode = retcode
         self.wording = wording
 
+
 logger = structlog.get_logger(__name__)
 
 # Reconnect backoff (seconds). Initial value is what we wait after the
@@ -382,12 +383,7 @@ class OneBotAdapter:
         except (TypeError, ValueError):
             retcode = -1
         if status not in ("ok", "async") and retcode != 0:
-            wording = str(
-                result.get("wording")
-                or result.get("message")
-                or result.get("msg")
-                or ""
-            )
+            wording = str(result.get("wording") or result.get("message") or result.get("msg") or "")
             raise OneBotSendError(
                 action=api_action, status=status or "unknown", retcode=retcode, wording=wording
             )
@@ -1082,9 +1078,7 @@ class OneBotAdapter:
 
         client = self._ensure_http_client()
         try:
-            async with client.stream(
-                "GET", url, timeout=_REMOTE_PREFLIGHT_TIMEOUT_S
-            ) as response:
+            async with client.stream("GET", url, timeout=_REMOTE_PREFLIGHT_TIMEOUT_S) as response:
                 if response.status_code >= 400:
                     logger.warning(
                         "onebot_remote_image_status",
@@ -1122,9 +1116,7 @@ class OneBotAdapter:
     def _cache_preflight(self, url: str, value: str | None, ttl_s: float) -> None:
         """Insert into the preflight cache, FIFO-evicting at the cap."""
         if len(self._remote_preflight_cache) >= _REMOTE_PREFLIGHT_CACHE_MAX_ENTRIES:
-            self._remote_preflight_cache.pop(
-                next(iter(self._remote_preflight_cache)), None
-            )
+            self._remote_preflight_cache.pop(next(iter(self._remote_preflight_cache)), None)
         self._remote_preflight_cache[url] = (value, time.monotonic() + ttl_s)
 
     def _ensure_http_client(self) -> httpx.AsyncClient:

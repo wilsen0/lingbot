@@ -75,7 +75,8 @@ class Rarity:
 
 
 _UR = Rarity(
-    "UR", "藏品",
+    "UR",
+    "藏品",
     primary=(255, 64, 96),  # neon red
     secondary=(255, 200, 220),
     tile_top=(120, 20, 40),
@@ -85,7 +86,8 @@ _UR = Rarity(
     weight=4,
 )
 _SR = Rarity(
-    "SR", "珍品",
+    "SR",
+    "珍品",
     primary=(255, 200, 70),  # gold
     secondary=(255, 240, 180),
     tile_top=(120, 86, 14),
@@ -95,7 +97,8 @@ _SR = Rarity(
     weight=3,
 )
 _R = Rarity(
-    "R", "普通",
+    "R",
+    "普通",
     primary=(120, 200, 255),  # ice blue
     secondary=(190, 220, 255),
     tile_top=(20, 50, 100),
@@ -105,7 +108,8 @@ _R = Rarity(
     weight=2,
 )
 _N = Rarity(
-    "N", "蛋壳",
+    "N",
+    "蛋壳",
     primary=(200, 200, 210),  # silver
     secondary=(220, 220, 230),
     tile_top=(60, 60, 72),
@@ -279,8 +283,9 @@ def _load_font(path: str | None, size: int) -> Any:
 def _measure(draw: ImageDraw.ImageDraw, text: str, font: Any) -> tuple[int, int]:
     if hasattr(draw, "textbbox"):
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
-        return right - left, bottom - top
-    return draw.textsize(text, font=font)  # type: ignore[attr-defined]
+        return int(right - left), int(bottom - top)
+    size = draw.textsize(text, font=font)  # type: ignore[attr-defined]
+    return int(size[0]), int(size[1])
 
 
 # ---------------------------------------------------------------------------
@@ -496,8 +501,7 @@ def _draw_egg_shape(
     shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
     sd.ellipse(
-        (cx - egg_w // 2 + 4, cy - egg_h // 2 + 6,
-         cx + egg_w // 2 + 4, cy + egg_h // 2 + 6),
+        (cx - egg_w // 2 + 4, cy - egg_h // 2 + 6, cx + egg_w // 2 + 4, cy + egg_h // 2 + 6),
         fill=(0, 0, 0, 120),
     )
     canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(radius=4)))
@@ -506,17 +510,16 @@ def _draw_egg_shape(
     body = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     bd = ImageDraw.Draw(body)
     bd.ellipse(
-        (cx - egg_w // 2, cy - egg_h // 2,
-         cx + egg_w // 2, cy + egg_h // 2),
+        (cx - egg_w // 2, cy - egg_h // 2, cx + egg_w // 2, cy + egg_h // 2),
         fill=(245, 230, 200, 255),
         outline=(170, 150, 110, 255),
         width=2,
     )
     # Highlight stroke (top-left) for a 3D feel.
     bd.arc(
-        (cx - egg_w // 2 + 6, cy - egg_h // 2 + 6,
-         cx + egg_w // 2 - 6, cy + egg_h // 2 - 6),
-        start=200, end=290,
+        (cx - egg_w // 2 + 6, cy - egg_h // 2 + 6, cx + egg_w // 2 - 6, cy + egg_h // 2 - 6),
+        start=200,
+        end=290,
         fill=(255, 250, 230, 255),
         width=3,
     )
@@ -847,7 +850,9 @@ def _render_panel(
         )
 
     # 5. Card grid.
-    margin = (layout.width - (layout.grid_cols * layout.cell_w + (layout.grid_cols - 1) * layout.cell_gap)) // 2
+    margin = (
+        layout.width - (layout.grid_cols * layout.cell_w + (layout.grid_cols - 1) * layout.cell_gap)
+    ) // 2
     for i, drop in enumerate(drops):
         col = i % layout.grid_cols
         row = i // layout.grid_cols
@@ -876,18 +881,18 @@ def _render_panel(
     sep_w, _ = _measure(draw, sep, f_footer)
     total_w = 0
     measured: list[tuple[str, tuple[int, int, int], int]] = []
-    for txt, col in pieces:
+    for txt, color in pieces:
         safe_txt = _safe(txt)
         tw, _ = _measure(draw, safe_txt, f_footer)
-        measured.append((safe_txt, col, tw))
+        measured.append((safe_txt, color, tw))
         total_w += tw
     total_w += sep_w * (len(measured) - 1)
     cursor_x = (layout.width - total_w) // 2
-    for i, (txt, col, tw) in enumerate(measured):
+    for i, (txt, color, tw) in enumerate(measured):
         if i > 0:
             draw.text((cursor_x, footer_y), sep, fill=(120, 120, 140, 255), font=f_footer)
             cursor_x += sep_w
-        draw.text((cursor_x, footer_y), txt, fill=(*col, 255), font=f_footer)
+        draw.text((cursor_x, footer_y), txt, fill=(*color, 255), font=f_footer)
         cursor_x += tw
 
     return canvas.convert("RGB")
@@ -958,7 +963,7 @@ async def gacha_image(
     # block the actual send.
     cache_dir = Path(ctx.extras.get("image_text_cache_dir") or "./data/cache")
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — fs setup
+        cache_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         unique = f"gacha_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
         (cache_dir / f"{unique}.png").write_bytes(png_bytes)
     except OSError:

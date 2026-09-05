@@ -10,6 +10,7 @@ Reference: https://github.com/botuniverse/onebot-11
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -174,6 +175,19 @@ def _enc_image(s: ImageSegment) -> dict[str, Any]:
         d["file"] = f"base64://{s.b64}"
     if s.alt:
         d["alt"] = s.alt
+    # OneBot image ``subType`` (0=normal, 1=original) is not a first-class
+    # field; the sticker send path sets it via extras so QQ's server keeps
+    # the original pixel dimensions instead of recompressing tiny images.
+    sub_type = s.extras.get("subType")
+    if sub_type is not None:
+        # Normalise to an int for the OneBot payload; keep anything weird
+        # (non-numeric strings, arbitrary objects) as-is.
+        if isinstance(sub_type, bool):
+            sub_type = int(sub_type)
+        elif isinstance(sub_type, str):
+            with contextlib.suppress(ValueError):
+                sub_type = int(sub_type)
+        d["subType"] = sub_type
     return {"type": "image", "data": d}
 
 

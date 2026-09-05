@@ -1,5 +1,6 @@
 """Classify a few candidate WebUI inputs against the live rules to find one
 that lands on chat:fallback (i.e. actually exercises the LLM)."""
+
 import asyncio
 import sys
 from pathlib import Path

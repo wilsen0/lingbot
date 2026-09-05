@@ -14,7 +14,6 @@ map back to the design document by name.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
 
 import httpx
@@ -148,9 +147,7 @@ class _ProbeStub:
         """Make the next :meth:`judge` call wait on ``event`` before returning."""
         self._block = event
 
-    async def judge(
-        self, batch: list[_ProbeBatchInput], *, scope_id: str
-    ) -> bool:
+    async def judge(self, batch: list[_ProbeBatchInput], *, scope_id: str) -> bool:
         self.call_count += 1
         self.last_batch = list(batch)
         self.last_scope = scope_id
@@ -262,7 +259,9 @@ def _make_rule_event(kind: str, text: str, *, eid: str) -> Event:
 @settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     rule_kind=st.sampled_from(_RULE_TRIGGER_KINDS),
-    text=st.text(min_size=1, max_size=20, alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00)),
+    text=st.text(
+        min_size=1, max_size=20, alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00)
+    ),
 )
 async def test_rule_fired_suppresses_probe(rule_kind: str, text: str) -> None:
     """Feature: lightweight-attention-probe, Property 1: rule fired → no probe.
@@ -341,7 +340,11 @@ async def test_not_configured_suppresses_probe(
 
 @settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
-    text=st.text(min_size=1, max_size=40, alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00, blacklist_characters="?？"))
+    text=st.text(
+        min_size=1,
+        max_size=40,
+        alphabet=st.characters(min_codepoint=32, max_codepoint=0x4E00, blacklist_characters="?？"),
+    )
 )
 async def test_probe_false_does_not_invoke_main_llm(text: str) -> None:
     """Feature: lightweight-attention-probe, Property 3: verdict false → no main LLM.
@@ -615,9 +618,7 @@ async def test_probe_failure_via_internal_handler_drops_batch() -> None:
     inner = _Inner(content='{"actions":[]}')
 
     class _ContractAbidingProbe(_ProbeStub):
-        async def judge(
-            self, batch: list[_ProbeBatchInput], *, scope_id: str
-        ) -> bool:
+        async def judge(self, batch: list[_ProbeBatchInput], *, scope_id: str) -> bool:
             self.call_count += 1
             self.last_batch = list(batch)
             self.last_scope = scope_id
@@ -641,17 +642,12 @@ async def test_probe_failure_via_internal_handler_drops_batch() -> None:
     assert spy.call_count == 1
     assert inner.calls == []
     assert sent == []
-    failed = [
-        r for r in records if r.get("event") == "group_batch.attention_probe.failed"
-    ]
+    failed = [r for r in records if r.get("event") == "group_batch.attention_probe.failed"]
     assert len(failed) == 1
     assert failed[0]["category"] == "http_5xx"
     # The dispatcher's *own* defence-in-depth handler must NOT fire
     # when the probe absorbed the failure correctly.
-    assert all(
-        r.get("event") != "group_batch.attention_probe.unexpected_failure"
-        for r in records
-    )
+    assert all(r.get("event") != "group_batch.attention_probe.unexpected_failure" for r in records)
     await dispatcher.stop()
 
 
@@ -680,7 +676,8 @@ async def test_probe_failure_via_dispatcher_defence_in_depth() -> None:
     unexpected = [
         r
         for r in records
-        if r.get("event") in (
+        if r.get("event")
+        in (
             "group_batch.attention_probe.unexpected_failure",
             "group_batch.attention_probe.failed",
         )

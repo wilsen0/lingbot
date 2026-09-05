@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -22,12 +21,11 @@ sys.path.insert(0, str(_PROJECT_ROOT / "packages" / "core" / "src"))
 sys.path.insert(0, str(_PROJECT_ROOT / "packages" / "agent" / "src"))
 sys.path.insert(0, str(_PROJECT_ROOT / "packages" / "dsl" / "src"))
 
-from linling_core.storage.sqlite_kv import SqliteKVStore
-
 from linling_agent.context import ContextBudget, ContextManager
 from linling_agent.history import KVHistoryStore
 from linling_agent.llm import Message
 from linling_agent.providers.openai import OpenAIProvider
+from linling_core.storage.sqlite_kv import SqliteKVStore
 
 _HISTORY_PREFIX = "__history__/"
 _GROUP_FILE = "_group"
@@ -73,13 +71,13 @@ async def _find_group_scopes(kv: SqliteKVStore) -> list[str]:
 
 async def _load_messages(kv: SqliteKVStore, scope: str) -> list[Message]:
     history = KVHistoryStore(kv, max_turns=64)
-    scope_id = scope[len(_HISTORY_PREFIX):]
+    scope_id = scope[len(_HISTORY_PREFIX) :]
     return await history.load(scope_id, "")
 
 
 async def _load_summary(kv: SqliteKVStore, scope: str) -> str:
     history = KVHistoryStore(kv, max_turns=64)
-    scope_id = scope[len(_HISTORY_PREFIX):]
+    scope_id = scope[len(_HISTORY_PREFIX) :]
     return await history.load_summary(scope_id, "")
 
 
@@ -127,7 +125,7 @@ async def main() -> None:
         )
 
         for scope in group_scopes:
-            scope_id = scope[len(_HISTORY_PREFIX):]
+            scope_id = scope[len(_HISTORY_PREFIX) :]
             messages = await _load_messages(kv, scope)
             existing_summary = await _load_summary(kv, scope)
             turn_count = len(messages)
@@ -162,7 +160,7 @@ async def main() -> None:
             )
 
             if replacement is None:
-                print(f"    → 未触发压缩 (历史可能已经足够短)")
+                print("    → 未触发压缩 (历史可能已经足够短)")
                 continue
 
             await history_store.save(scope_id, "", replacement)

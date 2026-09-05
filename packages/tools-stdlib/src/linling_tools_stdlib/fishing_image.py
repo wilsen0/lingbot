@@ -64,33 +64,47 @@ class Rarity:
 
 
 _LEGEND = Rarity(
-    "传说", "L",
+    "传说",
+    "L",
     primary=(255, 80, 90),
-    tile_top=(120, 20, 40), tile_bot=(50, 0, 16),
-    border_w=6, glow=46, weight=4,
+    tile_top=(120, 20, 40),
+    tile_bot=(50, 0, 16),
+    border_w=6,
+    glow=46,
+    weight=4,
 )
 _RARE = Rarity(
-    "稀有", "R",
+    "稀有",
+    "R",
     primary=(255, 200, 70),
-    tile_top=(120, 86, 14), tile_bot=(54, 34, 0),
-    border_w=5, glow=34, weight=3,
+    tile_top=(120, 86, 14),
+    tile_bot=(54, 34, 0),
+    border_w=5,
+    glow=34,
+    weight=3,
 )
 _COMMON = Rarity(
-    "普通", "N",
+    "普通",
+    "N",
     primary=(120, 200, 255),
-    tile_top=(20, 50, 100), tile_bot=(8, 18, 50),
-    border_w=3, glow=12, weight=2,
+    tile_top=(20, 50, 100),
+    tile_bot=(8, 18, 50),
+    border_w=3,
+    glow=12,
+    weight=2,
 )
 _JUNK = Rarity(
-    "杂物", "J",
+    "杂物",
+    "J",
     primary=(150, 150, 160),
-    tile_top=(58, 58, 66), tile_bot=(26, 26, 32),
-    border_w=2, glow=0, weight=1,
+    tile_top=(58, 58, 66),
+    tile_bot=(26, 26, 32),
+    border_w=2,
+    glow=0,
+    weight=1,
 )
 
-_RARITY_BY_NAME: dict[str, Rarity] = {
-    r.name: r for r in (_LEGEND, _RARE, _COMMON, _JUNK)
-}
+_RARITY_BY_NAME: dict[str, Rarity] = {r.name: r for r in (_LEGEND, _RARE, _COMMON, _JUNK)}
 
 
 # ---------------------------------------------------------------------------
@@ -480,8 +494,12 @@ def _render_settlement(
     f_badge = _load_font(cjk_font, 30)
 
     # Header title.
-    _gold_text(canvas, (width // 2 - _measure(ImageDraw.Draw(canvas), "起杆收获", f_title)[0] // 2, 48),
-               "起杆收获", f_title)
+    _gold_text(
+        canvas,
+        (width // 2 - _measure(ImageDraw.Draw(canvas), "起杆收获", f_title)[0] // 2, 48),
+        "起杆收获",
+        f_title,
+    )
 
     # Centre card holding the fish emoji.
     card_w, card_h = 380, 380
@@ -489,26 +507,35 @@ def _render_settlement(
     cy0 = 170
     _rounded_card(canvas, (cx0, cy0, cx0 + card_w, cy0 + card_h), rarity, hero=hero)
     _paste_emoji_centred(
-        canvas, emoji_loaded, emoji,
+        canvas,
+        emoji_loaded,
+        emoji,
         (cx0, cy0, cx0 + card_w, cy0 + card_h),
-        target_px=240, primary=rarity.primary,
+        target_px=240,
+        primary=rarity.primary,
     )
 
     # Rarity badge on the card.
     bd = ImageDraw.Draw(canvas)
     badge = f"{rarity.name}"
     bw, bh = _measure(bd, badge, f_badge)
-    bd.rectangle((cx0 + 14, cy0 + 14, cx0 + 14 + bw + 20, cy0 + 14 + bh + 12),
-                 fill=(*rarity.primary, 235))
+    bd.rectangle(
+        (cx0 + 14, cy0 + 14, cx0 + 14 + bw + 20, cy0 + 14 + bh + 12), fill=(*rarity.primary, 235)
+    )
     bd.text((cx0 + 24, cy0 + 20), badge, fill=(20, 20, 24, 255), font=f_badge)
 
     # Name (gold for rare+, plain white for common/junk).
     y = cy0 + card_h + 34
     nw, nh = _measure(bd, name, f_name)
     if hero:
-        _gold_text(canvas, (width // 2 - nw // 2, y), name, f_name,
-                   fill_top=tuple(min(255, c + 40) for c in rarity.primary),  # type: ignore[arg-type]
-                   fill_bot=rarity.primary)
+        _gold_text(
+            canvas,
+            (width // 2 - nw // 2, y),
+            name,
+            f_name,
+            fill_top=tuple(min(255, c + 40) for c in rarity.primary),  # type: ignore[arg-type]
+            fill_bot=rarity.primary,
+        )
     else:
         bd.text((width // 2 - nw // 2, y), name, fill=(240, 246, 255, 255), font=f_name)
     y += nh + 30
@@ -643,41 +670,61 @@ def _render_bucket(
             _rounded_card(canvas, box, _JUNK)
             _centre = ((x0 + x0 + cell_w) // 2, (y0 + y0 + cell_h) // 2)
             qw, qh = _measure(bd, "？", f_title)
-            bd.text((_centre[0] - qw // 2, _centre[1] - qh // 2), "？",
-                    fill=(120, 130, 150, 255), font=f_title)
+            bd.text(
+                (_centre[0] - qw // 2, _centre[1] - qh // 2),
+                "？",
+                fill=(120, 130, 150, 255),
+                font=f_title,
+            )
             nw, _nh = _measure(bd, "未发现", f_sub)
-            bd.text((x0 + (cell_w - nw) // 2, y0 + cell_h - 40), "未发现",
-                    fill=(120, 130, 150, 255), font=f_sub)
+            bd.text(
+                (x0 + (cell_w - nw) // 2, y0 + cell_h - 40),
+                "未发现",
+                fill=(120, 130, 150, 255),
+                font=f_sub,
+            )
             continue
 
         _rounded_card(canvas, box, sp.rarity)
         _paste_emoji_centred(
-            canvas, emoji_loaded, sp.emoji,
+            canvas,
+            emoji_loaded,
+            sp.emoji,
             (x0, y0 + 8, x0 + cell_w, y0 + cell_h - 70),
-            target_px=int(cell_w * 0.5), primary=sp.rarity.primary,
+            target_px=int(cell_w * 0.5),
+            primary=sp.rarity.primary,
         )
         # Count badge (top-right).
         badge = f"×{have}" if have > 0 else ""
         if badge:
             bw, bh = _measure(bd, badge, f_badge)
             bx1 = x0 + cell_w - 12
-            bd.rectangle((bx1 - bw - 16, y0 + 12, bx1, y0 + 12 + bh + 10),
-                         fill=(*sp.rarity.primary, 235))
+            bd.rectangle(
+                (bx1 - bw - 16, y0 + 12, bx1, y0 + 12 + bh + 10), fill=(*sp.rarity.primary, 235)
+            )
             bd.text((bx1 - bw - 8, y0 + 16), badge, fill=(20, 20, 24, 255), font=f_badge)
 
         # Name + per-tile value band.
         name_w, name_h = _measure(bd, sp.name, f_name)
         band_top = y0 + cell_h - name_h - 40
         bd.rectangle((x0, band_top - 4, x0 + cell_w, y0 + cell_h), fill=(0, 0, 0, 150))
-        bd.text((x0 + (cell_w - name_w) // 2, band_top), sp.name,
-                fill=(*sp.rarity.primary, 255), font=f_name)
+        bd.text(
+            (x0 + (cell_w - name_w) // 2, band_top),
+            sp.name,
+            fill=(*sp.rarity.primary, 255),
+            font=f_name,
+        )
         if dex_mode:
             sub = f"累计 {have}"
         else:
             sub = f"{sp.value}/个" if sp.value > 0 else "无价值"
         sub_w, _sub_h = _measure(bd, sub, f_sub)
-        bd.text((x0 + (cell_w - sub_w) // 2, y0 + cell_h - 30), sub,
-                fill=(220, 224, 235, 255), font=f_sub)
+        bd.text(
+            (x0 + (cell_w - sub_w) // 2, y0 + cell_h - 30),
+            sub,
+            fill=(220, 224, 235, 255),
+            font=f_sub,
+        )
 
         total_value += sp.value * have
         grand_count += have
@@ -692,8 +739,15 @@ def _render_bucket(
     else:
         footer = f"共 {grand_count} 只 · 总价值  灵玉 ×{total_value}"
     fw, _fh = _measure(bd, footer, f_footer)
-    _gold_text(canvas, ((width - fw) // 2, footer_y), footer, f_footer,
-               fill_top=(255, 240, 180), fill_bot=(200, 150, 50), stroke_w=3)
+    _gold_text(
+        canvas,
+        ((width - fw) // 2, footer_y),
+        footer,
+        f_footer,
+        fill_top=(255, 240, 180),
+        fill_bot=(200, 150, 50),
+        stroke_w=3,
+    )
 
     return canvas.convert("RGB")
 

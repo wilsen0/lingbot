@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 import traceback
 from datetime import datetime
@@ -162,15 +161,11 @@ async def case_chuoyichuo_jump_chain(script: Any) -> None:
         text = render(result.segments)
         # image segment 应有 思思.jpg
         any_image_susu = any(
-            "思思" in getattr(s, "url", "")
-            for s in result.segments
-            if hasattr(s, "url")
+            "思思" in getattr(s, "url", "") for s in result.segments if hasattr(s, "url")
         )
         if not any_image_susu:
             urls = [getattr(s, "url", None) for s in result.segments if hasattr(s, "url")]
-            raise AssertionError(
-                f"应输出 思思 的图片 segment, 实际 url列表={urls}; text={text!r}"
-            )
+            raise AssertionError(f"应输出 思思 的图片 segment, 实际 url列表={urls}; text={text!r}")
         # 同时还应输出 stats (灵玉 888, 妖力 5)
         if "888" not in text or "5" not in text:
             raise AssertionError(f"形象标记 后续 stats 行未输出: {text!r}")
@@ -243,7 +238,7 @@ async def case_duihuan_yuyaofu(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"兑换御妖符9: 灵玉 10000→9091 (扣 9*101); 卡 2→11 (+9)",
+        "兑换御妖符9: 灵玉 10000→9091 (扣 9*101); 卡 2→11 (+9)",
     )
 
 
@@ -292,7 +287,7 @@ async def case_duihuan_lingyu(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"兑换灵玉: 灵玉 100→600 (算术正确); 卡 5→0; 输出含 ImageSegment",
+        "兑换灵玉: 灵玉 100→600 (算术正确); 卡 5→0; 输出含 ImageSegment",
     )
 
 
@@ -317,9 +312,7 @@ async def case_chakanxiaoxi(script: Any) -> None:
     try:
         await kv_seed(kv, "啊/主页系/最新消息", TEST_QQ, "你有 3 朵新玫瑰花")
         vm = _build_vm(kv)
-        result = await vm.execute_handler(
-            handler, _make_event("消息"), captures=["消息"]
-        )
+        result = await vm.execute_handler(handler, _make_event("消息"), captures=["消息"])
         text = render(result.segments)
         if "你有 3 朵新玫瑰花" not in text:
             raise AssertionError(f"输出应含消息内容, 实得 {text!r}")
@@ -360,17 +353,13 @@ async def case_codec_tools(script: Any) -> None:
                     f"{msg!r} 路由错误: "
                     f"{intent.match.handler.trigger if intent.match else intent.reason}"
                 )
-            result = await vm.execute_handler(
-                handler, ev, captures=intent.match.captures
-            )
+            result = await vm.execute_handler(handler, ev, captures=intent.match.captures)
             text = render(result.segments).strip()
             if expected not in text:
-                raise AssertionError(
-                    f"{name}: 输入={msg!r} 期望含 {expected!r}, 实得 {text!r}"
-                )
+                raise AssertionError(f"{name}: 输入={msg!r} 期望含 {expected!r}, 实得 {text!r}")
     finally:
         await kv.close()
-    _print("OK", f"codec 工具: URL/Base64/Hex 编解码 全部正确")
+    _print("OK", "codec 工具: URL/Base64/Hex 编解码 全部正确")
 
 
 # ---------------------------------------------------------------------------
@@ -384,8 +373,7 @@ async def case_jiazhu_classifier(script: Any) -> None:
     intent = classifier.classify(ev)
     if intent.match is None or intent.match.handler.trigger != "加注([0-9]+)":
         raise AssertionError(
-            f"加注 路由错误: "
-            f"{intent.match.handler.trigger if intent.match else intent.reason}"
+            f"加注 路由错误: " f"{intent.match.handler.trigger if intent.match else intent.reason}"
         )
     if intent.match.captures != ["200"]:
         raise AssertionError(f"捕获错误: {intent.match.captures}")
@@ -410,9 +398,7 @@ async def case_guoqing_giftpack(script: Any) -> None:
         await kv_seed(kv, "休闲系/珍品/气球", "剩余数量", "5")
         await kv_seed(kv, "小苏苏/密友", TEST_QQ, "0")
         vm = _build_vm(kv)
-        result = await vm.execute_handler(
-            handler, _make_event("国庆快乐"), captures=["", "快乐"]
-        )
+        result = await vm.execute_handler(handler, _make_event("国庆快乐"), captures=["", "快乐"])
         text = render(result.segments)
         if "气球" not in text and "🎈" not in text:
             raise AssertionError(f"国庆 输出应有气球, 实得 {text!r}")
@@ -428,7 +414,7 @@ async def case_guoqing_giftpack(script: Any) -> None:
             raise AssertionError(f"剩余数量 应=4, 实得 {remain}")
     finally:
         await kv.close()
-    _print("OK", f"(.*)国庆(.*): 拿气球 + 节日礼包 标记; 剩余 5→4")
+    _print("OK", "(.*)国庆(.*): 拿气球 + 节日礼包 标记; 剩余 5→4")
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +432,7 @@ async def case_songhua_at(script: Any) -> None:
         await kv_seed(kv, "啊/活动系/玫瑰花", TEST_QQ, "5")
         await kv_seed(kv, "啊/活动系/玫瑰花", TARGET_QQ, "0")
         vm = _build_vm(kv)
-        result = await vm.execute_handler(
-            handler, _make_event("送花@", at=TARGET_QQ), captures=[]
-        )
+        result = await vm.execute_handler(handler, _make_event("送花@", at=TARGET_QQ), captures=[])
         text = render(result.segments)
         if "玫瑰花送给了ta" not in text and "您把玫瑰花送给了ta" not in text:
             raise AssertionError(f"送花@ 输出错: {text!r}")
@@ -464,7 +448,7 @@ async def case_songhua_at(script: Any) -> None:
             raise AssertionError(f"主页消息 应含 '玫瑰花', 实得 {msg!r}")
     finally:
         await kv.close()
-    _print("OK", f"送花@: 自己 5→4; 对方 0→1; 主页消息已写入")
+    _print("OK", "送花@: 自己 5→4; 对方 0→1; 主页消息已写入")
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +469,10 @@ async def case_wode_ka_yuyao(script: Any) -> None:
         m = intent.match
         if m is None or m.handler.trigger != "我的(卡|御妖)(.*)":
             raise AssertionError(
-                f"{txt!r} 路由错误: "
-                f"{m.handler.trigger if m else (intent.kind, intent.reason)}"
+                f"{txt!r} 路由错误: " f"{m.handler.trigger if m else (intent.kind, intent.reason)}"
             )
         if m.captures != expected_caps:
-            raise AssertionError(
-                f"{txt!r} 捕获错误: 期望 {expected_caps}, 实得 {m.captures}"
-            )
+            raise AssertionError(f"{txt!r} 捕获错误: 期望 {expected_caps}, 实得 {m.captures}")
     _print("OK", "我的(卡|御妖)(.*) OR + 第二捕获组 一致")
 
 
@@ -551,9 +532,7 @@ async def case_blackjack_join(script: Any) -> None:
         if b1 != "900":
             raise AssertionError(f"玩家1 灵玉 1000→900, 实得 {b1!r}")
         # 玩家 2 (TARGET_QQ)
-        await vm.execute_handler(
-            handler, _make_event("加入对局", sender=TARGET_QQ), captures=[]
-        )
+        await vm.execute_handler(handler, _make_event("加入对局", sender=TARGET_QQ), captures=[])
         p2 = await kv_peek(kv, "啊/娱乐系/黑杰克", "玩家2", "")
         b2 = await kv_peek(kv, "啊/灵玉系/灵玉", TARGET_QQ, "")
         ready = await kv_peek(kv, "啊/娱乐系/黑杰克", f"是否准备{TEST_GROUP}", "")
@@ -570,7 +549,7 @@ async def case_blackjack_join(script: Any) -> None:
         await kv.close()
     _print(
         "OK",
-        f"黑杰克 加入对局: 玩家1+玩家2 都扣 100; 奖池=200; 准备=1",
+        "黑杰克 加入对局: 玩家1+玩家2 都扣 100; 奖池=200; 准备=1",
     )
 
 
@@ -603,9 +582,7 @@ async def case_time_formats() -> None:
     try:
         vm = _build_vm(kv)
         with patch("linling_dsl.vm.datetime", _DT):
-            res = await vm.execute_handler(
-                script.handlers[0], _make_event("trig")
-            )
+            res = await vm.execute_handler(script.handlers[0], _make_event("trig"))
         out = render(res.segments)
         if "0520" not in out:
             raise AssertionError(f"%时间MMdd% 错: {out!r}")

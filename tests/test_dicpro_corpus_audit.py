@@ -15,7 +15,6 @@ system.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import re
 from collections import Counter
@@ -160,7 +159,7 @@ async def test_no_handler_in_dicpro_raises_at_runtime() -> None:
                 counter["vm-error"] += 1
                 failures.append((h.trigger, f"{type(exc).__name__}: {exc}"))
                 continue
-            except Exception as exc:  # noqa: BLE001 — auditor wants every error
+            except Exception as exc:
                 counter["python-error"] += 1
                 failures.append((h.trigger, f"{type(exc).__name__}: {exc}"))
                 continue

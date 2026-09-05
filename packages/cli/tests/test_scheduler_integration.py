@@ -180,7 +180,9 @@ rules:
         await bot.bus.publish(ev)
 
         for _ in range(40):
-            if any("INTERNAL_FIRED" in (a.segments[0].text if a.segments else "") for a in rec.sent):
+            if any(
+                "INTERNAL_FIRED" in (a.segments[0].text if a.segments else "") for a in rec.sent
+            ):
                 break
             await asyncio.sleep(0.05)
 
@@ -239,17 +241,13 @@ rules:
         await bot.bus.publish(ev)
 
         for _ in range(40):
-            if any(
-                "GOT_苹果" in (a.segments[0].text if a.segments else "")
-                for a in rec.sent
-            ):
+            if any("GOT_苹果" in (a.segments[0].text if a.segments else "") for a in rec.sent):
                 break
             await asyncio.sleep(0.05)
 
         emitted = [a.segments[0].text for a in rec.sent if a.segments]
         assert any("GOT_苹果" in t for t in emitted), (
-            f"expected scheduler to invoke [内部]echo-(.*) with capture '苹果', "
-            f"got {emitted!r}"
+            f"expected scheduler to invoke [内部]echo-(.*) with capture '苹果', got {emitted!r}"
         )
     finally:
         await bot.stop()
@@ -273,8 +271,7 @@ async def test_scheduler_fire_resolves_regex_internal_with_space_arg(
     _write(
         tmp_path,
         "rules/regex_space.ling",
-        "kick\n$调用 0 游戏判断 12345$\n\n"
-        "[内部]游戏判断 ([0-9]+)\nGOT_%括号1%\n",
+        "kick\n$调用 0 游戏判断 12345$\n\n[内部]游戏判断 ([0-9]+)\nGOT_%括号1%\n",
     )
     yaml = """\
 bot_id: bot1
@@ -303,10 +300,7 @@ rules:
         await bot.bus.publish(ev)
 
         for _ in range(40):
-            if any(
-                "GOT_12345" in (a.segments[0].text if a.segments else "")
-                for a in rec.sent
-            ):
+            if any("GOT_12345" in (a.segments[0].text if a.segments else "") for a in rec.sent):
                 break
             await asyncio.sleep(0.05)
 

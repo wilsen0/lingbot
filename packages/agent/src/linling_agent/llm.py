@@ -21,6 +21,19 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ContentPart:
+    """A single part of a multimodal message content array.
+
+    ``type`` is ``"text"`` (use ``text``) or ``"image_url"`` (use
+    ``image_url``, a data URI like ``data:image/png;base64,...``).
+    """
+
+    type: str  # "text" | "image_url"
+    text: str = ""
+    image_url: str = ""
+
+
+@dataclass(frozen=True)
 class Message:
     """A single message in a conversation."""
 
@@ -38,6 +51,23 @@ class Message:
     # (vanilla OpenAI, Anthropic-via-proxy) ignore the field, so it's
     # safe to thread through unconditionally.
     reasoning_content: str | None = None
+    # Transient multimodal field: when set, the content array (each part
+    # ``text`` or ``image_url``) is serialised instead of the ``content``
+    # string. Only used for a single LLM request — never persisted to
+    # history, which stores the ``content`` string alone.
+    content_parts: tuple[ContentPart, ...] | None = None
+
+
+def count_image_parts(message: Message) -> int:
+    """Number of image_url parts in a message (0 if none / no parts)."""
+    if not message.content_parts:
+        return 0
+    return sum(1 for p in message.content_parts if p.type == "image_url")
+
+
+def message_has_images(message: Message) -> bool:
+    """True iff the message carries at least one image_url part."""
+    return count_image_parts(message) > 0
 
 
 @dataclass(frozen=True)

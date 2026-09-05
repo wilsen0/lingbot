@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from linling_dsl.vm import VMResult
 
 logger = structlog.get_logger(__name__)
+_bg_tasks: set[asyncio.Task[Any]] = set()
 
 
 # Cap on nested ``$回调$`` chain depth — guards against an
@@ -40,9 +41,7 @@ _CALLBACK_MAX_DEPTH = 16
 # ---------------------------------------------------------------------------
 
 
-async def invoke_internal_handler(
-    ctx: ToolCtx, handler: str, *extra: str
-) -> VMResult | None:
+async def invoke_internal_handler(ctx: ToolCtx, handler: str, *extra: str) -> VMResult | None:
     """Run an ``[内部]`` handler in a fresh sub-VM and return its :class:`VMResult`.
 
     Backs both ``$回调$`` (``callback_stub`` — text return) and
@@ -560,6 +559,7 @@ async def send_message(
         # it verbatim instead of as a line break. Mirrors the on-screen
         # behaviour of plain ``OutputText`` lines that already decode.
         from linling_dsl.vm import _decode_qrdic_escapes  # noqa: PLC0415
+
         segments = [TextSegment(text=_decode_qrdic_escapes(body))]
 
     action = Action(kind="send", target=scope, segments=segments)
@@ -591,5 +591,7 @@ async def send_message(
                 scope_kind=scope_kind,
             )
 
-    asyncio.create_task(_deliver(), name=f"send_message:{scope_kind}:{target}")
+    task = asyncio.create_task(_deliver(), name=f"send_message:{scope_kind}:{target}")
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
     return ""

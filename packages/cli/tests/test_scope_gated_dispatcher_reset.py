@@ -187,9 +187,7 @@ async def test_gate_allows_dm_regardless_of_allowlist() -> None:
     """
     inner = _RecordingInner()
     gate = _gate(inner, allowed=frozenset({"only-this-group"}))
-    session = Session(
-        key=ConversationKey(bot_id="b", scope_id="any-dm", sender_id="u1")
-    )
+    session = Session(key=ConversationKey(bot_id="b", scope_id="any-dm", sender_id="u1"))
     actions = await gate.run(_event(scope_kind="dm", scope_id="any-dm"), session)
     # Inner ran (recorded the event) and produced its standard reply.
     assert len(inner.runs) == 1
@@ -200,9 +198,7 @@ async def test_gate_denies_group_not_on_allowlist() -> None:
     """A group scope outside the allowlist gets the static fallback reply."""
     inner = _RecordingInner()
     gate = _gate(inner, allowed=frozenset({"allowed-group"}))
-    session = Session(
-        key=ConversationKey(bot_id="b", scope_id="other-group", sender_id="u1")
-    )
+    session = Session(key=ConversationKey(bot_id="b", scope_id="other-group", sender_id="u1"))
     actions = await gate.run(_event(scope_kind="group", scope_id="other-group"), session)
     # Inner did NOT run; the gate produced a fallback reply.
     assert inner.runs == []
@@ -215,9 +211,7 @@ async def test_gate_allows_group_on_allowlist() -> None:
     """A group scope on the allowlist reaches the inner dispatcher."""
     inner = _RecordingInner()
     gate = _gate(inner, allowed=frozenset({"allowed-group"}))
-    session = Session(
-        key=ConversationKey(bot_id="b", scope_id="allowed-group", sender_id="u1")
-    )
+    session = Session(key=ConversationKey(bot_id="b", scope_id="allowed-group", sender_id="u1"))
     await gate.run(_event(scope_kind="group", scope_id="allowed-group"), session)
     assert len(inner.runs) == 1
 
@@ -232,9 +226,7 @@ async def test_gate_dispatch_returns_inner_result_for_dm() -> None:
 
     inner = _DispatchInner()
     gate = _gate(inner, allowed=frozenset({"only-this-group"}))
-    session = Session(
-        key=ConversationKey(bot_id="b", scope_id="any-dm", sender_id="u1")
-    )
+    session = Session(key=ConversationKey(bot_id="b", scope_id="any-dm", sender_id="u1"))
     result = await gate.dispatch(_event(scope_kind="dm", scope_id="any-dm"), session)
     assert isinstance(result, AgentResult)
     assert result.content == "real-reply"
@@ -246,9 +238,7 @@ async def test_gate_dispatch_returns_fallback_for_denied_group() -> None:
 
     inner = _RecordingInner()
     gate = _gate(inner, allowed=frozenset({"allowed-group"}))
-    session = Session(
-        key=ConversationKey(bot_id="b", scope_id="other-group", sender_id="u1")
-    )
+    session = Session(key=ConversationKey(bot_id="b", scope_id="other-group", sender_id="u1"))
     result = await gate.dispatch(_event(scope_kind="group", scope_id="other-group"), session)
     assert isinstance(result, AgentResult)
     assert result.content == "denied"

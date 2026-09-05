@@ -657,9 +657,7 @@ def _build_web_chat_dispatcher(
             session = Session(
                 key=ConversationKey(bot_id=bot_id, scope_id=scope.id, sender_id=user_id),
             )
-            actions = await bot.router.command_dispatcher.run(
-                event, intent.match, session
-            )
+            actions = await bot.router.command_dispatcher.run(event, intent.match, session)
             segments = _collect_web_segments(actions)
             text = "".join(s.text for s in segments if s.kind == "text")
             return WebChatReply(
@@ -675,9 +673,7 @@ def _build_web_chat_dispatcher(
             return WebChatReply(
                 content=bot.router._cfg.unknown_command_reply,
                 source="empty",
-                segments=(
-                    WebChatSegment(kind="text", text=bot.router._cfg.unknown_command_reply),
-                ),
+                segments=(WebChatSegment(kind="text", text=bot.router._cfg.unknown_command_reply),),
             )
 
         # Ignore verdict: blocked / non-message / self-loop. Surface
@@ -734,9 +730,7 @@ def _build_web_chat_dispatcher(
         # if the awaiting coroutine is cancelled after the lock was
         # taken, so we don't need to special-case that here.
         try:
-            await asyncio.wait_for(
-                session.lock.acquire(), timeout=_WEBUI_SESSION_LOCK_TIMEOUT_S
-            )
+            await asyncio.wait_for(session.lock.acquire(), timeout=_WEBUI_SESSION_LOCK_TIMEOUT_S)
         except TimeoutError:
             logger.warning(
                 "webui.chat.session_lock_timeout",
@@ -747,9 +741,7 @@ def _build_web_chat_dispatcher(
             return WebChatReply(
                 content=bot.router._cfg.busy_session_reply,
                 source="empty",
-                segments=(
-                    WebChatSegment(kind="text", text=bot.router._cfg.busy_session_reply),
-                ),
+                segments=(WebChatSegment(kind="text", text=bot.router._cfg.busy_session_reply),),
             )
 
         try:
@@ -825,11 +817,7 @@ def _agent_result_to_reply(
         tool_calls_made=result.tool_calls_made,
         total_tokens=result.total_tokens,
         source="agent",
-        segments=(
-            (WebChatSegment(kind="text", text=text),)
-            if text
-            else ()
-        ),
+        segments=((WebChatSegment(kind="text", text=text),) if text else ()),
     )
 
 
@@ -855,9 +843,7 @@ def _collect_web_segments(actions: list[Action]) -> list[WebChatSegment]:
             elif isinstance(seg, ImageSegment):
                 url = _rewrite_image_url(seg.url or seg.path or "")
                 if url:
-                    out.append(
-                        WebChatSegment(kind="image", url=url, alt=seg.alt or "")
-                    )
+                    out.append(WebChatSegment(kind="image", url=url, alt=seg.alt or ""))
     return out
 
 
@@ -911,7 +897,7 @@ def _rewrite_image_url(raw: str) -> str:
     if raw.startswith("base64://"):
         # PNG is what our renderers emit today; the browser sniffs
         # the actual MIME from the magic bytes if it disagrees.
-        return "data:image/png;base64," + raw[len("base64://"):]
+        return "data:image/png;base64," + raw[len("base64://") :]
     if raw.startswith(_ASSET_SCHEME):
         name = raw[len(_ASSET_SCHEME) :]
         if not name:

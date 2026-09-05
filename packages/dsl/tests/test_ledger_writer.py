@@ -34,7 +34,6 @@ from hypothesis import strategies as st
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, DslEvent, Session
 from linling_core.segments import TextSegment
-
 from linling_dsl.ast_nodes import Handler
 from linling_dsl.ledger import LedgerStore, LedgerWriter
 
@@ -171,7 +170,9 @@ def test_property_2_append_field_consistency(
     assert ev.actor_id == (sender_id or "_unknown")
 
     # mode resolution mirrors the writer's policy.
-    expected_mode = summary_mode if summary_mode in ("trigger_only", "with_result") else "with_result"
+    expected_mode = (
+        summary_mode if summary_mode in ("trigger_only", "with_result") else "with_result"
+    )
     assert ev.mode == expected_mode
 
     # Summary is empty on error or trigger_only; otherwise truncated.
@@ -216,9 +217,7 @@ def test_property_3_expose_decision_table(
 
     if explicit is True:
         appended = True
-    elif explicit is False:
-        appended = False
-    elif is_internal:
+    elif explicit is False or is_internal:
         appended = False
     else:
         appended = default
@@ -305,11 +304,7 @@ async def test_property_10_save_failure_does_not_raise_into_main_path() -> None:
     # asyncio integration warns about an unretrieved exception). The
     # writer guarantees ``_safe_save`` swallows the underlying error,
     # so awaiting the task itself returns cleanly.
-    pending = [
-        t
-        for t in asyncio.all_tasks()
-        if t.get_name() == "dsl_ledger_save"
-    ]
+    pending = [t for t in asyncio.all_tasks() if t.get_name() == "dsl_ledger_save"]
     for task in pending:
         await task
 
@@ -334,11 +329,7 @@ async def test_save_failure_field_parity_with_no_store() -> None:
     writer_a.append(session=session_no_store, handler=_handler(), **args)  # type: ignore[arg-type]
     writer_b.append(session=session_bad_store, handler=_handler(), **args)  # type: ignore[arg-type]
 
-    pending = [
-        t
-        for t in asyncio.all_tasks()
-        if t.get_name() == "dsl_ledger_save"
-    ]
+    pending = [t for t in asyncio.all_tasks() if t.get_name() == "dsl_ledger_save"]
     for task in pending:
         await task
 

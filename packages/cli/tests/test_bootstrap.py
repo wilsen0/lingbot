@@ -162,7 +162,12 @@ class _BatchInner:
         _ = session, scope_id, sender_id
 
     async def record_messages(
-        self, *, session: Session, scope_id: str, sender_id: str, messages: list  # # type: ignore[no-untyped-def]
+        self,
+        *,
+        session: Session,
+        scope_id: str,
+        sender_id: str,
+        messages: list,  # # type: ignore[no-untyped-def]
     ) -> None:
         _ = session, scope_id, sender_id, messages
 

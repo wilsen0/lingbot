@@ -30,7 +30,6 @@ import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
-
 from linling_core.pipeline import DslEvent
 
 if TYPE_CHECKING:
@@ -154,9 +153,7 @@ class KVDslLedgerStore:
             )
             ttl_seconds = _DEFAULT_TTL
         if not 1 <= maxlen <= _ABSOLUTE_MAXLEN:
-            raise ValueError(
-                f"maxlen out of range [1, {_ABSOLUTE_MAXLEN}]: {maxlen!r}"
-            )
+            raise ValueError(f"maxlen out of range [1, {_ABSOLUTE_MAXLEN}]: {maxlen!r}")
         self._kv = kv
         self._ttl = ttl_seconds
         self._maxlen = maxlen

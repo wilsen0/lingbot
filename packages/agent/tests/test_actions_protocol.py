@@ -28,4 +28,3 @@ def test_parse_actions_envelope_ignores_non_actions_json_before_envelope() -> No
     assert outcome.recognised is True
     assert len(outcome.entries) == 1
     assert outcome.entries[0].text == "ok"
-

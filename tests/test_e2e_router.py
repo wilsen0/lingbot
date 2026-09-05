@@ -26,12 +26,14 @@ inline so the test is fast and self-contained.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import linling_core.tools_builtin  # noqa: F401 — register DSL built-ins
+import linling_tools_stdlib  # noqa: F401 — registers send_reply
 import pytest
 from linling_agent.agent_def import AgentDef
 from linling_agent.dispatcher import AgentChatDispatcher
-from linling_agent.llm import LLMResponse, Message, TokenUsage
+from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
 from linling_agent.runtime import AgentRuntime
 from linling_core.bus import EventBus
 from linling_core.classifier import MessageClassifier
@@ -81,7 +83,22 @@ class EchoProvider:
                 user_text = m.content
                 break
         return LLMResponse(
-            message=Message(role="assistant", content=f"echo:{user_text}"),
+            message=Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="s1",
+                        name="send_reply",
+                        arguments=json.dumps({"text": f"echo:{user_text}"}),
+                    ),
+                    ToolCall(
+                        id="f1",
+                        name="finish_turn",
+                        arguments='{"summary":"echoed"}',
+                    ),
+                ],
+            ),
             usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
 
@@ -120,21 +137,23 @@ async def _build_stack():
     # DSL dispatcher.
     cmd = DslCommandDispatcher(registry=registry, kv=kv, bot_id="linling")
 
+    actions: list[Action] = []
+
+    async def sink(a: Action) -> None:
+        actions.append(a)
+
     # Agent dispatcher backed by the echo provider.
-    agent_def = AgentDef(name="default", model="mock", system="")
+    agent_def = AgentDef(name="default", model="mock", system="", tools=["send_reply"])
     agent = AgentRuntime(
         agent_def=agent_def,
         provider=EchoProvider(),
         tool_registry=registry,
         kv=kv,
         bot_id="linling",
+        action_sink=sink,
     )
     chat = AgentChatDispatcher(agent=agent)
-
-    actions: list[Action] = []
-
-    async def sink(a: Action) -> None:
-        actions.append(a)
+    chat.set_action_sink(sink)
 
     router = Router(
         classifier=classifier,
@@ -233,9 +252,7 @@ async def test_concurrent_same_sender_serialises(stack):
     # Kick off 5 concurrent top-ups. Without the session lock, the
     # read-modify-write race could clobber intermediate states; with it,
     # the final balance must be exactly 5 * 288 = 1440.
-    await asyncio.gather(
-        *(router.handle(_event("/充值", eid=f"x-{i}")) for i in range(5))
-    )
+    await asyncio.gather(*(router.handle(_event("/充值", eid=f"x-{i}")) for i in range(5)))
 
     assert await kv.read("啊/灵玉系", "灵玉", "u1") == "1440"
 

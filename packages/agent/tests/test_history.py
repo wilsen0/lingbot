@@ -14,8 +14,8 @@ from linling_agent.context import (
     fit_messages_to_budget,
 )
 from linling_agent.dispatcher import AgentChatDispatcher
-from linling_agent.history import KVHistoryStore
-from linling_agent.llm import LLMResponse, Message, TokenUsage, ToolCall
+from linling_agent.history import KVHistoryStore, _message_to_history_item
+from linling_agent.llm import ContentPart, LLMResponse, Message, TokenUsage, ToolCall
 from linling_agent.runtime import AgentRuntime
 from linling_core.events import Event, Scope, User
 from linling_core.pipeline import ConversationKey, ConversationStore
@@ -194,6 +194,44 @@ async def test_save_load_preserves_tool_call_blocks(history, kv):
     assert loaded[1].tool_calls[0].arguments == '{"message_id":"m1","text":"可以"}'
     assert loaded[1].reasoning_content == "thought"
     assert loaded[2].tool_call_id == "tc1"
+
+
+async def test_content_parts_not_serialized(history, kv):
+    """content_parts is transient — never persisted to the KV store."""
+    msg = Message(
+        role="user",
+        content="describe the image",
+        content_parts=(
+            ContentPart(type="text", text="describe the image"),
+            ContentPart(type="image_url", image_url="data:image/png;base64,AAAA"),
+        ),
+    )
+    await history.save("s1", "u1", [msg])
+
+    raw = await kv.read("__history__/s1", "u1", "messages")
+    data = json.loads(raw)
+    assert "content_parts" not in data[0]
+
+    loaded = await history.load("s1", "u1")
+    assert len(loaded) == 1
+    # Text content survives the roundtrip; multimodal parts do not.
+    assert loaded[0].content == "describe the image"
+    assert loaded[0].content_parts is None
+
+
+def test_message_to_history_item_omits_parts() -> None:
+    msg = Message(
+        role="user",
+        content="describe the image",
+        content_parts=(
+            ContentPart(type="text", text="describe the image"),
+            ContentPart(type="image_url", image_url="data:image/png;base64,AAAA"),
+        ),
+    )
+    item = _message_to_history_item(msg)
+    assert "content_parts" not in item
+    assert item["role"] == "user"
+    assert item["content"] == "describe the image"
 
 
 async def test_trims_to_max_turns(kv):

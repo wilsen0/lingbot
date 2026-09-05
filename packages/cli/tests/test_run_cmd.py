@@ -82,7 +82,6 @@ def test_apply_adapter_filter_supports_multiple() -> None:
 def test_apply_adapter_filter_rejects_unknown_kind() -> None:
     """Typo in --only-adapters must abort, not silently start with 0 adapters."""
     import typer
-
     from linling_cli.commands.run import _apply_adapter_filter
     from linling_core.config import AdapterConfig, BotConfig
 

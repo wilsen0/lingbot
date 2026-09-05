@@ -65,6 +65,18 @@ def test_encode_image_prefers_url_then_path_then_b64() -> None:
     assert to_onebot_msg([ImageSegment(b64="AAAA")])[0]["data"]["file"] == "base64://AAAA"
 
 
+def test_encode_image_subtype_from_extras() -> None:
+    # extras.subType (0=normal, 1=original) passes through to the OneBot
+    # payload — the sticker send path uses it to keep original dimensions.
+    out = to_onebot_msg([ImageSegment(b64="AAAA", extras={"subType": 1})])
+    assert out[0]["data"]["subType"] == 1
+    # String values are normalised to ints; absent extras leave the field out.
+    out = to_onebot_msg([ImageSegment(b64="AAAA", extras={"subType": "1"})])
+    assert out[0]["data"]["subType"] == 1
+    out = to_onebot_msg([ImageSegment(b64="AAAA")])
+    assert "subType" not in out[0]["data"]
+
+
 def test_encode_decode_roundtrip_text() -> None:
     msg = [{"type": "text", "data": {"text": "hello"}}]
     assert to_onebot_msg(from_onebot_msg(msg)) == msg

@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from linling_core.config import expand_env_recursive
+from linling_core.config import coerce_bool, expand_env_recursive
+
+# Environment variable controlling ``vision_enabled`` when the agent YAML
+# does not set it explicitly — so the vision mode can be operated entirely
+# from .env (``LINLING_VISION_ENABLED=true`` + a vision-capable
+# ``LINLING_MODEL``) without touching the agent file.
+_VISION_ENV_VAR = "LINLING_VISION_ENABLED"
 
 
 @dataclass
@@ -124,6 +130,12 @@ class AgentDef:
     guardrails: AgentGuardrails = field(default_factory=AgentGuardrails)
     temperature: float = 0.7
     reasoning_effort: str | None = None
+    vision_enabled: bool = False
+    """Enable multimodal vision: image/sticker segments are resolved to
+    base64 and attached as content parts in LLM requests. When False
+    (default), non-text messages behave exactly as before (pure-image
+    messages are silently dropped in DM; group batch renders [图片]
+    markers without actual image content)."""
     provider_config: AgentProviderConfig = field(default_factory=AgentProviderConfig)
 
     @classmethod
@@ -172,6 +184,16 @@ class AgentDef:
 
         provider_config = _provider_config_from_dict(data.get("provider_config"))
 
+        # vision_enabled: explicit YAML wins (including the
+        # ``${LINLING_VISION_ENABLED:-false}`` interpolation spelling);
+        # otherwise fall back to the environment variable so the vision
+        # mode can be operated purely from .env. ``coerce_bool`` handles
+        # the string forms env expansion yields (``"false"`` must not
+        # become True) and fails loudly on garbage values.
+        vision_raw = data.get("vision_enabled")
+        if vision_raw is None:
+            vision_raw = os.environ.get(_VISION_ENV_VAR, "false")
+
         return cls(
             name=data["name"],
             provider=data.get("provider", "openai"),
@@ -182,5 +204,6 @@ class AgentDef:
             guardrails=guardrails,
             temperature=data.get("temperature", 0.7),
             reasoning_effort=data.get("reasoning_effort"),
+            vision_enabled=coerce_bool(vision_raw),
             provider_config=provider_config,
         )

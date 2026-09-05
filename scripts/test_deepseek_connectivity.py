@@ -38,7 +38,7 @@ async def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     _load_dotenv(repo_root / ".env")
 
-    from linling_agent.llm import Message, ToolCall, ToolSchema
+    from linling_agent.llm import Message, ToolCall
     from linling_agent.providers.openai import OpenAIProvider
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -89,9 +89,7 @@ async def main() -> int:
             role="assistant",
             content="",
             reasoning_content="我需要调用工具来获取日期",
-            tool_calls=[
-                ToolCall(id="call_001", name="get_date", arguments="{}")
-            ],
+            tool_calls=[ToolCall(id="call_001", name="get_date", arguments="{}")],
         )
         turn1_tool_result = Message(
             role="tool",

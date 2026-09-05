@@ -75,8 +75,7 @@ _UNKNOWN_ACTOR = "_unknown"
 # "parses under XML 1.0" invariant even when handler output, KV-restored
 # data, or trigger metadata accidentally carries a control character.
 _XML_INVALID_RE = re.compile(
-    "[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd"
-    "\U00010000-\U0010ffff]",
+    "[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]",
 )
 
 
@@ -138,9 +137,7 @@ class LedgerRenderer:
         include_actor: bool = False,
     ) -> None:
         if not _BUDGET_MIN <= total_char_budget <= _BUDGET_MAX:
-            raise ValueError(
-                f"total_char_budget out of range [{_BUDGET_MIN}, {_BUDGET_MAX}]"
-            )
+            raise ValueError(f"total_char_budget out of range [{_BUDGET_MIN}, {_BUDGET_MAX}]")
         self._budget = total_char_budget
         self._include_actor = bool(include_actor)
 
@@ -359,11 +356,7 @@ class LedgerRenderer:
         # scope (caller toggles ``include_actor``), and never as
         # ``by=""`` or ``by="_unknown"`` for events whose actor was
         # missing.
-        if (
-            self._include_actor
-            and ev.actor_id
-            and ev.actor_id != _UNKNOWN_ACTOR
-        ):
+        if self._include_actor and ev.actor_id and ev.actor_id != _UNKNOWN_ACTOR:
             attrs.append(f"by={quoteattr(_xml_safe(ev.actor_id))}")
 
         # Requirement 5.3: trigger_only events never expose a summary.

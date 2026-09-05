@@ -233,10 +233,7 @@ def image_chat_app(tmp_path: Path) -> Iterator[tuple[TestClient, str]]:
         # Trigger emits a text line, a remote image, and a `@pic:`
         # shorthand. Both image shapes need to round-trip through the
         # web dispatcher into a URL the browser can fetch.
-        "我的灵玉\n"
-        "0\n"
-        "±img=https://example.com/badge.png±\n"
-        "±img=@pic:思思±\n",
+        "我的灵玉\n0\n±img=https://example.com/badge.png±\n±img=@pic:思思±\n",
     )
     bot_yaml = """\
 bot_id: chat_test_img
@@ -417,7 +414,6 @@ def test_proxy_endpoint_rejects_non_http_scheme(image_chat_app) -> None:
     client, _token = image_chat_app
     r = client.get("/api/files/proxy?url=file%3A%2F%2F%2Fetc%2Fpasswd")
     assert r.status_code == 400
-
 
 
 @pytest.fixture
@@ -667,9 +663,7 @@ class _RecordingProvider:
         # outbound buffer between turns (the runtime appends tool
         # results in place when tool calling is exercised).
         self.prompts.append(list(messages))
-        last_user = next(
-            (m.content for m in reversed(messages) if m.role == "user"), ""
-        )
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
         user_count = sum(1 for m in messages if m.role == "user")
         # Tool-based sending contract: emit the reply via ``send_reply``
         # then end the turn with ``finish_turn``.  The dispatcher records

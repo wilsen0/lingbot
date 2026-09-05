@@ -193,7 +193,7 @@ flowchart TB
 作为一条 `role="system"` 消息放进 `prefix_messages`,紧随 agent 主 system:
 
 ```xml
-<user_profile qq="2078123478" name="某昵称">
+<user_profile qq="10001" name="某昵称">
 这里是不超过 400 字的画像正文……
 </user_profile>
 ```

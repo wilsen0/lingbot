@@ -49,6 +49,7 @@ the escrow. No background sweeper is required.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import io
 import json
 import math
@@ -183,9 +184,7 @@ def _new_listing_id() -> str:
 _ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
-async def _credit_inventory(
-    tx: Any, seller: str, item: str, qty: int
-) -> None:
+async def _credit_inventory(tx: Any, seller: str, item: str, qty: int) -> None:
     """Add *qty* of *item* back to *seller*'s inventory.
 
     Listing creation debits the seller's row by ``total``; cancel /
@@ -200,9 +199,7 @@ async def _credit_inventory(
     await tx.write(scope, file, seller, str(current + qty))
 
 
-async def _debit_inventory(
-    tx: Any, seller: str, item: str, qty: int
-) -> bool:
+async def _debit_inventory(tx: Any, seller: str, item: str, qty: int) -> bool:
     """Subtract *qty* of *item* from *seller*'s inventory.
 
     Returns False (without writing) if the seller doesn't have enough.
@@ -279,10 +276,7 @@ async def marketplace_list(
     whether to surface the message to the user.
     """
     if not item or item not in TRADABLE_ITEMS:
-        return (
-            f"error:嗯…{item} 现在还摆不出来哦"
-            f"（苏苏能上架的：{'/'.join(TRADABLE_ITEMS)}）"
-        )
+        return f"error:嗯…{item} 现在还摆不出来哦（苏苏能上架的：{'/'.join(TRADABLE_ITEMS)}）"
     if _is_group_scoped_item(item):
         return f"error:{item} 是全群才有的东西，不能挂单哦"
     qty_i = _parse_int(qty)
@@ -371,9 +365,7 @@ async def marketplace_list(
     safe=False,
     llm_visible=False,
 )
-async def marketplace_buy(
-    ctx: ToolCtx, list_id: str = "", qty: str = ""
-) -> str:
+async def marketplace_buy(ctx: ToolCtx, list_id: str = "", qty: str = "") -> str:
     """Atomically execute a marketplace purchase.
 
     Side effects (all inside one SQLite transaction):
@@ -489,10 +481,7 @@ async def marketplace_buy(
                 ),
             )
 
-    return (
-        f"ok:付了 {gross_pay} 灵玉"
-        f",到手 {qty_i * price_each} 灵玉的 {item}"
-    )
+    return f"ok:付了 {gross_pay} 灵玉,到手 {qty_i * price_each} 灵玉的 {item}"
 
 
 # ---------------------------------------------------------------------------
@@ -869,8 +858,10 @@ def _find_bundled_font() -> str | None:
         Path(__file__).resolve().parents[3] / "data" / "fonts",
     ]
     bundled_preferred = (
-        "NotoSansSC-Regular.otf", "NotoSansSC-Regular.ttf",
-        "NotoSansCJKsc-Regular.otf", "SourceHanSansSC-Regular.otf",
+        "NotoSansSC-Regular.otf",
+        "NotoSansSC-Regular.ttf",
+        "NotoSansCJKsc-Regular.otf",
+        "SourceHanSansSC-Regular.otf",
     )
     for root in bundled_roots:
         if not root.is_dir():
@@ -900,9 +891,9 @@ def _find_bundled_font() -> str | None:
         "/System/Library/Fonts/PingFang.ttc",
         "/Library/Fonts/Songti.ttc",
     ]
-    for p in system_candidates:
-        if Path(p).is_file():
-            return p
+    for sys_p in system_candidates:
+        if Path(sys_p).is_file():
+            return sys_p
     return None
 
 
@@ -1126,9 +1117,7 @@ async def market_card(ctx: ToolCtx, seller: str = "") -> str:
             if count == 0:
                 continue
             units = by_units[name]
-            rows.append(
-                (name, f"{count}条·{units}件", _CARD_ITEM_COLORS[name])
-            )
+            rows.append((name, f"{count}条·{units}件", _CARD_ITEM_COLORS[name]))
         png = _render_card(title="苏苏的摊位", rows=rows, font=font)
 
     return "base64://" + base64.b64encode(png).decode("ascii")
@@ -1196,15 +1185,13 @@ def _parse_json_field(blob: str, field: str) -> str | None:
     safe=True,
     llm_visible=False,
 )
-async def strip_prefix(
-    ctx: ToolCtx, result: str = "", prefix: str = ""
-) -> str:
+async def strip_prefix(ctx: ToolCtx, result: str = "", prefix: str = "") -> str:
     """Return *result* with *prefix* (and a following ':' or space) removed."""
     if not result or not prefix:
         return result
     if not result.startswith(prefix):
         return result
-    rest = result[len(prefix):]
+    rest = result[len(prefix) :]
     if rest.startswith(":"):
         rest = rest[1:]
     return rest.lstrip()
@@ -1266,7 +1253,5 @@ async def format_listing(ctx: ToolCtx, list_id: str = "") -> str:
 
 def _fmt_expire(epoch_s: int) -> str:
     """Render a UTC epoch second as a ``MM-dd HH:mm`` wall-clock string."""
-    import datetime as _dt
-
     dt = _dt.datetime.fromtimestamp(epoch_s)
     return dt.strftime("%m-%d %H:%M")

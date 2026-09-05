@@ -62,7 +62,10 @@ class _AgentInner(_Inner):
         self._agent = type(
             "Agent",
             (),
-            {"provider": provider, "agent_def": AgentDef(name="batch-agent", model="mock", system="")},
+            {
+                "provider": provider,
+                "agent_def": AgentDef(name="batch-agent", model="mock", system=""),
+            },
         )()
 
 
@@ -178,9 +181,7 @@ async def test_read_profile_tool_continues_loop_no_action() -> None:
         await _wait_for(lambda: len(provider.calls) >= 2)
         # The read result reached the model as a tool message containing the profile.
         second_round_msgs = provider.calls[1][0]
-        assert any(
-            m.role == "tool" and "老画像" in m.content for m in second_round_msgs
-        )
+        assert any(m.role == "tool" and "老画像" in m.content for m in second_round_msgs)
         # Read tool produced no outbound action.
         assert sent == []
         await dispatcher.stop()

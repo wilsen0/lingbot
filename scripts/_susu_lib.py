@@ -18,32 +18,32 @@ by the generator script.
 """
 
 # Palette (single source of truth)
-HAIR        = "#ffd84a"
-HAIR_DARK   = "#d8a020"
-SKIN        = "#fff0d8"
-SKIN_LINE   = "#e8c8a8"
-EYE         = "#3aa05c"
-EYE_DARK    = "#1f6a3c"
-LINE        = "#5b3022"
-PINK        = "#ff8aa6"
-PINK_DARK   = "#d83a4d"
-PINK_DEEP   = "#a02030"
-PINK_LIGHT  = "#ff5577"
-WHITE       = "#fff"
-WHITE_FUR   = "#fff8e8"
-FUR_SHADOW  = "#e8d8b8"
-RED         = "#d83a4d"
-GOLD        = "#fcd34d"
-GOLD_DARK   = "#e0a92c"
-GOLD_LIGHT  = "#fff7c4"
-CHEEK       = "#ff8aa6"
+HAIR = "#ffd84a"
+HAIR_DARK = "#d8a020"
+SKIN = "#fff0d8"
+SKIN_LINE = "#e8c8a8"
+EYE = "#3aa05c"
+EYE_DARK = "#1f6a3c"
+LINE = "#5b3022"
+PINK = "#ff8aa6"
+PINK_DARK = "#d83a4d"
+PINK_DEEP = "#a02030"
+PINK_LIGHT = "#ff5577"
+WHITE = "#fff"
+WHITE_FUR = "#fff8e8"
+FUR_SHADOW = "#e8d8b8"
+RED = "#d83a4d"
+GOLD = "#fcd34d"
+GOLD_DARK = "#e0a92c"
+GOLD_LIGHT = "#fff7c4"
+CHEEK = "#ff8aa6"
 
-PIXEL_DEFS = f'''
+PIXEL_DEFS = f"""
     <radialGradient id="cheek" cx="50%" cy="50%" r="50%">
       <stop offset="0%"  stop-color="{CHEEK}" stop-opacity=".9"/>
       <stop offset="100%" stop-color="{CHEEK}" stop-opacity="0"/>
     </radialGradient>
-'''
+"""
 
 
 def folded_ears(cx_left: int, cx_right: int, cy: int) -> str:
@@ -80,8 +80,7 @@ def folded_ears(cx_left: int, cx_right: int, cy: int) -> str:
     return "\n      ".join(parts)
 
 
-def head(x: int, y: int, *, eye: str = "open", mouth: str = "smile",
-         blush: bool = True) -> str:
+def head(x: int, y: int, *, eye: str = "open", mouth: str = "smile", blush: bool = True) -> str:
     """A standard head at (x,y) — top-left of a 36×36 bounding box.
 
     Includes hair fringe, side bangs, ears, face features.
@@ -150,7 +149,9 @@ def head(x: int, y: int, *, eye: str = "open", mouth: str = "smile",
             out.append(f'<rect x="{cx}" y="{y+18}" width="6" height="6" fill="{EYE}"/>')
             out.append(f'<rect x="{cx+1}" y="{y+19}" width="2" height="2" fill="{WHITE}"/>')
             out.append(f'<rect x="{cx+2}" y="{y+24}" width="2" height="3" fill="#88ccff"/>')
-            out.append(f'<rect x="{cx+1}" y="{y+25}" width="4" height="2" fill="#88ccff" opacity=".7"/>')
+            out.append(
+                f'<rect x="{cx+1}" y="{y+25}" width="4" height="2" fill="#88ccff" opacity=".7"/>'
+            )
     elif eye == "angry":
         for cx in (L_EYE, R_EYE):
             out.append(f'<rect x="{cx}" y="{y+19}" width="6" height="4" fill="{EYE}"/>')
@@ -205,7 +206,7 @@ def head(x: int, y: int, *, eye: str = "open", mouth: str = "smile",
 
 def hanfu_top(x: int, y: int, w: int = 60, h: int = 26) -> str:
     """Pink hanfu top with V-collar and red waist sash."""
-    return f'''
+    return f"""
   <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{PINK}"/>
   <rect x="{x}" y="{y}" width="{w}" height="2" fill="{PINK_DARK}"/>
   <rect x="{x}" y="{y+h-2}" width="{w}" height="2" fill="{PINK_DARK}"/>
@@ -221,12 +222,12 @@ def hanfu_top(x: int, y: int, w: int = 60, h: int = 26) -> str:
   <rect x="{x + w//2 + 2}" y="{y + h - 8}" width="2" height="6" fill="{PINK_DEEP}"/>
   <rect x="{x + w//2 - 2}" y="{y + h}" width="2" height="6" fill="{RED}"/>
   <rect x="{x + w//2 + 0}" y="{y + h}" width="2" height="8" fill="{RED}"/>
-'''
+"""
 
 
 def fox_tail_back(x: int, y: int) -> str:
     """Big white fluffy fox tail behind body. ~60×32."""
-    return f'''
+    return f"""
   <rect x="{x+10}" y="{y+0}"  width="36" height="4" fill="{WHITE_FUR}"/>
   <rect x="{x+6}"  y="{y+4}"  width="44" height="8" fill="{WHITE_FUR}"/>
   <rect x="{x+2}"  y="{y+12}" width="52" height="10" fill="{WHITE_FUR}"/>
@@ -237,7 +238,7 @@ def fox_tail_back(x: int, y: int) -> str:
   <rect x="{x+44}" y="{y+18}" width="14" height="6" fill="{HAIR}"/>
   <rect x="{x+48}" y="{y+24}" width="10" height="4" fill="{HAIR}"/>
   <rect x="{x+44}" y="{y+18}" width="2" height="6" fill="{HAIR_DARK}"/>
-'''
+"""
 
 
 def lingyu_gem(x: int, y: int, scale: int = 1) -> str:
@@ -267,5 +268,7 @@ def lingyu_gem(x: int, y: int, scale: int = 1) -> str:
         (10, 8, 2, 6, "#ffd0f0"),
     ]
     for cx, cy, cw, ch, col in coords:
-        out.append(f'<rect x="{x + cx*s}" y="{y + cy*s}" width="{cw*s}" height="{ch*s}" fill="{col}"/>')
+        out.append(
+            f'<rect x="{x + cx*s}" y="{y + cy*s}" width="{cw*s}" height="{ch*s}" fill="{col}"/>'
+        )
     return "\n  ".join(out)

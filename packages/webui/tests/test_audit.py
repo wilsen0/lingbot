@@ -32,7 +32,6 @@ def test_csv_export(app_client) -> None:
     assert "susu_main" in text
 
 
-
 def test_audit_search_respects_jwt_bots_visibility(two_tenant_client) -> None:
     """A bot_admin scoped to one bot must not see other bots' audit rows.
 
@@ -46,12 +45,8 @@ def test_audit_search_respects_jwt_bots_visibility(two_tenant_client) -> None:
     client, alice_token, _bob_token = two_tenant_client
     audit = AuditReader()
     client.app.state.runtime.audit = audit
-    audit.append(
-        bot_id="susu_main", user_id="u1", scope_id="g1", kind="handler_dispatch"
-    )
-    audit.append(
-        bot_id="other", user_id="u2", scope_id="g2", kind="handler_dispatch"
-    )
+    audit.append(bot_id="susu_main", user_id="u1", scope_id="g1", kind="handler_dispatch")
+    audit.append(bot_id="other", user_id="u2", scope_id="g2", kind="handler_dispatch")
 
     # Alice can see her own bot's audit fine.
     r = client.get(
@@ -61,9 +56,7 @@ def test_audit_search_respects_jwt_bots_visibility(two_tenant_client) -> None:
     assert all(row["bot_id"] == "susu_main" for row in r.json())
 
     # Alice cannot see ``other`` bot's audit; treated as nonexistent.
-    r = client.get(
-        "/api/audit?bot_id=other", headers={"Authorization": f"Bearer {alice_token}"}
-    )
+    r = client.get("/api/audit?bot_id=other", headers={"Authorization": f"Bearer {alice_token}"})
     assert r.status_code == 404
 
     # CSV export honours the same rule.

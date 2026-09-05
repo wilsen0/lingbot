@@ -12,9 +12,7 @@ class _FakeAgent:
 
     def __init__(self, name: str = "susu") -> None:
         self.name = name
-        self._agent_def = type(
-            "AD", (), {"name": name, "provider": "fake", "model": "fake-7b"}
-        )()
+        self._agent_def = type("AD", (), {"name": name, "provider": "fake", "model": "fake-7b"})()
 
     async def invoke(self, user_input: str, **_kw):  # type: ignore[no-untyped-def]
         raise RuntimeError("not used by trigger endpoint")
@@ -66,7 +64,9 @@ def test_triggers_returns_provider_payload(app_client) -> None:
     _seed(
         client,
         provider=lambda: [
-            TriggerInfo(raw="我的灵玉", label="我的灵玉", has_args=False, literal_prefix="我的灵玉"),
+            TriggerInfo(
+                raw="我的灵玉", label="我的灵玉", has_args=False, literal_prefix="我的灵玉"
+            ),
             TriggerInfo(
                 raw="反馈丢失(.*)",
                 label="反馈丢失…",

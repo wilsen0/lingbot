@@ -444,9 +444,7 @@ class SqliteAuditReader:
 # ---------------------------------------------------------------------------
 
 
-def _broadcast(
-    subscribers: set[Callable[[AuditRow], None]], row: AuditRow
-) -> None:
+def _broadcast(subscribers: set[Callable[[AuditRow], None]], row: AuditRow) -> None:
     """Fire every subscriber with ``row``; never raise."""
     # Snapshot in case a callback unsubscribes itself.
     for cb in list(subscribers):

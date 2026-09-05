@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from linling_agent.actions_protocol import ParsedAction
 from linling_agent.dispatcher import _expand_actions_for_dm
 from linling_agent.group_batch import GroupBatchChatDispatcher, GroupBatchConfig

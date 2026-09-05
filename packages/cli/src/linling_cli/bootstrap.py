@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import linling_core.tools_builtin  # noqa: F401 — registers built-in tools on import
 import linling_tools_stdlib  # noqa: F401 — registers stdlib tools (overrides 替换/正则/etc)
 import structlog
+from linling_agent.images import ImageContentResolver
 from linling_core.adapters import Adapter as AdapterHandle
 from linling_core.bus import EventBus
 from linling_core.classifier import MessageClassifier
@@ -244,7 +245,7 @@ class RunningBot:
         # missed. Compile each trigger lazily and skip uncompilable
         # ones (same liberal contract as the classifier's
         # ``_safe_compile``).
-        import re as _re  # noqa: PLC0415
+        import re as _re
 
         for h in self.script.handlers:
             try:
@@ -290,9 +291,9 @@ class RunningBot:
         # Deferred imports: same rationale as in ``bootstrap_bot`` —
         # keep the DSL / tool registry off the import path for commands
         # like ``linling lint`` that never load a bot.
-        from linling_core.classifier import MessageClassifier  # noqa: PLC0415
-        from linling_core.tools import registry as global_registry  # noqa: PLC0415
-        from linling_dsl.dispatcher import DslCommandDispatcher  # noqa: PLC0415
+        from linling_core.classifier import MessageClassifier
+        from linling_core.tools import registry as global_registry
+        from linling_dsl.dispatcher import DslCommandDispatcher
 
         base = (self._base_dir or Path.cwd()).resolve()
         script, files_loaded, errors = _compile_rules(self.config, base)
@@ -435,11 +436,7 @@ class RunningBot:
         primary = next((a for a in self.adapters if getattr(a, "platform", "")), None)
         if primary is not None:
             primary_platform = primary.platform
-        scope_platform = (
-            task.scope.get("platform")
-            or primary_platform
-            or "scheduler"
-        )
+        scope_platform = task.scope.get("platform") or primary_platform or "scheduler"
         # ``scope_kind`` distinguishes group from DM dispatches so the
         # OneBot adapter picks ``message_type=group`` vs ``private``.
         # Older persisted tasks lack this hint; default to ``"system"``
@@ -467,8 +464,8 @@ class RunningBot:
         # the scheduled args feed into ``%括号N%`` for handlers that
         # were originally written as regex triggers — matches the
         # ``$调用 ms handler arg1 arg2$`` ergonomics QRDic users expect.
-        from linling_core.classifier import HandlerMatch  # noqa: PLC0415
-        from linling_core.pipeline import ConversationKey, Session  # noqa: PLC0415
+        from linling_core.classifier import HandlerMatch
+        from linling_core.pipeline import ConversationKey, Session
 
         # Regex captures (if any) come *first* — that mirrors ``$回调$``
         # semantics where ``%括号N%`` reflects the trigger fullmatch.
@@ -533,7 +530,7 @@ class RunningBot:
         skip the router, so we mirror the schema here. Best-effort: we
         never let a slow audit sink stall the scheduler loop.
         """
-        from linling_core.audit import AuditEntry  # noqa: PLC0415
+        from linling_core.audit import AuditEntry
 
         audit = getattr(self.router, "_audit", None)
         if audit is None:
@@ -628,6 +625,23 @@ class RunningBot:
                 continue
             with contextlib.suppress(Exception):
                 await close()
+        # Close the shared image-content resolver (vision mode) so its
+        # lazily-created httpx connection pool gets released too. Every
+        # AgentRuntime holds the *same* resolver instance (the bootstrap
+        # also hands it to the dispatchers), so dedupe by id exactly like
+        # the provider loop above. Runtimes without one (vision off)
+        # have ``_image_resolver`` as ``None`` and are skipped.
+        seen_resolvers: set[int] = set()
+        for runtime in self.agents.values():
+            resolver = getattr(runtime, "_image_resolver", None)
+            if resolver is None or id(resolver) in seen_resolvers:
+                continue
+            seen_resolvers.add(id(resolver))
+            close_resolver = getattr(resolver, "aclose", None)
+            if close_resolver is None:
+                continue
+            with contextlib.suppress(Exception):
+                await close_resolver()
         # Close the SQLite scheduler store if we opened one.
         store = getattr(self.scheduler, "_store", None) if self.scheduler else None
         if store is not None:
@@ -713,9 +727,9 @@ async def bootstrap_bot(
     ledger_writer: Any = None
     ledger_renderer: Any = None
     if config.conversation.ledger_enabled:
-        from linling_agent.ledger import LedgerRenderer  # noqa: PLC0415
-        from linling_agent.ledger_store import KVDslLedgerStore  # noqa: PLC0415
-        from linling_dsl.ledger import LedgerWriter  # noqa: PLC0415
+        from linling_agent.ledger import LedgerRenderer
+        from linling_agent.ledger_store import KVDslLedgerStore
+        from linling_dsl.ledger import LedgerWriter
 
         ledger_store = KVDslLedgerStore(
             kv,
@@ -753,7 +767,11 @@ async def bootstrap_bot(
     if asset_root_for_tools is not None:
         commands.update_extras(asset_root=asset_root_for_tools)
     chats, agents = _build_chat_dispatcher(
-        config, kv, metrics, base, conversations,
+        config,
+        kv,
+        metrics,
+        base,
+        conversations,
         ledger_store=ledger_store,
         ledger_renderer=ledger_renderer,
     )
@@ -764,7 +782,7 @@ async def bootstrap_bot(
     # :func:`linling_cli.wire_webui.attach_bot_to_webui`) so a single
     # source of truth backs both surfaces.
     if agents:
-        from linling_agent.bridge import AgentRegistry  # noqa: PLC0415
+        from linling_agent.bridge import AgentRegistry
 
         agent_registry = AgentRegistry()
         for name, runtime in agents.items():
@@ -832,9 +850,9 @@ async def bootstrap_bot(
     # Pin ``%RobotRunTime%`` to the moment the bot finished bootstrap
     # — matches QRSpeed semantics where the variable counts uptime
     # against the live process's start, not module import.
-    import time as _time  # noqa: PLC0415
+    import time as _time
 
-    from linling_dsl.vm import set_bot_start_time_ms  # noqa: PLC0415
+    from linling_dsl.vm import set_bot_start_time_ms
 
     set_bot_start_time_ms(int(_time.time() * 1000))
     return bot
@@ -859,7 +877,7 @@ def _build_metrics(config: BotConfig) -> MetricsSink:
     # a helpful config-time error rather than a module-load error for
     # every bot, regardless of whether metrics are turned on.
     try:
-        from linling_core.metrics_prometheus import PrometheusMetrics  # noqa: PLC0415
+        from linling_core.metrics_prometheus import PrometheusMetrics
     except ImportError as exc:
         raise RuntimeError(
             "metrics.enabled=True but `prometheus_client` is not installed. "
@@ -1014,29 +1032,73 @@ def _build_chat_dispatcher(
     dict so callers (notably the WebUI) can look up AgentRuntimes without
     reaching into the dispatcher's private ``_agent`` field.
     """
-    if config.agent.default_agent is None:
-        return _FallbackChatDispatcher(text=config.agent.fallback_reply), {}
-
     # Deferred import: spinning up an LLM provider depends on env vars
     # and we don't want configuration errors (missing API key) to break
     # the simple "command-only" bootstrap.
-    from linling_agent.agent_def import AgentDef  # noqa: PLC0415
-    from linling_agent.context import ContextBudget  # noqa: PLC0415
-    from linling_agent.dispatcher import AgentChatDispatcher  # noqa: PLC0415
-    from linling_agent.group_batch import (  # noqa: PLC0415
+    import os
+
+    from linling_agent.agent_def import AgentDef, AgentProviderConfig
+    from linling_agent.context import ContextBudget
+    from linling_agent.dispatcher import AgentChatDispatcher
+    from linling_agent.group_batch import (
         GroupBatchChatDispatcher,
         GroupBatchConfig,
     )
-    from linling_agent.history import KVHistoryStore  # noqa: PLC0415
-    from linling_agent.profile import ProfileStore, ProfileUpdater  # noqa: PLC0415
-    from linling_agent.runtime import AgentRuntime  # noqa: PLC0415
+    from linling_agent.history import KVHistoryStore
+    from linling_agent.profile import ProfileStore, ProfileUpdater
+    from linling_agent.runtime import AgentRuntime
 
-    raw = config.agent.default_agent
-    agent_path = Path(raw)
-    if not agent_path.is_absolute():
-        agent_path = base / agent_path
-    agent_def = AgentDef.from_yaml(agent_path)
+    agent_def: AgentDef | None = None
+    if config.agent.default_agent is not None:
+        raw = config.agent.default_agent
+        agent_path = Path(raw)
+        if not agent_path.is_absolute():
+            agent_path = base / agent_path
+        agent_def = AgentDef.from_yaml(agent_path)
+    elif config.agent.has_inline_agent:
+        agent_def = AgentDef(
+            name=config.agent.name or config.name or "assistant",
+            provider=config.agent.provider,
+            model=config.agent.model,
+            system=config.agent.system or f"You are {config.name}, a helpful assistant.",
+            temperature=config.agent.temperature,
+            reasoning_effort=config.agent.reasoning_effort,
+            vision_enabled=config.agent.vision_enabled,
+            tools=config.agent.tools,
+            provider_config=AgentProviderConfig(
+                api_key=config.agent.api_key
+                or os.environ.get("LLM_API_KEY", "")
+                or os.environ.get("OPENAI_API_KEY", ""),
+                base_url=config.agent.base_url
+                or os.environ.get("LLM_BASE_URL", "")
+                or os.environ.get("OPENAI_BASE_URL", "")
+                or "https://api.openai.com/v1",
+                extra_headers=config.agent.extra_headers,
+            ),
+        )
+
+    if agent_def is None:
+        logger.info(
+            "bootstrap.chat_fallback_only", reason="no agent configured and no LLM API key found"
+        )
+        return _FallbackChatDispatcher(text=config.agent.fallback_reply), {}
+
     provider = _provider_for(agent_def)
+    # 视觉(多模态)共享组件。一个 ImageContentResolver 同时供 AgentRuntime、
+    # AgentChatDispatcher 和 GroupBatchChatDispatcher 使用——它的缓存和
+    # in-flight 去重以实例为单位,共享同一实例才能保证同一图片 URL 在批量
+    # 窗口内只下载一次。sticker_dir 是所有收藏/发送贴纸工具共用的落盘目录,
+    # 优先基于 data_dir 解析;只读环境 mkdir 失败时降级为 None。
+    image_resolver = ImageContentResolver()
+    data_dir_clean = Path(config.storage.data_dir)
+    if not data_dir_clean.is_absolute():
+        data_dir_clean = base / data_dir_clean
+    sticker_dir_path: Path = data_dir_clean / "stickers"
+    sticker_dir: Path | None = sticker_dir_path
+    try:
+        sticker_dir_path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        sticker_dir = None  # 只读环境降级:sticker 工具不可用,其余不受影响
     agent = AgentRuntime(
         agent_def=agent_def,
         provider=provider,
@@ -1044,6 +1106,8 @@ def _build_chat_dispatcher(
         kv=kv,
         bot_id=config.bot_id,
         metrics=metrics,
+        image_resolver=image_resolver,
+        sticker_dir=sticker_dir,
     )
     # Persistent short-term memory. The in-memory deque on Session
     # handles the live conversation; this store survives restarts.
@@ -1077,6 +1141,9 @@ def _build_chat_dispatcher(
         max_reply_chars=config.agent.dm_max_reply_chars,
         multi_reply_delay_min_s=config.agent.multi_reply_delay_min_s,
         multi_reply_delay_max_s=config.agent.multi_reply_delay_max_s,
+        image_resolver=image_resolver,
+        kv=kv,
+        sticker_dir=sticker_dir,
     )
     if config.agent.group_batch_enabled:
         names = tuple(
@@ -1088,9 +1155,7 @@ def _build_chat_dispatcher(
             )
             if name
         )
-        attention_probe = _build_attention_probe(
-            agent_config=config.agent, agent_def=agent_def
-        )
+        attention_probe = _build_attention_probe(agent_config=config.agent, agent_def=agent_def)
         dispatcher = GroupBatchChatDispatcher(
             inner=dispatcher,
             config=GroupBatchConfig(
@@ -1123,6 +1188,8 @@ def _build_chat_dispatcher(
             bot_id=config.bot_id,
             probe=attention_probe,
             kv=kv,
+            image_resolver=image_resolver,
+            sticker_dir=sticker_dir,
         )
 
     # Scope allowlist for chat-mode (LLM fallback only). DSL handlers
@@ -1249,7 +1316,7 @@ class _ScopeGatedChatDispatcher:
         # :class:`AgentResult` with the fallback text on deny so the
         # WebUI can still render a reply bubble (and audit gets a
         # non-empty turn).
-        from linling_agent.runtime import AgentResult  # noqa: PLC0415
+        from linling_agent.runtime import AgentResult
 
         if not self._is_allowed(event):
             return AgentResult(
@@ -1329,7 +1396,7 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
         # Deferred: instantiating OpenAIProvider constructs an httpx
         # client. Keep it out of the import-time path so commandlines
         # like ``linling lint`` stay zero-cost on a missing API key.
-        from linling_agent.providers.openai import OpenAIProvider  # noqa: PLC0415
+        from linling_agent.providers.openai import OpenAIProvider
 
         pc = agent_def.provider_config
         # ``OpenAIProvider`` treats ``extra_headers=None`` and
@@ -1339,7 +1406,7 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
         extra_headers = pc.extra_headers or None
         # Proxy for the main LLM. ``OPENAI_HTTPS_PROXY`` is the
         # unified env var; most deployments leave it empty (direct).
-        import os  # noqa: PLC0415
+        import os
 
         proxy = os.environ.get("OPENAI_HTTPS_PROXY", "").strip() or None
         return OpenAIProvider(
@@ -1386,9 +1453,9 @@ def _build_attention_probe(
     # Deferred import — same rationale as :func:`_provider_for`. The
     # probe construction creates an httpx client; commandlines that
     # never reach this code path keep their zero-cost startup.
-    import os  # noqa: PLC0415
+    import os
 
-    from linling_agent.attention_probe import AttentionProbe  # noqa: PLC0415
+    from linling_agent.attention_probe import AttentionProbe
 
     if not agent_config.group_batch_attention_probe_enabled:
         logger.info(
@@ -1419,9 +1486,7 @@ def _build_attention_probe(
         or os.environ.get("OPENAI_BASE_URL", "").strip()
         or "https://api.openai.com/v1"
     )
-    model = (
-        os.environ.get("ATTENTION_PROBE_MODEL", "").strip() or agent_def.model
-    )
+    model = os.environ.get("ATTENTION_PROBE_MODEL", "").strip() or agent_def.model
 
     # Proxy resolution: ``ATTENTION_PROBE_HTTPS_PROXY`` is the
     # dedicated knob for routing probe traffic through a forward proxy
@@ -1464,10 +1529,14 @@ def _build_adapters(
     asset_root = _resolve_asset_root(base_dir) if base_dir else None
     for spec in config.adapters:
         if spec.kind == "onebot":
+            ws_url = (spec.ws_url or "").strip()
+            if not ws_url or ws_url.startswith("${"):
+                logger.info("bootstrap.onebot_skipped", reason="ws_url not configured")
+                continue
             # Deferred: adapter packages may pull in protocol-specific
             # networking libraries; a CLI-only deployment should still
             # be able to boot without them installed.
-            from linling_adapter_onebot.adapter import OneBotAdapter  # noqa: PLC0415
+            from linling_adapter_onebot.adapter import OneBotAdapter
 
             adapters.append(
                 OneBotAdapter(
@@ -1481,11 +1550,12 @@ def _build_adapters(
                 )
             )
         elif spec.kind == "cli":
-            from linling_adapter_cli.adapter import CliAdapter  # noqa: PLC0415
+            from linling_adapter_cli.adapter import CliAdapter
 
             adapters.append(CliAdapter(bus, bot_id=config.bot_id))
         else:
             logger.warning("bootstrap.unknown_adapter_kind", kind=spec.kind)
+
     return adapters
 
 
@@ -1557,7 +1627,7 @@ def build_sink(
 
 async def _sleep_before_action(action: Action) -> None:
     raw = action.options.get(ACTION_DELAY_BEFORE_OPTION)
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
         return
     delay_s = max(0.0, float(raw))
     if delay_s > 0:

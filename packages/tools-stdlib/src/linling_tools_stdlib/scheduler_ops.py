@@ -116,16 +116,15 @@ async def schedule_handler(
     # scheduled handlers' replies would be tagged ``platform="scheduler"``
     # and silently dropped by ``build_sink._multi`` because no real
     # adapter advertises that platform.
+    scope_id = ""
+    sender_id = ""
+    scope_platform = ""
+    scope_kind: str = ""
     if ctx.event is not None:
         scope_id = ctx.event.scope.id
         sender_id = ctx.event.sender.id
         scope_platform = ctx.event.scope.platform
         scope_kind = ctx.event.scope.kind
-    else:
-        scope_id = ""
-        sender_id = ""
-        scope_platform = ""
-        scope_kind = ""
     scope_payload: dict[str, str] = {
         "scope_id": scope_id,
         "sender_id": sender_id,

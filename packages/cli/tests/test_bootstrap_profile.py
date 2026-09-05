@@ -56,9 +56,7 @@ async def test_bootstrap_wires_profile_store_and_hook(tmp_path: Path, kv) -> Non
     cfg = BotConfig.from_yaml(_write(tmp_path, "bot.yaml", _BOT_YAML))
     conversations = ConversationStore(rate_per_second=100, burst=100)
 
-    dispatcher, agents = _build_chat_dispatcher(
-        cfg, kv, NullMetrics(), tmp_path, conversations
-    )
+    dispatcher, agents = _build_chat_dispatcher(cfg, kv, NullMetrics(), tmp_path, conversations)
 
     # Profile store injected into the DM dispatcher.
     assert dispatcher._profile_store is not None
