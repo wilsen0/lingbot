@@ -10,6 +10,7 @@
 docs/
 ├── README.md                  # 本导航文档
 ├── architecture.md            # 系统技术架构、数据流与组件关系
+├── ops-and-config.md          # 系统运维与配置完整参考指南
 ├── marketplace.md             # 玩家摊位交易系统（规则、图卡、事务原子性）
 ├── susu_sticker_prompts.md    # 涂山苏苏表情包与道具图生图提示词规范
 ├── dsl/                       # DSL 规则引擎
@@ -80,6 +81,8 @@ docs/
 
 ## 5. 运维、部署与可观测性
 
+- [运维与配置指南 (Operations & Configuration Guide)](./ops-and-config.md)
+  系统配置模型、完整 `bot.yaml` 参数详解、环境变量清单、CLI 命令工具箱、Systemd/Docker 部署、规则零停机热重载与排障手册。
 - [可观测性体系 (Observability)](./observability/README.md)
   Structlog 链路追踪（`trace_id`）、SQLite 审计留痕、Prometheus 11 项核心指标说明与 Grafana 导入指南。
 - [LLBot 协议端部署](../docker/llbot/docker-compose.yml)
