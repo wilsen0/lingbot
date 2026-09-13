@@ -51,7 +51,8 @@ storage:
   #   - 审计日志:        sqlite:///./data/audit.sqlite
   #   - 定时调度器:      sqlite:///./data/scheduler.sqlite
   #   - 表情/贴纸目录:   ./data/stickers
-  data_dir: ./data
+  # 可用 .env 的 LINLING_DATA_DIR 覆盖；默认 ./data（相对本 yaml 所在目录解析）
+  data_dir: ${LINLING_DATA_DIR:-./data}
 
   # 若需高级定制或拆分不同存储引擎，可显式覆盖（非必须）：
   # kv: sqlite:///./data/kv.sqlite     # 亦支持 ":memory:"

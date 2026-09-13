@@ -5,7 +5,8 @@ admin_users:
 
 storage:
   # 数据目录：自动统一管理 ./data 下的 kv.sqlite, audit.sqlite, scheduler.sqlite 及文件
-  data_dir: ./data
+  # 可用 .env 的 LINLING_DATA_DIR 覆盖；默认 ./data（相对本 yaml 所在目录解析）
+  data_dir: ${LINLING_DATA_DIR:-./data}
 
 adapters:
   - kind: cli
