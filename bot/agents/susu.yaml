@@ -4,14 +4,14 @@
 #   变量,YAML 显式给出的字段(api_key / base_url / extra_headers)
 #   会盖过同名环境变量,所以你可以在 .env 放公用 key,在 YAML 里
 #   按 agent 单独切换 base_url 或自定义 header。
-# - 想直接走默认值,把整个 provider_config 块删掉即可:加载器会回退
-#   到 LLM_API_KEY / LLM_BASE_URL 这套环境变量,跟改造前的行为
-#   完全一致。OpenAIProvider 自带的 User-Agent 已经过握手测试,无需
-#   额外配置。
+# - 想直接走默认值,把整个 provider_config 块删掉即可:加载器会按
+#   ANTHROPIC_* -> LLM_* -> OPENAI_* 的顺序回退(当前 provider 是
+#   anthropic),旧 OpenAI 部署的行为不变。Provider 自带的 User-Agent
+#   已经过握手测试,无需额外配置。
 # - 改 system 即可调性格;改 temperature 调灵活度;改 model 换底座。
-# - 原生 Anthropic Messages 协议: 把 provider 改成 anthropic,并把
-#   provider_config 换成 ANTHROPIC_* 变量(见 .env.example)。Anthropic
-#   的 tool_result 支持 image block,工具输出的图片会直接进入上下文。
+# - 当前线上使用原生 Anthropic Messages 协议,Anthropic 的 tool_result
+#   支持 image block,工具输出的图片会直接进入上下文,不会退化成
+#   [图片] 文本占位。
 
 name: 涂山苏苏
 provider: anthropic
