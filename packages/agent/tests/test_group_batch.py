@@ -1773,6 +1773,14 @@ def _image_event(
     return _event("", eid=eid, sender=sender, name=name, segments=[ImageSegment(url=url)])
 
 
+def test_candidate_prompt_exposes_message_ids(tmp_path) -> None:
+    """The model needs the id to call save_sticker/reply_to_message."""
+    dispatcher = _sticker_dispatcher(tmp_path)
+    batch = [dispatcher._to_buffered(_image_event(eid="m42", url="https://x/a.gif"))]
+    prompt = dispatcher._build_tool_prompt(batch)
+    assert "[message_id=m42]" in prompt
+
+
 def test_buffered_message_image_refs_vision_off() -> None:
     dispatcher = GroupBatchChatDispatcher(
         inner=_Inner(""),

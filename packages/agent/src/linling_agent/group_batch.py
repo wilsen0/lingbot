@@ -1724,8 +1724,13 @@ class GroupBatchChatDispatcher:
                 else msg
             )
             line = _render_candidate_line(truncated_msg, name_by_id)
+            # The sticker/reply tools take a ``message_id``; without it in
+            # the rendered batch the model can only guess (and recent
+            # sessions show it giving up on saving a sticker because it
+            # "couldn't get the image message id").
+            line += f" [message_id={msg.message_id}]"
             if len(clipped) < len(msg.text):
-                line += f" [text_truncated, message_id={msg.message_id}]"
+                line += " [text_truncated]"
             lines.append(line)
         return "\n".join(lines)
 
