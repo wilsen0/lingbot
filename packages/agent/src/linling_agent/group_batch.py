@@ -1963,6 +1963,7 @@ _NON_TEXT_MARKER_RULE = (
 
 _NON_TEXT_MARKER_RULE_VISION = (
     "候选消息里的 [图片]/[表情] 标记对应的图片内容已附在本条消息末尾，你能直接看到。"
+    "动图（GIF）你通常只能看到第一帧，但收藏和发送时会保留完整动画，不要因为只看到一帧就认为它坏了。"
     "其余标记（如 [语音]/[视频]/[文件]）你看不到实际内容，不要追问。"
     "如果觉得某个表情包有意思，可以用 save_sticker 收藏起来以后用。"
 )
@@ -1972,6 +1973,7 @@ _NON_TEXT_MARKER_RULE_VISION = (
 # request (``collage_attached``), mirroring the honesty of the marker rule.
 _COLLAGE_RULE = (
     "消息末尾附了一张你收藏的表情包九宫格图，每格标了名字和 id。"
+    "动图的缩略图只显示第一帧，这是正常的，不代表表情包损坏。"
     "想回敬表情包就用 send_sticker(name=...)，只能发收藏里的；"
     "没有合适的就不用发。"
 )
@@ -2119,7 +2121,7 @@ def _sticker_tool_schemas() -> list[ToolSchema]:
     return [
         ToolSchema(
             name=_TOOL_SAVE_STICKER,
-            description="Save a sticker/image from a candidate message into your collection. Provide the candidate message_id that carries the image, plus a memorable name.",
+            description="Save a sticker/image (including animated GIFs) from a candidate message into your collection. Provide the candidate message_id that carries the image, plus a memorable name.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -2150,7 +2152,7 @@ def _sticker_tool_schemas() -> list[ToolSchema]:
         ),
         ToolSchema(
             name=_TOOL_SEND_STICKER,
-            description="Send a collected sticker to the group by name.",
+            description="Send a collected sticker to the group by name. Animated GIFs are re-sent with their animation intact.",
             parameters={
                 "type": "object",
                 "properties": {

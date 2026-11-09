@@ -50,7 +50,7 @@ def _decode_data_uri(data_uri: str) -> tuple[bytes, str] | None:
 @tool(
     name="save_sticker",
     dsl_name="",
-    description="Save a sticker/image from the current conversation into your collection. Give it a memorable name.",
+    description="Save a sticker/image (including animated GIFs) from the current conversation into your collection. Give it a memorable name.",
     schema={"name": "string", "tags": "string?"},
     safe=False,
     vision_only=True,
@@ -130,7 +130,7 @@ async def list_stickers(ctx: ToolCtx, query: str = "") -> str:
 @tool(
     name="send_sticker",
     dsl_name="",
-    description="Send a collected sticker to the current conversation by name.",
+    description="Send a collected sticker to the current conversation by name. Animated GIFs are re-sent with their animation intact.",
     schema={"name": "string"},
     safe=False,
     vision_only=True,
