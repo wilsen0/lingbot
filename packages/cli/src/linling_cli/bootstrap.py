@@ -316,6 +316,11 @@ class RunningBot:
             command_prefixes=tuple(self.config.classifier.command_prefixes),
             block_scope_ids=frozenset(self.config.classifier.block_scope_ids),
             block_sender_ids=frozenset(self.config.classifier.block_sender_ids),
+            dsl_scope_ids=(
+                frozenset(self.config.classifier.dsl_scope_ids)
+                if self.config.classifier.dsl_scope_ids is not None
+                else None
+            ),
         )
         # Carry forward the scheduler (for ``$调用$``) into the new
         # dispatcher; the rest of the side-channels (action sink,
@@ -708,6 +713,11 @@ async def bootstrap_bot(
         command_prefixes=tuple(config.classifier.command_prefixes),
         block_scope_ids=frozenset(config.classifier.block_scope_ids),
         block_sender_ids=frozenset(config.classifier.block_sender_ids),
+        dsl_scope_ids=(
+            frozenset(config.classifier.dsl_scope_ids)
+            if config.classifier.dsl_scope_ids is not None
+            else None
+        ),
     )
     conversations = ConversationStore(
         max_sessions=config.conversation.max_sessions,

@@ -9,6 +9,8 @@ Routing policy (KISS, configurable):
 
 1. Messages from the bot itself are ignored.
 2. ``block_scope_ids`` / ``block_sender_ids`` → ``ignore``.
+   When ``dsl_scope_ids`` is configured, events outside that allowlist
+   skip DSL matching and fall through to ``chat`` instead.
 3. If the text starts with one of ``command_prefixes`` (default ``/``,
    ``!``), try matching the stripped text against DSL handlers; miss
    → still classify as ``command`` but with ``match=None`` so the router
@@ -121,10 +123,16 @@ class MessageClassifier:
         command_prefixes: tuple[str, ...] = DEFAULT_COMMAND_PREFIXES,
         block_scope_ids: frozenset[str] | None = None,
         block_sender_ids: frozenset[str] | None = None,
+        dsl_scope_ids: frozenset[str] | None = None,
     ) -> None:
         self._prefixes = tuple(sorted(command_prefixes, key=len, reverse=True))
         self._block_scopes = block_scope_ids or frozenset()
         self._block_senders = block_sender_ids or frozenset()
+        # ``None`` means "no allowlist"; an empty set means "DSL is
+        # disabled everywhere". Keep the distinction so an explicitly
+        # configured ``dsl_scope_ids: []`` can turn the ruleset off
+        # while leaving chat enabled.
+        self._dsl_scopes = dsl_scope_ids
 
         # Triggers are split into literal-keyed and regex-keyed lookups
         # to keep the per-event match path off a 400-entry regex walk.
@@ -188,6 +196,16 @@ class MessageClassifier:
             return Intent(kind="ignore", reason="blocked-scope")
         if event.sender.id in self._block_senders:
             return Intent(kind="ignore", reason="blocked-sender")
+
+        # DSL allowlist. Scopes outside the list skip prefix handling
+        # and rule matching entirely, but still reach the chat agent.
+        # Synthetic QRSpeed events (``[系统]`` / ``[退群]``) are the one
+        # exception: shipping their literal bracket text to the LLM is
+        # never useful, so they stay ignored.
+        if self._dsl_scopes is not None and event.scope.id not in self._dsl_scopes:
+            if event.raw.get("_synthetic_qrspeed"):
+                return Intent(kind="ignore", reason="synthetic-no-handler")
+            return Intent(kind="chat", reason="dsl-scope-not-enabled")
 
         text = event.match_text
 

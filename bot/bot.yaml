@@ -67,6 +67,12 @@ agent:
     - 苏苏
     - 涂山苏苏
 
+classifier:
+  # DSL 作用域白名单：只有列出的群会执行 main.ling 规则；其它群 / DM 跳过
+  # DSL 匹配，但仍走 LLM 对话。用 .env 的 DSL_SCOPE_IDS 覆盖（逗号分隔）；
+  # 改成 [] 可关闭所有 DSL 规则（全员只聊天）。
+  dsl_scope_ids: ${DSL_SCOPE_IDS:-788375918}
+
 conversation:
   # 64k 上下文预算；接近上限时自动把旧 turn 折叠成 summary。
   context_max_tokens: 65536

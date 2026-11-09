@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Pattern for ${VAR} or ${VAR:-default} expansion.
@@ -183,11 +183,32 @@ class ClassifierConfig(BaseModel):
     ``block_scope_ids`` / ``block_sender_ids`` let operators silence a
     specific group / user without touching the ruleset — useful for
     SLA-style banning.
+
+    ``dsl_scope_ids`` limits the ruleset to specific scopes (usually a
+    single main group). Events from any other scope skip DSL matching /
+    prefixes and fall through to the chat path, so the bot still has
+    conversation ability there — it just can't run ``.ling`` handlers.
+    ``None`` (default) disables the gate; ``[]`` disables DSL everywhere.
+    Accepts either a YAML list or a comma-separated string (handy for
+    ``${DSL_SCOPE_IDS:-...}`` env expansion).
     """
 
     command_prefixes: list[str] = ["/", "!"]
     block_scope_ids: list[str] = []
     block_sender_ids: list[str] = []
+    dsl_scope_ids: list[str] | None = None
+
+    @field_validator("dsl_scope_ids", mode="before")
+    @classmethod
+    def _coerce_dsl_scope_ids(cls, value: Any) -> Any:
+        """Normalise list / comma-separated-string spellings to ``list[str]``."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [str(part).strip() for part in value if str(part).strip()]
+        return value
 
 
 class RouterConfigBlock(BaseModel):

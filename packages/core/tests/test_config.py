@@ -200,3 +200,42 @@ admin_users: []
 """
         cfg = BotConfig.from_yaml_str(yaml_str)
         assert cfg.admin_users == []
+
+
+class TestClassifierDslScopeIds:
+    """``classifier.dsl_scope_ids`` accepts YAML lists and CSV env values."""
+
+    def test_yaml_list(self) -> None:
+        cfg = BotConfig.from_yaml_str(
+            """
+classifier:
+  dsl_scope_ids:
+    - "100"
+    - "200"
+"""
+        )
+        assert cfg.classifier.dsl_scope_ids == ["100", "200"]
+
+    def test_comma_separated_env(self) -> None:
+        with patch.dict(os.environ, {"DSL_SCOPE_IDS": "100, 200"}):
+            cfg = BotConfig.from_yaml_str(
+                """
+classifier:
+  dsl_scope_ids: ${DSL_SCOPE_IDS:-}
+"""
+            )
+        assert cfg.classifier.dsl_scope_ids == ["100", "200"]
+
+    def test_empty_string_disables_dsl_everywhere(self) -> None:
+        with patch.dict(os.environ, {"DSL_SCOPE_IDS": ""}):
+            cfg = BotConfig.from_yaml_str(
+                """
+classifier:
+  dsl_scope_ids: ${DSL_SCOPE_IDS}
+"""
+            )
+        assert cfg.classifier.dsl_scope_ids == []
+
+    def test_omitted_means_no_gate(self) -> None:
+        cfg = BotConfig.from_yaml_str("bot_id: b\n")
+        assert cfg.classifier.dsl_scope_ids is None

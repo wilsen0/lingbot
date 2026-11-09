@@ -273,3 +273,82 @@ class TestAtSegmentTriggerMatching:
         assert ev.text == "赠送大飞龙"
         # match_text view (only used by the classifier):
         assert ev.match_text == "赠送大飞龙@99999"
+
+
+# ---------------------------------------------------------------------------
+# DSL scope allowlist
+# ---------------------------------------------------------------------------
+
+
+class TestDslScopeAllowlist:
+    """DSL only runs in allowed scopes; everything else falls through to chat."""
+
+    @staticmethod
+    def _group_ev(text: str, group_id: str, raw: dict[str, object] | None = None) -> Event:
+        return Event(
+            id="x",
+            platform="test",
+            bot_id="b",
+            scope=Scope(kind="group", id=group_id, platform="test"),
+            sender=User(id="u", platform="test"),
+            kind="message",
+            segments=[TextSegment(text=text)],
+            raw=raw or {},
+        )
+
+    @staticmethod
+    def _dm_ev(text: str) -> Event:
+        return Event(
+            id="x",
+            platform="test",
+            bot_id="b",
+            scope=Scope(kind="dm", id="u", platform="test"),
+            sender=User(id="u", platform="test"),
+            kind="message",
+            segments=[TextSegment(text=text)],
+        )
+
+    def test_allowed_group_runs_rules(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset({"100"}))
+        intent = c.classify(self._group_ev("我的灵玉", "100"))
+        assert intent.kind == "command"
+        assert intent.match is not None
+
+    def test_other_group_falls_through_to_chat(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset({"100"}))
+        intent = c.classify(self._group_ev("我的灵玉", "999"))
+        assert intent.kind == "chat"
+        assert intent.reason == "dsl-scope-not-enabled"
+
+    def test_other_group_prefix_also_falls_through_to_chat(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset({"100"}))
+        intent = c.classify(self._group_ev("/我的灵玉", "999"))
+        assert intent.kind == "chat"
+
+    def test_empty_allowlist_disables_dsl_everywhere(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset())
+        intent = c.classify(self._group_ev("我的灵玉", "100"))
+        assert intent.kind == "chat"
+
+    def test_dm_falls_through_to_chat(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset({"100"}))
+        assert c.classify(self._dm_ev("我的灵玉")).kind == "chat"
+
+    def test_none_disables_gate(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=None)
+        assert c.classify(self._group_ev("我的灵玉", "999")).kind == "command"
+
+    def test_synthetic_event_still_ignored_outside_dsl_scope(self) -> None:
+        script = parse("我的灵玉\nok\n", strict=False)
+        c = MessageClassifier(script=script, dsl_scope_ids=frozenset({"100"}))
+        intent = c.classify(
+            self._group_ev("[系统]", "999", raw={"_synthetic_qrspeed": True})
+        )
+        assert intent.kind == "ignore"
+        assert intent.reason == "synthetic-no-handler"

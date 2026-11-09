@@ -163,6 +163,11 @@ classifier:
     - "!"
   block_scope_ids: []                 # 禁用的群号黑名单
   block_sender_ids: []                # 禁用的用户 QQ 黑名单
+  # DSL 作用域白名单：只在这些群执行 .ling 规则；其它群 / DM 跳过 DSL，
+  # 但仍走 LLM 对话。不写 = 不启用限制；[] = 所有 scope 都关闭 DSL。
+  # 也可以写 ${DSL_SCOPE_IDS:-...} 从 .env 读取逗号分隔的群号。
+  dsl_scope_ids:
+    - "788375918"
 
 router:
   max_concurrent_events: 128          # 消息并发处理峰值通道
