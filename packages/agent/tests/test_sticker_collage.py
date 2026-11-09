@@ -21,7 +21,7 @@ import pytest
 from linling_agent.sticker_collage import StickerCollageBuilder
 from linling_agent.sticker_store import StickerStore
 from linling_core.storage.sqlite_kv import SqliteKVStore
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # A minimal valid 1x1 transparent PNG.
 _PNG_BYTES = base64.b64decode(
@@ -96,6 +96,33 @@ async def test_missing_file_degrades_to_placeholder(store, tmp_path) -> None:
     data_uri = await StickerCollageBuilder(store).build_data_uri()
     assert data_uri is not None
     assert sticker_id  # sanity: save returned an id
+
+
+async def test_transparent_sticker_gets_white_background(store) -> None:
+    """Transparent GIF/PNG pixels must composite onto white, not black.
+
+    ``Image.convert("RGB")`` maps the transparent palette index to black,
+    which made the model see a broken/loading-looking thumbnail. The
+    collage uses the first frame of animated GIFs, so this also covers
+    the animated-sticker path.
+    """
+    frame = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    draw.rectangle((50, 50, 150, 150), fill=(255, 0, 0, 255))
+    buf = io.BytesIO()
+    frame.save(buf, format="PNG")
+    await store.save(buf.getvalue(), name="透明表情", mime="image/png")
+
+    data_uri = await StickerCollageBuilder(store).build_data_uri()
+    assert data_uri is not None
+    img = _decode_uri(data_uri)
+    # First cell's thumbnail is 160x160 at offset (2, 2); (150, 10) is
+    # inside its transparent top-right corner, away from the id badge.
+    r, g, b = img.getpixel((150, 10))[:3]
+    assert r > 230 and g > 230 and b > 230
+    # The red square remains visible in the centre.
+    r, g, b = img.getpixel((82, 82))[:3]
+    assert r > 200 and g < 80 and b < 80
 
 
 async def test_store_failure_returns_none() -> None:

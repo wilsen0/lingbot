@@ -88,7 +88,17 @@ def _load_thumbnail(raw: bytes) -> Image.Image | None:
     try:
         with Image.open(io.BytesIO(raw)) as img:
             img.load()
-            thumb = ImageOps.contain(img.convert("RGB"), (_THUMB_SIZE, _THUMB_SIZE))
+            # Animated GIF/WebP: ``load()`` materialises the first frame,
+            # which is what a static collage can show. Convert through RGBA
+            # and composite onto white *before* dropping alpha — a direct
+            # ``convert("RGB")`` turns transparent GIF pixels black, making
+            # the thumbnail look like a broken/loading image to the model.
+            frame = img.convert("RGBA")
+            backdrop = Image.new("RGBA", frame.size, (255, 255, 255, 255))
+            backdrop.alpha_composite(frame)
+            thumb = ImageOps.contain(
+                backdrop.convert("RGB"), (_THUMB_SIZE, _THUMB_SIZE)
+            )
             canvas = Image.new("RGB", (_THUMB_SIZE, _THUMB_SIZE), "white")
             canvas.paste(
                 thumb,

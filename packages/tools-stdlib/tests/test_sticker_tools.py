@@ -24,6 +24,7 @@ Behaviour pinned here:
 from __future__ import annotations
 
 import base64
+import io
 from pathlib import Path
 
 import linling_tools_stdlib  # noqa: F401 — registers sticker_tools into the global registry
@@ -37,6 +38,30 @@ from linling_core.tools import ToolCtx, registry
 _PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
+
+
+def _animated_gif_bytes() -> bytes:
+    """A two-frame GIF so animated-sticker round-trips can be asserted."""
+    from PIL import Image
+
+    frames = [
+        Image.new("RGBA", (12, 12), (255, 0, 0, 255)),
+        Image.new("RGBA", (12, 12), (0, 0, 255, 255)),
+    ]
+    buf = io.BytesIO()
+    frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=100,
+        loop=0,
+    )
+    return buf.getvalue()
+
+
+def _gif_data_uri() -> str:
+    return "data:image/gif;base64," + base64.b64encode(_animated_gif_bytes()).decode("ascii")
 
 
 def _png_data_uri(*extra: int) -> str:
@@ -292,6 +317,45 @@ async def test_send_sticker_success(kv, sticker_dir) -> None:
     # The payload round-trips back to the saved PNG bytes.
     assert base64.b64decode(seg.b64) == _PNG_BYTES
     # 原图语义(subType=1):避免 QQ 服务端把收藏的小图压缩放大。
+    assert seg.extras.get("subType") == 1
+
+
+async def test_animated_gif_save_send_preserves_animation(kv, sticker_dir) -> None:
+    """An animated GIF is stored as raw GIF bytes and re-sent byte-for-byte."""
+    from PIL import Image
+
+    gif = _animated_gif_bytes()
+    resolver = FakeImageResolver(default=_gif_data_uri())
+    save_ctx = _make_ctx(
+        kv,
+        _make_event(ImageSegment(url="http://x/a.gif")),
+        resolver=resolver,
+        sticker_dir=sticker_dir,
+    )
+    result = await _call_tool("save_sticker", save_ctx, name="动图")
+    assert result.startswith("ok: saved")
+
+    listing = await _call_tool("list_stickers", save_ctx)
+    assert "动图" in listing
+    # The on-disk file keeps the .gif extension instead of falling back
+    # to .jpg, and still decodes as a multi-frame animation.
+    saved_files = list(sticker_dir.glob("*.gif"))
+    assert len(saved_files) == 1
+    with Image.open(saved_files[0]) as img:
+        assert img.format == "GIF"
+        assert img.n_frames == 2
+
+    sink = FakeActionSink()
+    send_ctx = _make_ctx(
+        kv,
+        _make_event(TextSegment(text="发")),
+        sticker_dir=sticker_dir,
+        sink=sink,
+    )
+    assert await _call_tool("send_sticker", send_ctx, name="动图") == "ok: sent sticker '动图'"
+    seg = sink.actions[0].segments[0]
+    assert isinstance(seg, ImageSegment)
+    assert base64.b64decode(seg.b64) == gif
     assert seg.extras.get("subType") == 1
 
 
