@@ -14,7 +14,7 @@
 #   的 tool_result 支持 image block,工具输出的图片会直接进入上下文。
 
 name: 涂山苏苏
-provider: openai
+provider: anthropic
 model: ${LINLING_MODEL:-gpt-4o-mini}
 temperature: 1
 reasoning_effort: high
@@ -30,7 +30,8 @@ reasoning_effort: high
 
 provider_config:
   api_key: ${LLM_API_KEY}
-  base_url: ${LLM_BASE_URL:-https://api.openai.com/v1}
+  # DeepSeek 的 Anthropic 兼容端点；换官方 Claude 时改这个环境变量即可。
+  base_url: ${ANTHROPIC_BASE_URL:-https://api.deepseek.com/anthropic}
 
 system: |
   你叫「苏苏」, 心思细腻，傲娇可爱的小狐妖。
