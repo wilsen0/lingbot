@@ -54,13 +54,16 @@ class AgentProviderConfig:
     eliminates the historical "raw ``os.environ.get`` from
     bootstrap" path.
 
-    ``api_key`` and ``base_url`` fall back to the legacy
-    ``OPENAI_API_KEY`` / ``OPENAI_BASE_URL`` env vars when the YAML
-    leaves them empty, so existing deployments keep working without
-    edits. ``extra_headers`` has no env back-compat — the provider
-    ships a default ``User-Agent`` that already passes the common
-    OpenAI-compatible gates (Kimi's ``/coding/v1`` included), and
-    operators who genuinely need to override it can write::
+    ``api_key`` and ``base_url`` fall back through the environment when
+    the YAML leaves them empty: ``anthropic`` prefers
+    ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_BASE_URL``, then the shared
+    ``LLM_*`` pair, then the legacy ``OPENAI_*`` pair. Other providers
+    keep the historical ``LLM_*`` → ``OPENAI_*`` chain, so existing
+    deployments keep working without edits. ``extra_headers`` has no env
+    back-compat — the provider ships a default ``User-Agent`` that
+    already passes the common OpenAI-compatible gates (Kimi's
+    ``/coding/v1`` included), and operators who genuinely need to
+    override it can write::
 
         provider_config:
           extra_headers:
@@ -79,33 +82,46 @@ class AgentProviderConfig:
 # back both the dataclass coercion and the
 # ``bootstrap._provider_for`` factory.
 _DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+_DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 
 
-def _provider_config_from_dict(data: dict[str, Any] | None) -> AgentProviderConfig:
-    """Build an :class:`AgentProviderConfig` with env-var fallbacks.
+def build_provider_config(
+    data: dict[str, Any] | None,
+    *,
+    provider: str = "openai",
+) -> AgentProviderConfig:
+    """Build an :class:`AgentProviderConfig` with provider-aware fallbacks.
 
     Empty strings / missing keys for ``api_key`` and ``base_url`` fall
-    back through the chain ``LLM_*`` → legacy ``OPENAI_*`` → hardcoded
-    default. The ``LLM_*`` variables are the preferred convention (they
-    won't collide with third-party tools that export ``OPENAI_*``);
-    ``OPENAI_*`` is kept as a second fallback so old deployments work
-    unchanged. ``extra_headers`` has no env fallback — the provider's
-    built-in ``User-Agent`` default covers every endpoint we test
-    against, and operators who need a specific override can write it
-    explicitly in YAML.
+    back through the environment. ``anthropic`` prefers the native
+    ``ANTHROPIC_*`` variables, then the shared ``LLM_*`` convention, then
+    legacy ``OPENAI_*``; every other provider keeps the historical
+    ``LLM_*`` → ``OPENAI_*`` chain. YAML values always win.
+
+    ``extra_headers`` has no env fallback — the provider's built-in
+    ``User-Agent`` default covers every endpoint we test against, and
+    operators who need a specific override can write it explicitly in
+    YAML.
     """
     raw = data or {}
+    is_anthropic = provider == "anthropic"
 
     api_key = (
         raw.get("api_key")
+        or (os.environ.get("ANTHROPIC_API_KEY", "") if is_anthropic else "")
         or os.environ.get("LLM_API_KEY", "")
         or os.environ.get("OPENAI_API_KEY", "")
     )
     base_url = (
         raw.get("base_url")
-        or os.environ.get("LLM_BASE_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or _DEFAULT_OPENAI_BASE_URL
+        or (os.environ.get("ANTHROPIC_BASE_URL", "") if is_anthropic else "")
+        or os.environ.get("LLM_BASE_URL", "")
+        or os.environ.get("OPENAI_BASE_URL", "")
+        or (
+            _DEFAULT_ANTHROPIC_BASE_URL
+            if is_anthropic
+            else _DEFAULT_OPENAI_BASE_URL
+        )
     )
 
     extra_headers = dict(raw.get("extra_headers") or {})
@@ -115,6 +131,10 @@ def _provider_config_from_dict(data: dict[str, Any] | None) -> AgentProviderConf
         base_url=base_url,
         extra_headers=extra_headers,
     )
+
+
+# Backwards-compatible private alias used by older imports/tests.
+_provider_config_from_dict = build_provider_config
 
 
 @dataclass
@@ -182,7 +202,10 @@ class AgentDef:
             timeout_s=guardrails_data.get("timeout_s", 20.0),
         )
 
-        provider_config = _provider_config_from_dict(data.get("provider_config"))
+        provider = data.get("provider", "openai")
+        provider_config = build_provider_config(
+            data.get("provider_config"), provider=provider
+        )
 
         # vision_enabled: explicit YAML wins (including the
         # ``${LINLING_VISION_ENABLED:-false}`` interpolation spelling);
@@ -196,7 +219,7 @@ class AgentDef:
 
         return cls(
             name=data["name"],
-            provider=data.get("provider", "openai"),
+            provider=provider,
             model=data.get("model", "gpt-4o-mini"),
             system=data.get("system", ""),
             tools=data.get("tools", []),

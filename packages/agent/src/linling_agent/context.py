@@ -418,7 +418,10 @@ def _truncate_message_to_budget(message: Message, max_tokens: int) -> Message | 
         return message
     content = message.content
     if not content:
-        return None
+        # Image-only tool results (Anthropic content blocks) have no
+        # textual body; dropping them would orphan the assistant's
+        # tool_use. Keep the message when multimodal parts carry it.
+        return message if message.content_parts else None
     lo = 0
     hi = len(content)
     best = ""

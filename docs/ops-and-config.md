@@ -88,7 +88,7 @@ rules:
 agent:
   # [单文件内联模式] 直接在此配置大模型（免去外挂 agents/*.yaml）：
   name: linling
-  provider: openai                    # 目前支持 openai 兼容协议（DeepSeek, Kimi, vLLM 等均可）
+  provider: openai                    # openai = Chat Completions；anthropic = Messages
   model: ${LINLING_MODEL:-deepseek-chat}
   system: |
     你是 linling，一个运行在 Linux 上的智能机器人助手。
@@ -102,6 +102,16 @@ agent:
 
   # [外置引用模式] 如需复用多 Agent 设定，亦可直接指向文件：
   # default_agent: ./agents/susu.yaml
+
+  # 原生 Anthropic Messages 协议（claude / 兼容网关）：
+  # provider: anthropic
+  # model: claude-sonnet-4-5
+  # api_key: ${ANTHROPIC_API_KEY:-}
+  # base_url: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+  # DeepSeek 的 Anthropic 兼容端点: https://api.deepseek.com/anthropic
+  # 也支持在 agents/*.yaml 的 provider_config 里逐 agent 指定。
+  # Anthropic 的 tool_result 支持 image content block，工具返回的
+  # 多模态图片会直接进入上下文，不会退化成 [图片] 文本占位。
 
   # ---- 消息放行与白名单策略 ----
   # 兜底回复：当既不匹配任何 DSL 规则、群聊又未开放 LLM 时的回复。留空 "" 则彻底保持静默
@@ -208,6 +218,9 @@ linling 支持通过 `.env` 或系统环境变量覆盖各项配置：
 | **`LLM_BASE_URL`** / **`OPENAI_BASE_URL`** | `https://api.openai.com/v1` | 主大模型 Base URL（支持 DeepSeek / Kimi / 自建 vLLM 等） |
 | **`LINLING_MODEL`** | `gpt-4o-mini` | 覆盖默认大模型型号 |
 | **`OPENAI_HTTPS_PROXY`** | *(空)* | 主大模型专用 HTTP/SOCKS5 代理（直连端点无需配置） |
+| **`ANTHROPIC_API_KEY`** | *(空)* | `provider: anthropic` 时的 API Key（优先于 `LLM_API_KEY`） |
+| **`ANTHROPIC_BASE_URL`** | `https://api.anthropic.com` | Anthropic Messages 端点根地址（也可写完整 `/v1/messages`） |
+| **`ANTHROPIC_HTTPS_PROXY`** | 同 `OPENAI_HTTPS_PROXY` | Anthropic 专用代理；留空时回退 `OPENAI_HTTPS_PROXY` |
 | **`LINLING_VISION_ENABLED`** | `false` | 是否全局启用多模态视觉与表情包支持（需模型本身支持视觉） |
 | **`ONEBOT_WS_URL`** | `ws://127.0.0.1:3003` | OneBot v11 反向 WebSocket 上行服务地址 |
 | **`ONEBOT_TOKEN`** | *(空)* | OneBot 鉴权 Access Token |

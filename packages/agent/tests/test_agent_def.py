@@ -18,7 +18,11 @@ from linling_agent.agent_def import AgentDef, AgentProviderConfig
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip every ``OPENAI_*`` and ``LLM_*`` env var so each test starts from zero."""
     for key in list(os.environ):
-        if key.startswith("OPENAI_") or key.startswith("LLM_"):
+        if (
+            key.startswith("OPENAI_")
+            or key.startswith("LLM_")
+            or key.startswith("ANTHROPIC_")
+        ):
             monkeypatch.delenv(key, raising=False)
 
 
@@ -38,6 +42,67 @@ def test_from_dict_defaults_provider_config_empty(clean_env: None) -> None:
     # real OpenAI host instead of an empty-URL httpx error.
     assert a.provider_config.base_url == "https://api.openai.com/v1"
     assert a.provider_config.extra_headers == {}
+
+
+def test_anthropic_provider_uses_native_default_base(
+    clean_env: None,
+) -> None:
+    """``provider: anthropic`` defaults to the native API root."""
+    a = AgentDef.from_dict({"name": "test", "provider": "anthropic"})
+
+    assert a.provider == "anthropic"
+    assert a.provider_config.api_key == ""
+    assert a.provider_config.base_url == "https://api.anthropic.com"
+
+
+def test_anthropic_provider_prefers_anthropic_env(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ANTHROPIC_*`` wins over the shared ``LLM_*`` fallback."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://anthropic.test")
+    monkeypatch.setenv("LLM_API_KEY", "sk-llm")
+    monkeypatch.setenv("LLM_BASE_URL", "https://llm.test/v1")
+
+    a = AgentDef.from_dict({"name": "test", "provider": "anthropic"})
+
+    assert a.provider_config.api_key == "sk-ant"
+    assert a.provider_config.base_url == "https://anthropic.test"
+
+
+def test_anthropic_provider_falls_back_to_shared_llm_env(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shared ``LLM_*`` values work for Anthropic when native vars are unset."""
+    monkeypatch.setenv("LLM_API_KEY", "sk-llm")
+    monkeypatch.setenv("LLM_BASE_URL", "https://llm.test/v1")
+
+    a = AgentDef.from_dict({"name": "test", "provider": "anthropic"})
+
+    assert a.provider_config.api_key == "sk-llm"
+    assert a.provider_config.base_url == "https://llm.test/v1"
+
+
+def test_anthropic_yaml_provider_config_wins_over_env(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit per-agent values still beat every env fallback."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.test")
+
+    a = AgentDef.from_dict(
+        {
+            "name": "test",
+            "provider": "anthropic",
+            "provider_config": {
+                "api_key": "sk-yaml",
+                "base_url": "https://yaml.test/v1",
+            },
+        }
+    )
+
+    assert a.provider_config.api_key == "sk-yaml"
+    assert a.provider_config.base_url == "https://yaml.test/v1"
 
 
 def test_from_dict_falls_back_to_legacy_env_vars(

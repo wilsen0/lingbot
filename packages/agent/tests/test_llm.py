@@ -580,6 +580,23 @@ class TestMultimodalContent:
             },
         ]
 
+    def test_message_to_dict_tool_with_parts_uses_text(self):
+        """OpenAI tool messages are text-only; image parts must not leak."""
+        provider = OpenAIProvider(api_key="test-key")
+        msg = Message(
+            role="tool",
+            content="chart rendered",
+            name="render_chart",
+            tool_call_id="call_1",
+            content_parts=(
+                ContentPart(type="text", text="chart rendered"),
+                ContentPart(type="image_url", image_url="data:image/png;base64,AAAA"),
+            ),
+        )
+        d = provider._message_to_dict(msg)
+        assert d["content"] == "chart rendered"
+        assert isinstance(d["content"], str)
+
     def test_message_to_dict_preserves_tool_fields(self):
         provider = OpenAIProvider(api_key="test-key")
         tc = ToolCall(id="call_1", name="get_weather", arguments='{"city": "NYC"}')

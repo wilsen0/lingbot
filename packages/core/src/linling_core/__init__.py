@@ -78,7 +78,7 @@ from linling_core.segments import (
     text,
 )
 from linling_core.storage import KVStore, RankOrder, RankRow, SqliteKVStore
-from linling_core.tools import ToolCtx, ToolDef, ToolRegistry, registry, tool
+from linling_core.tools import ToolCtx, ToolDef, ToolRegistry, ToolResult, registry, tool
 from linling_core.version import __version__
 
 __all__ = [
@@ -131,6 +131,7 @@ __all__ = [
     "ToolCtx",
     "ToolDef",
     "ToolRegistry",
+    "ToolResult",
     "User",
     "VideoSegment",
     "VoiceSegment",

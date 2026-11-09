@@ -22,7 +22,7 @@ from linling_agent.llm import (
 from linling_agent.runtime import _MAX_TOOL_RESULT_CHARS, AgentRuntime
 from linling_core.events import Action, Event, Scope, User
 from linling_core.segments import TextSegment
-from linling_core.tools import ToolCtx, ToolRegistry
+from linling_core.tools import ToolCtx, ToolDef, ToolRegistry, ToolResult
 from linling_core.tools import registry as global_registry
 
 # ---------------------------------------------------------------------------
@@ -502,6 +502,129 @@ class TestRuntimeToolCalls:
         assert len(tool_messages) == 1
         assert len(tool_messages[0].content) < _MAX_TOOL_RESULT_CHARS + 500
         assert "tool result truncated" in tool_messages[0].content
+
+
+class TestRuntimeToolImages:
+    async def test_tool_result_images_attach_content_parts(self, kv):
+        """A ``ToolResult`` with images becomes multimodal tool content."""
+        reg = ToolRegistry()
+
+        async def image_tool(ctx: ToolCtx) -> ToolResult:
+            _ = ctx
+            return ToolResult(
+                text="chart rendered",
+                images=["data:image/png;base64,AAAA"],
+            )
+
+        reg.register(
+            ToolDef(
+                name="image_tool",
+                dsl_name="",
+                description="Returns an image",
+                schema={},
+                safe=True,
+                fn=image_tool,
+            )
+        )
+
+        agent_def = AgentDef.from_dict(
+            {"name": "image-agent", "tools": ["image_tool"]}
+        )
+        captured: list[list[Message]] = []
+
+        class CapturingProvider(MockProvider):
+            async def chat(
+                self,
+                messages: list[Message],
+                *,
+                tools: list[ToolSchema] | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                captured.append(list(messages))
+                return await super().chat(
+                    messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        provider = CapturingProvider(
+            [
+                make_tool_call_response("image_tool", {}, call_id="c1"),
+                make_finish_turn_response("done", call_id="c2"),
+            ]
+        )
+        runtime = AgentRuntime(agent_def, provider, reg, kv)
+
+        await runtime.invoke("draw me a chart")
+
+        tool_messages = [m for m in captured[-1] if m.role == "tool"]
+        assert len(tool_messages) == 1
+        tool_message = tool_messages[0]
+        assert tool_message.content == "chart rendered"
+        assert tool_message.content_parts is not None
+        assert tool_message.content_parts[0] == ContentPart(
+            type="text", text="chart rendered"
+        )
+        assert tool_message.content_parts[1] == ContentPart(
+            type="image_url", image_url="data:image/png;base64,AAAA"
+        )
+
+    async def test_plain_string_tool_result_has_no_parts(self, kv):
+        """The legacy string return path stays unchanged."""
+        reg = ToolRegistry()
+
+        async def text_tool(ctx: ToolCtx) -> str:
+            _ = ctx
+            return "plain result"
+
+        reg.register(
+            ToolDef(
+                name="text_tool",
+                dsl_name="",
+                description="Returns text",
+                schema={},
+                safe=True,
+                fn=text_tool,
+            )
+        )
+
+        agent_def = AgentDef.from_dict(
+            {"name": "text-agent", "tools": ["text_tool"]}
+        )
+        captured: list[list[Message]] = []
+
+        class CapturingProvider(MockProvider):
+            async def chat(
+                self,
+                messages: list[Message],
+                *,
+                tools: list[ToolSchema] | None = None,
+                temperature: float = 0.7,
+                max_tokens: int | None = None,
+            ) -> LLMResponse:
+                captured.append(list(messages))
+                return await super().chat(
+                    messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        provider = CapturingProvider(
+            [
+                make_tool_call_response("text_tool", {}, call_id="c1"),
+                make_finish_turn_response("done", call_id="c2"),
+            ]
+        )
+        runtime = AgentRuntime(agent_def, provider, reg, kv)
+
+        await runtime.invoke("use text tool")
+
+        tool_message = next(m for m in captured[-1] if m.role == "tool")
+        assert tool_message.content == "plain result"
+        assert tool_message.content_parts is None
 
 
 class TestRuntimeGuardrails:

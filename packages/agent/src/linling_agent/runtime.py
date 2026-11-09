@@ -24,7 +24,7 @@ from linling_core.metrics import (
     NullMetrics,
 )
 from linling_core.storage.kv import KVStore
-from linling_core.tools import ToolCtx, ToolRegistry, tool_parameters_schema
+from linling_core.tools import ToolCtx, ToolRegistry, ToolResult, tool_parameters_schema
 
 from linling_agent.agent_def import AgentDef
 from linling_agent.context import fit_messages_to_budget
@@ -367,16 +367,39 @@ class AgentRuntime:
                     continue
 
                 tool_def = self._registry.get(tc.name)
+                image_refs: list[str] = []
                 if tool_def is None:
                     result_str = f"Error: tool '{tc.name}' not found in registry"
                 else:
                     try:
                         args = json.loads(tc.arguments) if tc.arguments else {}
                         result = await tool_def.fn(ctx, **args)
-                        result_str = str(result) if result is not None else ""
+                        if isinstance(result, ToolResult):
+                            result_str = result.text
+                            image_refs = list(result.images)
+                        else:
+                            result_str = str(result) if result is not None else ""
                     except Exception as exc:
                         result_str = f"Error executing tool '{tc.name}': {exc}"
                 result_str = _cap_tool_result(result_str)
+
+                # A tool may return images alongside its text (e.g. an
+                # image-generation / screenshot tool). Resolve them to
+                # data URIs and attach them to the tool message so
+                # protocol implementations that support multimodal tool
+                # results (Anthropic) can pass them through.
+                tool_parts: tuple[ContentPart, ...] | None = None
+                if image_refs:
+                    image_uris = await self._resolve_tool_image_refs(image_refs)
+                    if image_uris:
+                        parts: list[ContentPart] = []
+                        if result_str:
+                            parts.append(ContentPart(type="text", text=result_str))
+                        parts.extend(
+                            ContentPart(type="image_url", image_url=uri)
+                            for uri in image_uris
+                        )
+                        tool_parts = tuple(parts)
 
                 messages.append(
                     Message(
@@ -384,6 +407,7 @@ class AgentRuntime:
                         content=result_str,
                         name=tc.name,
                         tool_call_id=tc.id,
+                        content_parts=tool_parts,
                     )
                 )
 
@@ -395,6 +419,31 @@ class AgentRuntime:
                     finish_turn_summary=finish_summary,
                     sent_texts=list(sent_texts),
                 )
+
+
+    async def _resolve_tool_image_refs(self, refs: list[str]) -> list[str]:
+        """Resolve tool-returned image refs to ``data:`` URIs.
+
+        ``data:`` refs pass through untouched (no resolver needed);
+        everything else goes through the shared
+        :class:`ImageContentResolver`, whose cache/dedup is already
+        shared with the incoming-message vision path. Failed refs are
+        skipped rather than failing the whole tool call.
+        """
+        uris: list[str] = []
+        for ref in refs:
+            if not ref:
+                continue
+            if ref.startswith("data:"):
+                uris.append(ref)
+                continue
+            resolver = self._image_resolver
+            if resolver is None:
+                continue
+            uri = await resolver.resolve(ref)
+            if uri:
+                uris.append(uri)
+        return uris
 
 
 def _cap_tool_result(text: str, max_chars: int = _MAX_TOOL_RESULT_CHARS) -> str:

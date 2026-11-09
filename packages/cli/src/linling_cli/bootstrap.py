@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -1045,9 +1046,8 @@ def _build_chat_dispatcher(
     # Deferred import: spinning up an LLM provider depends on env vars
     # and we don't want configuration errors (missing API key) to break
     # the simple "command-only" bootstrap.
-    import os
 
-    from linling_agent.agent_def import AgentDef, AgentProviderConfig
+    from linling_agent.agent_def import AgentDef, build_provider_config
     from linling_agent.context import ContextBudget
     from linling_agent.dispatcher import AgentChatDispatcher
     from linling_agent.group_batch import (
@@ -1075,15 +1075,13 @@ def _build_chat_dispatcher(
             reasoning_effort=config.agent.reasoning_effort,
             vision_enabled=config.agent.vision_enabled,
             tools=config.agent.tools,
-            provider_config=AgentProviderConfig(
-                api_key=config.agent.api_key
-                or os.environ.get("LLM_API_KEY", "")
-                or os.environ.get("OPENAI_API_KEY", ""),
-                base_url=config.agent.base_url
-                or os.environ.get("LLM_BASE_URL", "")
-                or os.environ.get("OPENAI_BASE_URL", "")
-                or "https://api.openai.com/v1",
-                extra_headers=config.agent.extra_headers,
+            provider_config=build_provider_config(
+                {
+                    "api_key": config.agent.api_key,
+                    "base_url": config.agent.base_url,
+                    "extra_headers": config.agent.extra_headers,
+                },
+                provider=config.agent.provider,
             ),
         )
 
@@ -1416,10 +1414,35 @@ def _provider_for(agent_def: AgentDef) -> LLMProvider:
         extra_headers = pc.extra_headers or None
         # Proxy for the main LLM. ``OPENAI_HTTPS_PROXY`` is the
         # unified env var; most deployments leave it empty (direct).
-        import os
 
         proxy = os.environ.get("OPENAI_HTTPS_PROXY", "").strip() or None
         return OpenAIProvider(
+            model=agent_def.model,
+            api_key=pc.api_key,
+            base_url=pc.base_url,
+            extra_headers=extra_headers,
+            proxy=proxy,
+            reasoning_effort=agent_def.reasoning_effort,
+        )
+    if kind == "anthropic":
+        # Native Anthropic Messages protocol. Deferred for the same
+        # reason as the OpenAI branch: importing the provider pulls in
+        # httpx and constructs a client, which ``linling lint`` and
+        # command-only deployments shouldn't pay for.
+        from linling_agent.providers.anthropic import AnthropicProvider
+
+
+        pc = agent_def.provider_config
+        extra_headers = pc.extra_headers or None
+        # ``ANTHROPIC_HTTPS_PROXY`` is the native knob; fall back to the
+        # shared LLM proxy for deployments that route both protocols
+        # through the same egress.
+        proxy = (
+            os.environ.get("ANTHROPIC_HTTPS_PROXY", "").strip()
+            or os.environ.get("OPENAI_HTTPS_PROXY", "").strip()
+            or None
+        )
+        return AnthropicProvider(
             model=agent_def.model,
             api_key=pc.api_key,
             base_url=pc.base_url,
@@ -1463,7 +1486,6 @@ def _build_attention_probe(
     # Deferred import — same rationale as :func:`_provider_for`. The
     # probe construction creates an httpx client; commandlines that
     # never reach this code path keep their zero-cost startup.
-    import os
 
     from linling_agent.attention_probe import AttentionProbe
 

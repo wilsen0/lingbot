@@ -23,7 +23,7 @@ from linling_agent.profile import (
     render_profile_block,
     write_user_profile,
 )
-from linling_agent.providers import OpenAIProvider
+from linling_agent.providers import AnthropicProvider, OpenAIProvider
 from linling_agent.runtime import AgentResult, AgentRuntime
 from linling_agent.safety import ContentFilter, SafetyConfig
 from linling_agent.version import __version__
@@ -35,6 +35,7 @@ __all__ = [
     "AgentResult",
     "AgentRuntime",
     "AgentTrigger",
+    "AnthropicProvider",
     "ContentFilter",
     "Delta",
     "LLMError",

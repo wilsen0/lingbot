@@ -510,8 +510,10 @@ pytest 与 `pnpm api:check` 双向阻断。
   * HTTP 白名单（`bot.yaml.guardrails.http_allowlist`）
   * 输出段数 / 循环步数上限
   * 运行时异常被 dispatcher 捕获，不向用户暴露 stacktrace
-* LLM provider：所有 OpenAI 兼容端点走 `OpenAIProvider`，httpx + 8s
-  timeout（探针）/ 30s timeout（主 agent）。鉴权失败一律 fail-closed。
+* LLM provider：OpenAI 兼容端点走 `OpenAIProvider`（Chat Completions），
+  Anthropic 走 `AnthropicProvider`（Messages，支持 tool_result 内嵌图片）；
+  均为 httpx + 8s timeout（探针）/ 30s timeout（主 agent）。鉴权失败一律
+  fail-closed。
 * WebUI：`Content-Security-Policy default-src 'self'; frame-ancestors
   'none'`；`/api/settings` 含 `secret/token/password` 的字段输出 `***`；
   写接口 60/min，登录 5/min/IP。
@@ -525,8 +527,8 @@ pytest 与 `pnpm api:check` 双向阻断。
 * **多租户**：当前单 bot 实例就是一个进程；`bot_id` 已经在 KV/Audit 里
   分了区，可平滑扩到多 bot，但调度/适配器仍是单实例视角，参见
   `agent-platform` spec。
-* **非 OpenAI 兼容 provider**：Anthropic / Gemini 占位在 `.env.example`
-  里，但 `linling_agent.providers/` 暂未实装；要接得新增 provider class。
+* **其他 provider 协议**：Anthropic Messages 已实装（`provider: anthropic`）；
+  OpenAI Responses API / Gemini 仍是待办，占位在 `.env.example` 里。
 * **WeChat / Feishu / Discord** 适配器：spec 定了能力矩阵（[`linling/design.md` §7.2](../.kiro/specs/linling/design.md)），
   仓库里没有实装。
 * **DSL `否则 / elseif`**：明确放弃，遵循 QRSpeed 原版习惯（用并列

@@ -9,6 +9,9 @@
 #   完全一致。OpenAIProvider 自带的 User-Agent 已经过握手测试,无需
 #   额外配置。
 # - 改 system 即可调性格;改 temperature 调灵活度;改 model 换底座。
+# - 原生 Anthropic Messages 协议: 把 provider 改成 anthropic,并把
+#   provider_config 换成 ANTHROPIC_* 变量(见 .env.example)。Anthropic
+#   的 tool_result 支持 image block,工具输出的图片会直接进入上下文。
 
 name: 涂山苏苏
 provider: openai

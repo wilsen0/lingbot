@@ -140,8 +140,16 @@ class OpenAIProvider:
     def _message_to_dict(msg: Message) -> dict[str, Any]:
         """Convert a Message to the OpenAI API dict format."""
         d: dict[str, Any] = {"role": msg.role}
-        if msg.content_parts:
+        if msg.content_parts and msg.role != "tool":
             d["content"] = [_content_part_to_dict(p) for p in msg.content_parts]
+        elif msg.role == "tool" and msg.content_parts:
+            # OpenAI Chat Completions tool messages are text-only. If a
+            # tool returned a ``ToolResult`` with images we still get the
+            # text half here; the Anthropic provider carries the image
+            # blocks natively.
+            d["content"] = msg.content or "".join(
+                p.text for p in msg.content_parts if p.type != "image_url"
+            )
         else:
             d["content"] = msg.content
         if msg.name is not None:

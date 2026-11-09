@@ -20,6 +20,31 @@ from linling_core.storage.kv import KVStore
 
 
 @dataclass
+class ToolResult:
+    """Rich return value for tools that produce text plus images.
+
+    Tools normally return a plain string. Returning a :class:`ToolResult`
+    lets a tool attach one or more image references alongside its textual
+    output. The agent runtime resolves each reference through
+    :class:`linling_agent.images.ImageContentResolver` and puts the
+    resulting ``data:`` URIs into the tool-result message as multimodal
+    content parts.
+
+    Anthropic's Messages protocol accepts image blocks directly inside a
+    ``tool_result``, so a vision model can *see* the tool output instead
+    of receiving a ``[图片]`` text placeholder. OpenAI Chat Completions
+    tool messages only accept text, so that provider keeps the text and
+    drops the image parts.
+
+    References use the same forms as user-message images: ``data:`` URIs,
+    ``base64://...``, ``file://``, HTTP(S) URLs, or local paths.
+    """
+
+    text: str = ""
+    images: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ToolCtx:
     """Runtime context passed to every tool invocation."""
 
